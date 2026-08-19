@@ -18,7 +18,7 @@ private fun ApplicationExtension.configureAndroidApplication() {
 }
 
 private fun LibraryExtension.configureAndroidLibrary() {
-    compileSdk = 36
+    compileSdk = 37
     defaultConfig.minSdk = 31
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
