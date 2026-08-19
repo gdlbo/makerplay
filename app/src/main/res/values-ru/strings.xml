@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">MakerPlay</string>
+    <string name="import_notification_channel">Импорт игр</string>
+</resources>

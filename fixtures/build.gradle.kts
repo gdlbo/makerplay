@@ -1,0 +1,1 @@
+plugins { id("makerplay.jvm.library") }

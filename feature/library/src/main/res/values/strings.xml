@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="library_title">Game library</string>
+    <string name="settings">Settings</string>
+    <string name="import_another_game">Import another game</string>
+    <string name="run_runtime_smoke_test">Run runtime smoke test</string>
+    <string name="play_game">Play %1$s</string>
+    <string name="play">Play</string>
+    <string name="game_actions">Game actions</string>
+    <string name="game_settings">Game settings</string>
+    <string name="game_artwork">Artwork for %1$s</string>
+    <string name="no_imported_games">Your library is empty</string>
+    <string name="empty_library_description">Import an RPG Maker MV or MZ folder to start playing.</string>
+    <string name="choose_game_folder">Choose game folder</string>
+    <string name="importing_files">Adding game: %1$d%% · %2$d of %3$d files</string>
+    <string name="scanning_game_files">Scanning game files: %1$d found</string>
+    <string name="finalizing_game_import">Finishing game setup…</string>
+    <string name="cancel_import">Cancel import</string>
+    <string name="import_completed">Game added to your library</string>
+    <string name="delete_game">Delete game</string>
+    <string name="delete_game_title">Delete %1$s?</string>
+    <string name="delete_game_message">The game will be removed from the library and its saved data deleted. The originally selected folder will not be changed.</string>
+    <string name="delete">Delete</string>
+    <string name="clear_web_data">Clear game data</string>
+    <string name="clear_web_data_title">Clear all data for %1$s?</string>
+    <string name="clear_web_data_message">This removes browser data, runtime files, and all saves for this game.</string>
+    <plurals name="game_count">
+        <item quantity="one">%1$d game</item>
+        <item quantity="other">%1$d games</item>
+    </plurals>
+    <plurals name="plugin_count">
+        <item quantity="one">%1$d plugin</item>
+        <item quantity="other">%1$d plugins</item>
+    </plurals>
+</resources>

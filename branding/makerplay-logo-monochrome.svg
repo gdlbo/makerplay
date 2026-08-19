@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <mask id="cutouts">
+    <rect width="512" height="512" fill="white"/>
+    <path d="M158 261h66M191 228v66" stroke="black" stroke-width="18" stroke-linecap="round"/>
+    <circle cx="318" cy="244" r="14" fill="black"/>
+    <circle cx="338" cy="224" r="14" fill="black"/>
+    <circle cx="358" cy="244" r="14" fill="black"/>
+    <circle cx="338" cy="264" r="14" fill="black"/>
+  </mask>
+  <path d="M132 221c10-41 47-71 89-71h70c42 0 79 30 89 71l27 106c8 31-30 53-53 30l-42-42H200l-42 42c-23 23-61 1-53-30l27-106Z" fill="currentColor" mask="url(#cutouts)"/>
+</svg>

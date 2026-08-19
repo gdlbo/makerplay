@@ -1,0 +1,38 @@
+<resources>
+    <string name="library_title">Библиотека игр</string>
+    <string name="settings">Настройки</string>
+    <string name="import_another_game">Импортировать игру</string>
+    <string name="run_runtime_smoke_test">Запустить проверку среды</string>
+    <string name="play_game">Играть: %1$s</string>
+    <string name="play">Играть</string>
+    <string name="game_actions">Действия с игрой</string>
+    <string name="game_settings">Настройки игры</string>
+    <string name="game_artwork">Обложка %1$s</string>
+    <string name="no_imported_games">В библиотеке пока нет игр</string>
+    <string name="empty_library_description">Импортируйте папку с игрой RPG Maker MV или MZ, чтобы начать играть</string>
+    <string name="choose_game_folder">Выбрать папку с игрой</string>
+    <string name="importing_files">Добавление игры: %1$d%% · %2$d из %3$d файлов</string>
+    <string name="scanning_game_files">Поиск файлов игры: найдено %1$d</string>
+    <string name="finalizing_game_import">Завершение добавления игры…</string>
+    <string name="cancel_import">Отменить импорт</string>
+    <string name="import_completed">Игра добавлена в библиотеку</string>
+    <string name="delete_game">Удалить игру</string>
+    <string name="delete_game_title">Удалить %1$s?</string>
+    <string name="delete_game_message">Игра будет удалена из библиотеки вместе с сохранениями. Исходная папка не изменится</string>
+    <string name="delete">Удалить</string>
+    <string name="clear_web_data">Очистить данные игры</string>
+    <string name="clear_web_data_title">Очистить все данные для %1$s?</string>
+    <string name="clear_web_data_message">Будут удалены браузерные данные, runtime-файлы и все сохранения этой игры.</string>
+    <plurals name="game_count">
+        <item quantity="one">%1$d игра</item>
+        <item quantity="few">%1$d игры</item>
+        <item quantity="many">%1$d игр</item>
+        <item quantity="other">%1$d игры</item>
+    </plurals>
+    <plurals name="plugin_count">
+        <item quantity="one">%1$d плагин</item>
+        <item quantity="few">%1$d плагина</item>
+        <item quantity="many">%1$d плагинов</item>
+        <item quantity="other">%1$d плагина</item>
+    </plurals>
+</resources>

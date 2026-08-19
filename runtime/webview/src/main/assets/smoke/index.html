@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta content="width=device-width,initial-scale=1" name="viewport">
+    <title>MakerPlay runtime smoke</title>
+    <style>
+        html,body{height:100%;margin:0;background:#101214;color:#f4f5f6;font:16px system-ui}
+        main{height:100%;display:grid;place-content:center;text-align:center;gap:12px}
+        canvas{width:96px;height:96px;margin:auto}
+        strong{color:#50d890}
+    </style>
+</head>
+<body>
+<main>
+    <canvas height="96" id="gl" width="96"></canvas>
+    <strong id="status">Checking WebGL...</strong></main>
+<script>
+    const canvas = document.querySelector('#gl');
+    const gl = canvas.getContext('webgl');
+    const status = document.querySelector('#status');
+    if (gl) {
+      gl.clearColor(0.12, 0.62, 0.38, 1);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      status.textContent = 'Runtime smoke passed';
+      document.title = 'MakerPlay smoke passed';
+    } else {
+      status.textContent = 'WebGL unavailable';
+      status.style.color = '#ff7474';
+    }
+</script>
+</body>
+</html>

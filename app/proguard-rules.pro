@@ -1,0 +1,1 @@
+# Runtime JavaScript bridges must opt in with explicit @JavascriptInterface methods.

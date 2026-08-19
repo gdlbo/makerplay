@@ -1,0 +1,29 @@
+<resources>
+    <string name="navigate_back">Назад</string>
+    <string name="choose_game_folder">Выбрать папку с игрой</string>
+    <string name="choose_default_folder">Выбрать папку по умолчанию</string>
+    <string name="use_this_folder">Использовать эту папку</string>
+    <string name="directory_read_error">Не удалось прочитать эту папку</string>
+    <string name="storage_locations">РАСПОЛОЖЕНИЯ ХРАНИЛИЩА</string>
+    <string name="no_storage_locations">Нет доступных общих хранилищ</string>
+    <string name="import_this_folder">Импортировать эту папку</string>
+    <string name="copy_mode">Копировать</string>
+    <string name="direct_mode">Напрямую</string>
+    <string name="open_this_folder_directly">Добавить эту папку</string>
+    <string name="use_system_picker">Открыть системный выбор папки</string>
+    <string name="storage_access_title">Найдите папку с игрой</string>
+    <string name="storage_access_description">Разрешите доступ к хранилищу, чтобы открывать папки RPG Maker. Импортированные игры копируются в хранилище приложения, исходные файлы не изменяются</string>
+    <string name="open_storage_settings">Открыть настройки доступа к хранилищу</string>
+    <string name="import_source_invalid">Некорректный источник импорта</string>
+    <string name="selected_folder_unavailable">Выбранная папка недоступна</string>
+    <string name="import_request_invalid">Некорректный запрос импорта</string>
+    <string name="storage_access_revoked">Доступ ко всему хранилищу отозван. Выберите папку системным средством</string>
+    <string name="import_failed">Не удалось импортировать игру</string>
+    <string name="import_enqueue_failed">Не удалось поставить выбранную папку в очередь на импорт</string>
+    <string name="direct_mode_requires_file_access">Для прямого режима нужен полный доступ к файлам</string>
+    <string name="cancel_import_notification">Отменить импорт</string>
+    <string name="import_notification_title">Импорт игры RPG Maker</string>
+    <string name="import_notification_text">Копирование файлов в хранилище приложения</string>
+    <string name="link_notification_title">Добавление игры RPG Maker</string>
+    <string name="link_notification_text">Индексирование файлов в выбранной папке</string>
+</resources>

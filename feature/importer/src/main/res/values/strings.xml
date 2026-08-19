@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="navigate_back">Back</string>
+    <string name="choose_game_folder">Choose game folder</string>
+    <string name="choose_default_folder">Choose default folder</string>
+    <string name="use_this_folder">Use this folder</string>
+    <string name="directory_read_error">This directory cannot be read.</string>
+    <string name="storage_locations">STORAGE LOCATIONS</string>
+    <string name="no_storage_locations">No readable shared storage locations are available.</string>
+    <string name="import_this_folder">Import this folder</string>
+    <string name="copy_mode">Copy</string>
+    <string name="direct_mode">Direct</string>
+    <string name="open_this_folder_directly">Add this folder</string>
+    <string name="use_system_picker">Use system folder picker</string>
+    <string name="storage_access_title">Find your game folder</string>
+    <string name="storage_access_description">Allow storage access to browse RPG Maker folders directly. Imported games are copied into private app storage; originals are never changed.</string>
+    <string name="open_storage_settings">Open storage access settings</string>
+    <string name="import_source_invalid">The import source type is invalid.</string>
+    <string name="selected_folder_unavailable">The selected folder is unavailable.</string>
+    <string name="import_request_invalid">The import request is invalid.</string>
+    <string name="storage_access_revoked">Full storage access was revoked. Choose the folder with the system picker.</string>
+    <string name="import_failed">The game could not be imported.</string>
+    <string name="import_enqueue_failed">The selected folder could not be queued for import.</string>
+    <string name="direct_mode_requires_file_access">Direct mode requires full file access.</string>
+    <string name="cancel_import_notification">Cancel import</string>
+    <string name="import_notification_title">Importing RPG Maker game</string>
+    <string name="import_notification_text">Copying files into private storage</string>
+    <string name="link_notification_title">Adding RPG Maker game</string>
+    <string name="link_notification_text">Indexing files in the selected folder</string>
+</resources>
