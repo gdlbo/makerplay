@@ -1,41 +1,48 @@
 package io.github.gdlbo.makerplay.feature.settings
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEngineMode
 import io.github.gdlbo.makerplay.runtime.api.RuntimeOrientation
@@ -46,9 +53,13 @@ import io.github.gdlbo.makerplay.runtime.api.SUPPORTED_FPS_LIMITS
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
     defaultGameFolder: String,
     onDefaultGameFolderChange: (String) -> Unit,
     onChooseDefaultGameFolder: () -> Unit,
+    defaultInstallDirect: Boolean,
+    onDefaultInstallDirectChange: (Boolean) -> Unit,
     runtimeSettings: RuntimeSettings,
     onRuntimeSettingsChange: (RuntimeSettings) -> Unit,
     onBack: () -> Unit,
@@ -56,6 +67,7 @@ fun SettingsScreen(
     BackHandler(onBack = onBack)
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.settings_title)) },
@@ -72,49 +84,87 @@ fun SettingsScreen(
     ) { contentPadding ->
         Column(
             modifier = Modifier
-                .fillMaxSize()
                 .padding(contentPadding)
+                .widthIn(max = 720.dp)
+                .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            SettingsSection(stringResource(R.string.appearance_section))
+            ChoiceSetting(
+                title = stringResource(R.string.app_theme),
+                values = ThemeMode.entries,
+                selected = themeMode,
+                label = { mode ->
+                    stringResource(
+                        when (mode) {
+                            ThemeMode.SYSTEM -> R.string.theme_system
+                            ThemeMode.LIGHT -> R.string.theme_light
+                            ThemeMode.DARK -> R.string.theme_dark
+                        },
+                    )
+                },
+                onSelected = onThemeModeChange,
+            )
             Text(
                 stringResource(R.string.library_section),
                 modifier = Modifier.padding(start = 12.dp, top = 12.dp),
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.primary,
             )
-            TextField(
-                value = defaultGameFolder,
-                onValueChange = onDefaultGameFolderChange,
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text(stringResource(R.string.default_game_folder)) },
-                placeholder = { Text(stringResource(R.string.default_game_folder_example)) },
-                leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
-                trailingIcon = {
-                    if (defaultGameFolder.isNotEmpty()) {
-                        IconButton(onClick = { onDefaultGameFolderChange("") }) {
-                            Icon(
-                                Icons.Default.Clear,
-                                contentDescription = stringResource(R.string.clear_default_game_folder),
-                            )
-                        }
+            ListItem(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onChooseDefaultGameFolder),
+                leadingContent = {
+                    Icon(Icons.Default.FolderOpen, contentDescription = null)
+                },
+                headlineContent = {
+                    Text(stringResource(R.string.default_game_folder))
+                },
+                supportingContent = {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            defaultGameFolder.ifBlank {
+                                stringResource(R.string.default_game_folder_example)
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.MiddleEllipsis,
+                        )
+                        Text(
+                            stringResource(R.string.default_game_folder_description),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 },
-                supportingText = { Text(stringResource(R.string.default_game_folder_description)) },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (defaultGameFolder.isNotEmpty()) {
+                            IconButton(
+                                onClick = { onDefaultGameFolderChange("") },
+                            ) {
+                                Icon(
+                                    Icons.Default.Clear,
+                                    contentDescription = stringResource(R.string.clear_default_game_folder),
+                                )
+                            }
+                        }
+                        SettingsChevron()
+                    }
+                },
             )
-            FilledTonalButton(
-                onClick = onChooseDefaultGameFolder,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Icon(Icons.Default.FolderOpen, contentDescription = null)
-                Text(
-                    stringResource(R.string.choose_default_game_folder),
-                    modifier = Modifier.padding(start = 8.dp),
-                )
-            }
+            ChoiceSetting(
+                title = stringResource(R.string.default_import_mode),
+                values = listOf(false, true),
+                selected = defaultInstallDirect,
+                label = { mode ->
+                    stringResource(
+                        if (mode) R.string.default_direct_mode else R.string.default_copy_mode,
+                    )
+                },
+                onSelected = onDefaultInstallDirectChange,
+            )
             RuntimeSettingsOptions(runtimeSettings, onRuntimeSettingsChange)
         }
     }
@@ -133,6 +183,7 @@ fun GameSettingsScreen(
 ) {
     BackHandler(onBack = onBack)
     Scaffold(
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             TopAppBar(
                 title = { Text(stringResource(R.string.game_settings_title, gameTitle)) },
@@ -149,10 +200,11 @@ fun GameSettingsScreen(
     ) { contentPadding ->
         Column(
             modifier = Modifier
-                .fillMaxSize()
                 .padding(contentPadding)
+                .widthIn(max = 720.dp)
+                .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .padding(horizontal = 16.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             ToggleSetting(
@@ -354,7 +406,7 @@ private fun ColumnScope.RuntimeSettingsOptions(
 private fun SettingsSection(title: String) {
     Text(
         title,
-        modifier = Modifier.padding(start = 12.dp, top = 4.dp),
+        modifier = Modifier.padding(start = 12.dp, top = 8.dp),
         style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
     )
@@ -368,27 +420,52 @@ private fun <T> ChoiceSetting(
     label: @Composable (T) -> String,
     onSelected: (T) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            title,
-            modifier = Modifier.padding(horizontal = 12.dp),
-            style = MaterialTheme.typography.titleMedium
-        )
-        SingleChoiceSegmentedButtonRow(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState()),
-        ) {
-            values.forEachIndexed { index, value ->
-                SegmentedButton(
-                    selected = selected == value,
-                    onClick = { onSelected(value) },
-                    shape = SegmentedButtonDefaults.itemShape(index, values.size),
-                ) {
-                    Text(label(value))
+    var expanded by remember { mutableStateOf(false) }
+    ListItem(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = true },
+        headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
+        supportingContent = {
+            Text(label(selected), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        },
+        trailingContent = {
+            SettingsChevron()
+        },
+    )
+    if (expanded) {
+        AlertDialog(
+            onDismissRequest = { expanded = false },
+            title = { Text(title) },
+            text = {
+                Column {
+                    values.forEach { value ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .selectable(
+                                    selected = selected == value,
+                                    role = Role.RadioButton,
+                                    onClick = {
+                                        onSelected(value)
+                                        expanded = false
+                                    },
+                                )
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            RadioButton(selected = selected == value, onClick = null)
+                            Text(
+                                label(value),
+                                modifier = Modifier.padding(start = 12.dp),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                    }
                 }
-            }
-        }
+            },
+            confirmButton = {},
+        )
     }
 }
 
@@ -399,22 +476,40 @@ private fun ToggleSetting(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Row(
+    ListItem(
         modifier = Modifier
             .fillMaxWidth()
             .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
+            .padding(horizontal = 0.dp),
+        headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
+        supportingContent = {
             Text(
                 description,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-        Switch(checked = checked, onCheckedChange = null)
+        },
+        trailingContent = {
+            Box(
+                modifier = Modifier.width(52.dp),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                Switch(checked = checked, onCheckedChange = null)
+            }
+        },
+    )
+}
+
+@Composable
+private fun SettingsChevron() {
+    Box(
+        modifier = Modifier.width(52.dp),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Icon(
+            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }

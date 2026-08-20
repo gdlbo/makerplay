@@ -4,6 +4,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -59,10 +62,18 @@ internal fun ImportStatus(state: ImportUiState, onCancel: () -> Unit) {
                     },
                     style = MaterialTheme.typography.titleSmall,
                 )
-                if (fraction == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+                if (fraction == null) LinearProgressIndicator(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(50)),
+                )
                 else LinearProgressIndicator(
                     progress = { fraction },
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(50)),
                 )
                 HorizontalDivider()
                 TextButton(onClick = onCancel, modifier = Modifier.align(Alignment.End)) {

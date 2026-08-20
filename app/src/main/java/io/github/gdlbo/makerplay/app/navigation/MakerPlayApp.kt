@@ -32,6 +32,7 @@ import androidx.navigation.compose.rememberNavController
 import io.github.gdlbo.makerplay.app.AppGraph
 import io.github.gdlbo.makerplay.app.ui.MakerPlayTheme
 import io.github.gdlbo.makerplay.feature.importer.StorageRoots
+import io.github.gdlbo.makerplay.feature.importer.GameInstallMode
 import io.github.gdlbo.makerplay.feature.importer.ui.StorageBrowserScreen
 import io.github.gdlbo.makerplay.feature.library.LibraryScreen
 import io.github.gdlbo.makerplay.feature.player.runtime.RuntimeHostScreen
@@ -52,7 +53,9 @@ fun MakerPlayApp(graph: AppGraph) {
     var hasFullStorageAccess by remember { mutableStateOf(Environment.isExternalStorageManager()) }
     var storageRefresh by remember { mutableIntStateOf(0) }
     var defaultGameFolder by remember { mutableStateOf(graph.defaultGameFolder) }
+    var defaultInstallMode by remember { mutableStateOf(graph.defaultInstallMode) }
     var runtimeSettings by remember { mutableStateOf(graph.runtimeSettings) }
+    var themeMode by remember { mutableStateOf(graph.themeMode) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -104,7 +107,7 @@ fun MakerPlayApp(graph: AppGraph) {
             }
         },
     )
-    MakerPlayTheme {
+    MakerPlayTheme(themeMode = themeMode) {
         Surface(modifier = Modifier.fillMaxSize()) {
             NavHost(navController = navController, startDestination = "library") {
                 composable("library") {
@@ -131,6 +134,7 @@ fun MakerPlayApp(graph: AppGraph) {
                         hasFullStorageAccess = hasFullStorageAccess,
                         roots = storageRoots,
                         initialDirectoryPath = defaultGameFolder,
+                        initialInstallMode = defaultInstallMode,
                         onRequestFullStorageAccess = ::requestFullStorageAccess,
                         onUseSystemPicker = { directoryPicker.launch(null) },
                         onInstallDirectory = { directory, installMode ->
@@ -143,7 +147,17 @@ fun MakerPlayApp(graph: AppGraph) {
                 }
                 composable("settings") {
                     SettingsScreen(
+                        themeMode = themeMode,
+                        onThemeModeChange = { mode ->
+                            themeMode = mode
+                            graph.themeMode = mode
+                        },
                         defaultGameFolder = defaultGameFolder,
+                        defaultInstallDirect = defaultInstallMode == GameInstallMode.DIRECT,
+                        onDefaultInstallDirectChange = { direct ->
+                            defaultInstallMode = if (direct) GameInstallMode.DIRECT else GameInstallMode.COPY
+                            graph.defaultInstallMode = defaultInstallMode
+                        },
                         onDefaultGameFolderChange = { path ->
                             defaultGameFolder = path
                             graph.defaultGameFolder = path
@@ -162,6 +176,7 @@ fun MakerPlayApp(graph: AppGraph) {
                         hasFullStorageAccess = hasFullStorageAccess,
                         roots = storageRoots,
                         initialDirectoryPath = defaultGameFolder,
+                        initialInstallMode = defaultInstallMode,
                         onRequestFullStorageAccess = ::requestFullStorageAccess,
                         onUseSystemPicker = {},
                         onInstallDirectory = { _, _ -> },

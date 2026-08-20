@@ -2,7 +2,9 @@ package io.github.gdlbo.makerplay.feature.library
 
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -69,6 +71,7 @@ fun LibraryScreen(
     }
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = { LibraryTopBar(games = games, onSettings = onSettings) },
         bottomBar = {
             LibraryBottomBar(
@@ -90,20 +93,24 @@ fun LibraryScreen(
                 onImport = onImport,
             )
         } else {
-            LazyVerticalGrid(
-                columns = GridCells.Adaptive(minSize = 156.dp),
-                state = gridState,
+            BoxWithConstraints(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(contentPadding),
-                contentPadding = PaddingValues(16.dp),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                item(span = { GridItemSpan(maxLineSpan) }) {
-                    ImportStatus(importState, onCancelImport)
-                }
-                items(orderedGames, key = GameSummary::id) { game ->
+                val compact = maxWidth < 600.dp
+                LazyVerticalGrid(
+                    columns = GridCells.Adaptive(minSize = if (compact) 156.dp else 196.dp),
+                    state = gridState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(if (compact) 16.dp else 24.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp),
+                ) {
+                    item(span = { GridItemSpan(maxLineSpan) }) {
+                        ImportStatus(importState, onCancelImport)
+                    }
+                    items(orderedGames, key = GameSummary::id) { game ->
                     val isDragged = draggedGameId == game.id
                     GameCard(
                         game = game,
@@ -195,6 +202,7 @@ fun LibraryScreen(
                         onDelete = { onDelete(game) },
                         onClearWebData = { onClearWebData(game) },
                     )
+                    }
                 }
             }
         }

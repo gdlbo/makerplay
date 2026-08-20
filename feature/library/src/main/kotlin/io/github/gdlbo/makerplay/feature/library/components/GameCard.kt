@@ -18,10 +18,10 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -135,16 +135,12 @@ internal fun GameCard(
             }
         }
     }
-    ElevatedCard(
+    Card(
         onClick = onPlay,
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.elevatedCardColors(
+        colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-        ),
-        elevation = CardDefaults.elevatedCardElevation(
-            defaultElevation = 2.dp,
-            pressedElevation = 4.dp,
         ),
     ) {
         Column {
@@ -184,7 +180,8 @@ internal fun GameCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     MetadataLabel(
@@ -192,7 +189,6 @@ internal fun GameCard(
                             game.engine.name,
                             game.engineVersion
                         ).joinToString(" "),
-                        modifier = Modifier.weight(1f),
                     )
                     MetadataLabel(
                         text = game.plugins.size.toString(),
@@ -203,7 +199,6 @@ internal fun GameCard(
                                 modifier = Modifier.size(14.dp),
                             )
                         },
-                        modifier = Modifier.weight(1f),
                     )
                 }
                 Button(
@@ -247,6 +242,10 @@ private fun GameActionsMenu(
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { onExpandedChange(false) },
+            shape = MaterialTheme.shapes.extraLarge,
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 3.dp,
+            shadowElevation = 0.dp,
         ) {
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.game_settings)) },

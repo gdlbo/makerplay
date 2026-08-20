@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -22,6 +21,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,16 +40,23 @@ import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerMode
 
 @Composable
 internal fun RuntimePreparing(modifier: Modifier = Modifier) {
-    Column(
+    Surface(
         modifier = modifier,
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        tonalElevation = 3.dp,
+    ) {
+      Column(
+        modifier = Modifier.padding(horizontal = 28.dp, vertical = 22.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(16.dp),
-    ) {
-        CircularProgressIndicator(color = Color.White)
+      ) {
+        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         Text(
             text = stringResource(R.string.preparing_runtime),
-            color = Color.White,
         )
+      }
     }
 }
 
@@ -71,9 +78,10 @@ internal fun PlayerToolbar(
 
     Surface(
         modifier = modifier
+            .safeDrawingPadding()
             .padding(12.dp)
             .zIndex(3f),
-        shape = RoundedCornerShape(8.dp),
+        shape = MaterialTheme.shapes.large,
         color = Color.Black.copy(alpha = .68f),
         contentColor = Color.White,
     ) {

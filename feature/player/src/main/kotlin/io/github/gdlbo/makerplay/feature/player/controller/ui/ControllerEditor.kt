@@ -1,6 +1,5 @@
 package io.github.gdlbo.makerplay.feature.player.controller.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -15,7 +14,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronLeft
@@ -34,7 +34,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -46,7 +45,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,11 +59,6 @@ import io.github.gdlbo.makerplay.input.VirtualControllerProfileValidator
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-
-private val EditorSurfaceColor = Color(0xF0222428)
-private val EditorItemColor = Color.White.copy(alpha = .08f)
-private val EditorBorderColor = Color.White.copy(alpha = .14f)
-private val EditorMutedContent = Color.White.copy(alpha = .68f)
 
 @Composable
 internal fun ControllerEditorPanel(
@@ -120,11 +113,10 @@ internal fun ControllerEditorPanel(
     if (!expanded) {
         Surface(
             modifier = modifier,
-            shape = RoundedCornerShape(8.dp),
-            color = EditorSurfaceColor,
-            contentColor = Color.White,
-            border = BorderStroke(1.dp, EditorBorderColor),
-            shadowElevation = 4.dp,
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 3.dp,
         ) {
             IconButton(onClick = { expanded = true }, modifier = Modifier.size(44.dp)) {
                 Icon(Icons.Default.Tune, stringResource(R.string.controller_editor_expand))
@@ -133,14 +125,15 @@ internal fun ControllerEditorPanel(
     } else {
         Surface(
             modifier = modifier,
-            shape = RoundedCornerShape(8.dp),
-            color = EditorSurfaceColor,
-            contentColor = Color.White,
-            border = BorderStroke(1.dp, EditorBorderColor),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            contentColor = MaterialTheme.colorScheme.onSurface,
             shadowElevation = 6.dp,
         ) {
             Column(
-                modifier = Modifier.padding(10.dp),
+                modifier = Modifier
+                    .padding(10.dp)
+                    .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(7.dp),
             ) {
                 EditorHeader(
@@ -154,7 +147,7 @@ internal fun ControllerEditorPanel(
                     onCollapse = { expanded = false },
                     onReset = { showResetDialog = true },
                 )
-                HorizontalDivider(color = EditorBorderColor)
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 ControlPicker(
                     controls = profile.controls,
                     selectedId = selected.id,
@@ -233,21 +226,21 @@ private fun EditorHeader(
                         selectedIndex + 1,
                         controlCount
                     ),
-                    color = EditorMutedContent,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelMedium,
                 )
             }
         }
-        IconButton(onClick = onReset, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = onReset, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Default.Restore, stringResource(R.string.controller_reset_layout))
         }
-        IconButton(enabled = canDelete, onClick = onDelete, modifier = Modifier.size(40.dp)) {
+        IconButton(enabled = canDelete, onClick = onDelete, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Default.DeleteOutline, stringResource(R.string.controller_delete))
         }
-        IconButton(enabled = canAdd, onClick = onAdd, modifier = Modifier.size(40.dp)) {
+        IconButton(enabled = canAdd, onClick = onAdd, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Default.Add, stringResource(R.string.controller_add_button))
         }
-        IconButton(onClick = onCollapse, modifier = Modifier.size(40.dp)) {
+        IconButton(onClick = onCollapse, modifier = Modifier.size(48.dp)) {
             Icon(Icons.Default.ExpandLess, stringResource(R.string.controller_editor_collapse))
         }
     }
@@ -263,7 +256,7 @@ private fun ControlPicker(
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
             text = stringResource(R.string.controller_button_list),
-            color = EditorMutedContent,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.labelSmall,
         )
         LazyRow(
@@ -276,15 +269,15 @@ private fun ControlPicker(
                 Surface(
                     onClick = { onSelected(control.id) },
                     modifier = Modifier
-                        .height(38.dp)
+                        .height(48.dp)
                         .widthIn(min = 44.dp, max = 96.dp),
-                    shape = RoundedCornerShape(6.dp),
-                    color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .32f) else EditorItemColor,
-                    contentColor = Color.White,
-                    border = BorderStroke(
-                        1.dp,
-                        if (selected) MaterialTheme.colorScheme.primary else EditorBorderColor,
-                    ),
+                    shape = MaterialTheme.shapes.small,
+                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
+                    contentColor = if (selected) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
                 ) {
                     Box(
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
@@ -306,10 +299,8 @@ private fun ControlPicker(
 @Composable
 private fun DPadSummary() {
     Surface(
-        shape = RoundedCornerShape(6.dp),
-        color = EditorItemColor,
-        contentColor = Color.White,
-        border = BorderStroke(1.dp, EditorBorderColor),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
@@ -374,18 +365,17 @@ private fun ActionSelector(
                     )
                 )
             },
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(48.dp),
         ) {
             Icon(Icons.Default.ChevronLeft, stringResource(R.string.controller_previous_action))
         }
         Surface(
             modifier = Modifier
                 .weight(1f)
-                .height(40.dp),
-            shape = RoundedCornerShape(6.dp),
-            color = EditorItemColor,
-            contentColor = Color.White,
-            border = BorderStroke(1.dp, EditorBorderColor),
+                .height(48.dp),
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.surfaceContainerHighest,
+            contentColor = MaterialTheme.colorScheme.onSurface,
         ) {
             Box(
                 modifier = Modifier.padding(horizontal = 10.dp),
@@ -412,7 +402,7 @@ private fun ActionSelector(
                     )
                 )
             },
-            modifier = Modifier.size(40.dp),
+            modifier = Modifier.size(48.dp),
         ) {
             Icon(Icons.Default.ChevronRight, stringResource(R.string.controller_next_action))
         }
@@ -456,14 +446,12 @@ private fun ShapeButton(
 ) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.size(40.dp),
-        shape = RoundedCornerShape(6.dp),
-        color = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .32f) else EditorItemColor,
-        contentColor = if (selected) MaterialTheme.colorScheme.primary else Color.White,
-        border = BorderStroke(
-            1.dp,
-            if (selected) MaterialTheme.colorScheme.primary else EditorBorderColor
-        ),
+        modifier = Modifier.size(48.dp),
+        shape = MaterialTheme.shapes.small,
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer
+        else MaterialTheme.colorScheme.surfaceContainerHighest,
+        contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
+        else MaterialTheme.colorScheme.onSurface,
     ) {
         Box(contentAlignment = Alignment.Center) { content() }
     }
@@ -572,7 +560,7 @@ private fun ControlSlider(
         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(
                 stringResource(labelRes),
-                color = EditorMutedContent,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall
             )
             Text(
@@ -585,11 +573,6 @@ private fun ControlSlider(
             value = value,
             onValueChange = onValueChange,
             valueRange = valueRange,
-            colors = SliderDefaults.colors(
-                thumbColor = MaterialTheme.colorScheme.primary,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = EditorBorderColor,
-            ),
         )
     }
 }

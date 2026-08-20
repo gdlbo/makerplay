@@ -3,7 +3,9 @@ package io.github.gdlbo.makerplay.feature.player.runtime
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
@@ -38,6 +40,7 @@ import io.github.gdlbo.makerplay.feature.player.runtime.components.CheatOverlay
 import io.github.gdlbo.makerplay.feature.player.runtime.components.PlayerBackButton
 import io.github.gdlbo.makerplay.feature.player.runtime.components.PlayerToolbar
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeFailureScreen
+import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeOverlayTheme
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeFailureUi
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimePreparing
 import io.github.gdlbo.makerplay.feature.player.runtime.components.buildRuntimeFailureReport
@@ -214,7 +217,8 @@ fun RuntimeHostScreen(
         .fillMaxSize()
         .then(if (request.settings.immersiveMode) Modifier else Modifier.safeDrawingPadding())
         .background(Color.Black)
-    Box(modifier = runtimeModifier) {
+    BoxWithConstraints(modifier = runtimeModifier) {
+        val compactHeight = maxHeight < 480.dp
         when {
             session != null -> backend.RuntimeContent(
                 session = session!!,
@@ -308,23 +312,26 @@ fun RuntimeHostScreen(
                 modifier = Modifier.fillMaxSize(),
             )
             if (editControls) {
-                ControllerEditorPanel(
-                    profile = layouts.activeProfile(),
-                    selectedId = selectedControlId,
-                    onProfileChanged = { layouts = layouts.updateActive(it) },
-                    onSelected = { selectedControlId = it },
-                    onResetProfile = {
-                        val resetLayouts = layouts.resetActive()
-                        layouts = resetLayouts
-                        selectedControlId = resetLayouts.activeProfile().controls.firstOrNull()?.id
-                        scope.launch(Dispatchers.IO) { layoutStore?.save(resetLayouts) }
-                    },
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .safeDrawingPadding()
-                        .padding(start = 12.dp, top = 64.dp, end = 12.dp)
-                        .widthIn(max = 600.dp),
-                )
+                RuntimeOverlayTheme {
+                    ControllerEditorPanel(
+                        profile = layouts.activeProfile(),
+                        selectedId = selectedControlId,
+                        onProfileChanged = { layouts = layouts.updateActive(it) },
+                        onSelected = { selectedControlId = it },
+                        onResetProfile = {
+                            val resetLayouts = layouts.resetActive()
+                            layouts = resetLayouts
+                            selectedControlId = resetLayouts.activeProfile().controls.firstOrNull()?.id
+                            scope.launch(Dispatchers.IO) { layoutStore?.save(resetLayouts) }
+                        },
+                        modifier = Modifier
+                            .align(Alignment.TopCenter)
+                            .safeDrawingPadding()
+                            .padding(start = 12.dp, top = if (compactHeight) 56.dp else 64.dp, end = 12.dp)
+                            .widthIn(max = 600.dp)
+                            .heightIn(max = if (compactHeight) 320.dp else 480.dp),
+                    )
+                }
             }
         }
         if (session != null && gameReady && !showCheats) {

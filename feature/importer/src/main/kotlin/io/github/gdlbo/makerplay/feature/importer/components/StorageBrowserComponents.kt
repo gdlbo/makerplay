@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Gamepad
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.Button
@@ -48,6 +49,18 @@ internal fun InstallModeSelector(
             }
         }
     }
+    Text(
+        stringResource(
+            if (installMode == GameInstallMode.COPY) {
+                R.string.copy_mode_description
+            } else {
+                R.string.direct_mode_description
+            },
+        ),
+        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        style = MaterialTheme.typography.bodySmall,
+    )
 }
 
 @Composable
@@ -99,31 +112,38 @@ internal fun StoragePermissionContent(
 }
 
 @Composable
-internal fun DirectoryRow(directory: File, isRoot: Boolean, onClick: () -> Unit) {
-    Surface(
+internal fun DirectoryRow(
+    directory: File,
+    isRoot: Boolean,
+    isGameFolder: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = MaterialTheme.shapes.medium,
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Icon(
+            if (isRoot) Icons.Default.Storage else Icons.Default.Folder,
+            contentDescription = null
+        )
+        Text(
+            directory.name.ifBlank { directory.path },
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        if (isGameFolder) {
             Icon(
-                if (isRoot) Icons.Default.Storage else Icons.Default.Folder,
-                contentDescription = null
+                Icons.Default.Gamepad,
+                contentDescription = stringResource(R.string.game_folder_badge),
+                tint = MaterialTheme.colorScheme.primary,
             )
-            Text(
-                directory.name.ifBlank { directory.path },
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyLarge,
-            )
-            Icon(Icons.Default.ChevronRight, contentDescription = null)
         }
+        Icon(Icons.Default.ChevronRight, contentDescription = null)
     }
 }

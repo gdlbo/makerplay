@@ -162,6 +162,7 @@ class PrivateGameStore(private val gamesRoot: File) {
         }
         require(properties.getProperty("formatVersion") in SUPPORTED_METADATA_VERSIONS)
         val pluginCount = properties.getProperty("pluginCount").toInt().coerceIn(0, MAX_PLUGINS)
+        val directSourcePath = properties.getProperty("directSourcePath")?.ifBlank { null }
         StoredGame(
             summary = GameSummary(
                 id = properties.getProperty("id"),
@@ -175,7 +176,7 @@ class PrivateGameStore(private val gamesRoot: File) {
                     ?: findLegacyArtwork(directory),
                 installedAtEpochMillis = properties.getProperty("installedAtEpochMillis").toLong(),
             ),
-            directSourcePath = properties.getProperty("directSourcePath")?.ifBlank { null },
+            directSourcePath = directSourcePath,
         )
     }.getOrNull()
 

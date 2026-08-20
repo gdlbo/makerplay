@@ -2,12 +2,20 @@
 <resources>
     <string name="settings_title">Settings</string>
     <string name="navigate_back">Back</string>
+    <string name="appearance_section">APPEARANCE</string>
+    <string name="app_theme">App theme</string>
+    <string name="theme_system">System default</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
     <string name="library_section">LIBRARY</string>
     <string name="default_game_folder">Default game folder</string>
     <string name="default_game_folder_example">/storage/emulated/0/Games</string>
     <string name="default_game_folder_description">The folder picker will open here when adding a game</string>
     <string name="clear_default_game_folder">Clear default folder</string>
     <string name="choose_default_game_folder">Choose folder</string>
+    <string name="default_import_mode">Default import mode</string>
+    <string name="default_copy_mode">Copy</string>
+    <string name="default_direct_mode">Direct</string>
     <string name="display_section">PICTURE</string>
     <string name="orientation">Orientation</string>
     <string name="orientation_auto">Auto</string>

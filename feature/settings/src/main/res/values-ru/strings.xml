@@ -1,12 +1,20 @@
 <resources>
     <string name="settings_title">Настройки</string>
     <string name="navigate_back">Назад</string>
+    <string name="appearance_section">ОФОРМЛЕНИЕ</string>
+    <string name="app_theme">Тема приложения</string>
+    <string name="theme_system">Как в системе</string>
+    <string name="theme_light">Светлая</string>
+    <string name="theme_dark">Тёмная</string>
     <string name="library_section">БИБЛИОТЕКА</string>
     <string name="default_game_folder">Папка по умолчанию</string>
     <string name="default_game_folder_example">/storage/emulated/0/Games</string>
     <string name="default_game_folder_description">Здесь будет открываться выбор папки при добавлении игры</string>
     <string name="clear_default_game_folder">Очистить папку по умолчанию</string>
     <string name="choose_default_game_folder">Выбрать папку</string>
+    <string name="default_import_mode">Режим импорта по умолчанию</string>
+    <string name="default_copy_mode">Копировать</string>
+    <string name="default_direct_mode">Напрямую</string>
     <string name="display_section">ИЗОБРАЖЕНИЕ</string>
     <string name="orientation">Ориентация</string>
     <string name="orientation_auto">Авто</string>

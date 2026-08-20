@@ -8,10 +8,12 @@ import androidx.core.content.edit
 import io.github.gdlbo.makerplay.diagnostics.AndroidRuntimeLogger
 import io.github.gdlbo.makerplay.diagnostics.PersistentRuntimeLogger
 import io.github.gdlbo.makerplay.feature.importer.GameCatalogRepository
+import io.github.gdlbo.makerplay.feature.importer.GameInstallMode
 import io.github.gdlbo.makerplay.feature.importer.GameImportWorker
 import io.github.gdlbo.makerplay.feature.importer.ImportCoordinator
 import io.github.gdlbo.makerplay.feature.importer.PrivateGameStore
 import io.github.gdlbo.makerplay.feature.importer.StorageRoots
+import io.github.gdlbo.makerplay.feature.settings.ThemeMode
 import io.github.gdlbo.makerplay.model.GameSummary
 import io.github.gdlbo.makerplay.runtime.api.FileGameSaveStore
 import io.github.gdlbo.makerplay.runtime.api.GameRuntimeBackend
@@ -59,6 +61,12 @@ class AppGraph(context: Context) {
             writeRuntimeSettings(value)
         }
 
+    var themeMode: ThemeMode
+        get() = preferences.enum(THEME_MODE, ThemeMode.SYSTEM)
+        set(value) {
+            preferences.edit { putString(THEME_MODE, value.name) }
+        }
+
     fun gameRuntimeSettings(gameId: String): RuntimeSettings? {
         val prefix = gameSettingsPrefix(gameId)
         return if (preferences.getBoolean(prefix + USE_COMMON_SETTINGS, true)) {
@@ -67,6 +75,12 @@ class AppGraph(context: Context) {
             readRuntimeSettings(prefix)
         }
     }
+
+    var defaultInstallMode: GameInstallMode
+        get() = preferences.enum(DEFAULT_INSTALL_MODE, GameInstallMode.COPY)
+        set(value) {
+            preferences.edit { putString(DEFAULT_INSTALL_MODE, value.name) }
+        }
 
     fun savedGameRuntimeSettings(gameId: String): RuntimeSettings? {
         val prefix = gameSettingsPrefix(gameId)
@@ -199,6 +213,8 @@ class AppGraph(context: Context) {
     private companion object {
         const val PREFERENCES_NAME = "makerplay_settings"
         const val DEFAULT_GAME_FOLDER = "default_game_folder"
+        const val DEFAULT_INSTALL_MODE = "default_install_mode"
+        const val THEME_MODE = "theme_mode"
         const val ORIENTATION = "runtime_orientation"
         const val SCALE_MODE = "runtime_scale_mode"
         const val PIXEL_SMOOTHING = "runtime_pixel_smoothing"

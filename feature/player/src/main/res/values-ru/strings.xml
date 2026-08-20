@@ -3,12 +3,12 @@
     <string name="relaunch">Перезапустить</string>
     <string name="game_could_not_start">Не удалось запустить игру</string>
     <string name="game_stopped">Игра остановлена</string>
-    <string name="preparation_failure_reason">MakerPlay не смог подготовить среду выполнения игры.</string>
-    <string name="renderer_crash_reason">Android сообщил об аварии процесса WebView. Точная причина может находиться в скопированных логах.</string>
-    <string name="renderer_stopped_reason">Android остановил процесс WebView. Обычно это происходит из-за нехватки памяти или ресурсов устройства.</string>
+    <string name="preparation_failure_reason">MakerPlay не смог подготовить среду выполнения игры</string>
+    <string name="renderer_crash_reason">Android сообщил об аварии процесса WebView. Точная причина может находиться в скопированных логах</string>
+    <string name="renderer_stopped_reason">Android остановил процесс WebView. Обычно это происходит из-за нехватки памяти или ресурсов устройства</string>
     <string name="technical_details">Технические сведения</string>
     <string name="runtime_logs">Логи среды выполнения</string>
-    <string name="logs_unavailable">Запись логов была отключена или файл не создан. Сведения об ошибке выше всё равно включены.</string>
+    <string name="logs_unavailable">Запись логов была отключена или файл не создан. Сведения об ошибке выше всё равно включены</string>
     <string name="restart_game">Перезапустить игру</string>
     <string name="copy_logs">Копировать логи</string>
     <string name="logs_copied">Логи скопированы</string>
@@ -24,7 +24,7 @@
     <string name="cheats_unavailable">Читы недоступны</string>
     <string name="navigate_back">Назад</string>
     <string name="exit_game_title">Выйти из игры?</string>
-    <string name="exit_game_message">Текущий прогресс может быть не сохранен.</string>
+    <string name="exit_game_message">Текущий прогресс может быть не сохранен</string>
     <string name="exit_game">Выйти</string>
     <string name="continue_playing">Продолжить игру</string>
     <string name="player_tools_show">Показать инструменты игрока</string>
@@ -144,7 +144,7 @@
     <string name="controller_shape_rectangle">Прямоугольная кнопка</string>
     <string name="controller_reset_layout">Сбросить раскладку</string>
     <string name="controller_reset_title">Сбросить раскладку кнопок?</string>
-    <string name="controller_reset_message">Позиции, размеры, прозрачность и добавленные кнопки текущей раскладки вернутся к исходным значениям.</string>
+    <string name="controller_reset_message">Позиции, размеры, прозрачность и добавленные кнопки текущей раскладки вернутся к исходным значениям</string>
     <string name="controller_reset_confirm">Сбросить</string>
     <string name="controller_reset_cancel">Отмена</string>
     <string name="controller_dpad">8-позиционная крестовина</string>

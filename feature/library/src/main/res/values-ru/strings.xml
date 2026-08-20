@@ -22,7 +22,7 @@
     <string name="delete">Удалить</string>
     <string name="clear_web_data">Очистить данные игры</string>
     <string name="clear_web_data_title">Очистить все данные для %1$s?</string>
-    <string name="clear_web_data_message">Будут удалены браузерные данные, runtime-файлы и все сохранения этой игры.</string>
+    <string name="clear_web_data_message">Будут удалены браузерные данные, runtime-файлы и все сохранения этой игры</string>
     <plurals name="game_count">
         <item quantity="one">%1$d игра</item>
         <item quantity="few">%1$d игры</item>

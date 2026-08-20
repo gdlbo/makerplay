@@ -197,7 +197,8 @@ internal fun RuntimeFailureScreen(
                         ) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
+                                strokeWidth = 3.dp,
+                                color = MaterialTheme.colorScheme.primary,
                             )
                             Text(
                                 stringResource(R.string.preparing_crash_report),

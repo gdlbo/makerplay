@@ -9,6 +9,12 @@
     <string name="import_this_folder">Импортировать эту папку</string>
     <string name="copy_mode">Копировать</string>
     <string name="direct_mode">Напрямую</string>
+    <string name="copy_mode_description">Копировать: занимает место и дольше импортируется, зато игра потом может работать быстрее</string>
+    <string name="direct_mode_description">Напрямую: добавляется быстро и не дублирует файлы, но нужен полный доступ и исходная папка</string>
+    <string name="game_folder_badge">Папка с игрой</string>
+    <string name="empty_folder_title">В этой папке пусто</string>
+    <string name="empty_folder_description">Выберите папку с файлами игры</string>
+    <string name="no_storage_locations_description">Нет доступного общего хранилища для чтения</string>
     <string name="open_this_folder_directly">Добавить эту папку</string>
     <string name="use_system_picker">Открыть системный выбор папки</string>
     <string name="storage_access_title">Найдите папку с игрой</string>

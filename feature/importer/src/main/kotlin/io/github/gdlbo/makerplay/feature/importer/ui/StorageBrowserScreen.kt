@@ -6,11 +6,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.FolderOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
@@ -19,6 +23,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -38,6 +43,7 @@ import io.github.gdlbo.makerplay.feature.importer.components.InstallModeSelector
 import io.github.gdlbo.makerplay.feature.importer.components.StoragePermissionContent
 import io.github.gdlbo.makerplay.feature.importer.storage.isInside
 import io.github.gdlbo.makerplay.feature.importer.storage.listDirectories
+import io.github.gdlbo.makerplay.feature.importer.storage.hasNwRuntime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -52,6 +58,7 @@ fun StorageBrowserScreen(
     onUseSystemPicker: () -> Unit,
     onInstallDirectory: (File, GameInstallMode) -> Unit,
     onSelectDirectory: ((File) -> Unit)? = null,
+    initialInstallMode: GameInstallMode = GameInstallMode.COPY,
     onBack: () -> Unit,
 ) {
     var currentPath by rememberSaveable(initialDirectoryPath, hasFullStorageAccess, roots) {
@@ -63,21 +70,29 @@ fun StorageBrowserScreen(
             )?.path,
         )
     }
-    var installMode by rememberSaveable { mutableStateOf(GameInstallMode.COPY) }
+    var installMode by rememberSaveable(initialInstallMode) { mutableStateOf(initialInstallMode) }
     val current = currentPath?.let(::File)
     var directories by remember { mutableStateOf<List<File>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
+    var gameDirectories by remember { mutableStateOf<Set<String>>(emptySet()) }
     val directoryReadError = stringResource(R.string.directory_read_error)
 
     LaunchedEffect(hasFullStorageAccess, currentPath, roots) {
-        if (!hasFullStorageAccess || current == null) {
+        gameDirectories = emptySet()
+        if (!hasFullStorageAccess) {
             directories = emptyList()
+            gameDirectories = emptySet()
             error = null
             return@LaunchedEffect
         }
-        val result = withContext(Dispatchers.IO) { listDirectories(current, roots) }
-        directories = result.getOrElse { emptyList() }
-        error = result.exceptionOrNull()?.let { directoryReadError }
+        val result = current?.let { withContext(Dispatchers.IO) { listDirectories(it, roots) } }
+        directories = result?.getOrElse { emptyList() }.orEmpty()
+        gameDirectories = withContext(Dispatchers.IO) {
+            (if (current == null) roots else directories)
+                .filter(::hasNwRuntime)
+                .mapTo(mutableSetOf()) { it.path }
+        }
+        error = result?.exceptionOrNull()?.let { directoryReadError }
     }
 
     fun navigateBack() {
@@ -94,6 +109,7 @@ fun StorageBrowserScreen(
     BackHandler(onBack = ::navigateBack)
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0.dp),
         topBar = {
             TopAppBar(
                 title = {
@@ -179,10 +195,7 @@ fun StorageBrowserScreen(
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 val visibleDirectories = if (current == null) roots else directories
                 if (visibleDirectories.isEmpty()) {
-                    Text(
-                        stringResource(R.string.no_storage_locations),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    EmptyDirectoryState(isRoot = current == null)
                 }
                 LazyColumn(
                     modifier = Modifier
@@ -194,6 +207,7 @@ fun StorageBrowserScreen(
                         DirectoryRow(
                             directory = directory,
                             isRoot = current == null,
+                            isGameFolder = directory.path in gameDirectories,
                             onClick = { currentPath = directory.path },
                         )
                     }
@@ -201,7 +215,10 @@ fun StorageBrowserScreen(
                 if (onSelectDirectory == null && installMode == GameInstallMode.COPY) {
                     FilledTonalButton(
                         onClick = onUseSystemPicker,
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(bottom = 8.dp),
                     ) {
                         Icon(Icons.Default.FolderOpen, contentDescription = null)
                         Text(
@@ -224,5 +241,32 @@ internal fun initialBrowserDirectory(
     val directory = runCatching { File(path.trim()).canonicalFile }.getOrNull() ?: return null
     return directory.takeIf { candidate ->
         candidate.isDirectory && candidate.canRead() && roots.any(candidate::isInside)
+    }
+}
+
+@Composable
+private fun EmptyDirectoryState(isRoot: Boolean) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 40.dp),
+        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Icon(
+            if (isRoot) Icons.Default.FolderOff else Icons.Default.FolderOpen,
+            contentDescription = null,
+            modifier = Modifier.size(48.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            stringResource(if (isRoot) R.string.no_storage_locations else R.string.empty_folder_title),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Text(
+            stringResource(if (isRoot) R.string.no_storage_locations_description else R.string.empty_folder_description),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
