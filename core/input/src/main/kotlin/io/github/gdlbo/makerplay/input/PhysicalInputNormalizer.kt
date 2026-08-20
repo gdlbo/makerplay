@@ -53,30 +53,24 @@ class PhysicalInputNormalizer(
         return true
     }
 
-    /** Applies a centered gamepad axis sample (axis 0 = X, axis 1 = Y). */
+    /** Applies a centered gamepad stick or hat axis sample. */
     fun onAxis(sourceId: String, axis: Int, value: Float): Boolean {
         require(sourceId.isNotBlank()) { "Input source id must not be blank" }
         require(value.isFinite()) { "Axis value must be finite" }
+        val actions = when (axis) {
+            AXIS_X, AXIS_HAT_X -> GameAction.LEFT to GameAction.RIGHT
+            AXIS_Y, AXIS_HAT_Y -> GameAction.UP to GameAction.DOWN
+            else -> return false
+        }
         val directions = axisStates.getOrPut(sourceId, ::linkedMapOf)
         val previous = directions[axis] ?: AxisDirection.CENTER
         val next = direction(value, previous)
         if (next != previous) {
             val reducerSource = axisSource(sourceId, axis)
-            when (axis) {
-                AXIS_X -> transition(
-                    reducerSource,
-                    previous,
-                    next,
-                    GameAction.LEFT,
-                    GameAction.RIGHT
-                )
-
-                AXIS_Y -> transition(reducerSource, previous, next, GameAction.UP, GameAction.DOWN)
-                else -> return false
-            }
+            transition(reducerSource, previous, next, actions.first, actions.second)
             directions[axis] = next
         }
-        return axis == AXIS_X || axis == AXIS_Y
+        return true
     }
 
     fun clearSource(sourceId: String) {
@@ -125,6 +119,8 @@ class PhysicalInputNormalizer(
     private companion object {
         const val AXIS_X = 0
         const val AXIS_Y = 1
+        const val AXIS_HAT_X = 15
+        const val AXIS_HAT_Y = 16
         const val DEFAULT_PRESS_THRESHOLD = 0.5f
         const val DEFAULT_RELEASE_THRESHOLD = 0.35f
 

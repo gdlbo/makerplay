@@ -327,6 +327,7 @@ fun RuntimeWebView(
                         responder = responder,
                         assetLoader = assetLoader,
                         runtimeScripts = runtimeScripts,
+                        networkFallbacks = runtimeScripts.networkFallbacks,
                         onRuntimeError = onRuntimeError,
                         onPageStarted = {
                             pageReady.value = false

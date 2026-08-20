@@ -45,6 +45,8 @@ internal class RuntimeInputWebView(
                 sourceId = event.physicalSourceId(),
                 x = event.getAxisValue(MotionEvent.AXIS_X),
                 y = event.getAxisValue(MotionEvent.AXIS_Y),
+                hatX = event.getAxisValue(MotionEvent.AXIS_HAT_X),
+                hatY = event.getAxisValue(MotionEvent.AXIS_HAT_Y),
             )
         }
         return super.onGenericMotionEvent(event)

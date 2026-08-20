@@ -32,12 +32,20 @@ internal class RuntimePhysicalInputCapture(
         return handled
     }
 
-    fun onAxes(sourceId: String, x: Float, y: Float): Boolean {
+    fun onAxes(
+        sourceId: String,
+        x: Float,
+        y: Float,
+        hatX: Float = 0f,
+        hatY: Float = 0f,
+    ): Boolean {
         val previous = normalizer.snapshot()
         val handledX = normalizer.onAxis(sourceId, AXIS_X, x)
         val handledY = normalizer.onAxis(sourceId, AXIS_Y, y)
-        if (handledX || handledY) publishIfChanged(previous)
-        return handledX || handledY
+        val handledHatX = normalizer.onAxis(sourceId, AXIS_HAT_X, hatX)
+        val handledHatY = normalizer.onAxis(sourceId, AXIS_HAT_Y, hatY)
+        if (handledX || handledY || handledHatX || handledHatY) publishIfChanged(previous)
+        return handledX || handledY || handledHatX || handledHatY
     }
 
     fun clearAll() {
@@ -55,5 +63,7 @@ internal class RuntimePhysicalInputCapture(
     private companion object {
         const val AXIS_X = 0
         const val AXIS_Y = 1
+        const val AXIS_HAT_X = 15
+        const val AXIS_HAT_Y = 16
     }
 }

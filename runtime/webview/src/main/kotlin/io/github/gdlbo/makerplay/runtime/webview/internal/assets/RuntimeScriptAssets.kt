@@ -7,6 +7,7 @@ internal data class RuntimeScripts(
     val steamCompatibility: String,
     val legacyCompatibility: String,
     val performanceOptimization: String,
+    val networkFallbacks: List<RuntimeNetworkFallback>,
     val frameRate: String,
     val commonJs: String,
     val workerBudget: String,
@@ -16,6 +17,14 @@ internal data class RuntimeScripts(
     val inputBridge: String,
     val mvSaveBridge: String,
     val mzSaveBridge: String,
+)
+
+internal data class RuntimeNetworkFallback(
+    val scheme: String,
+    val host: String,
+    val path: String,
+    val mimeType: String,
+    val body: ByteArray,
 )
 
 internal object RuntimeScriptAssets {
@@ -28,6 +37,15 @@ internal object RuntimeScriptAssets {
             steamCompatibility = assets.readUtf8("runtime/steam-compatibility.js"),
             legacyCompatibility = assets.readUtf8("runtime/legacy-compatibility.js"),
             performanceOptimization = assets.readUtf8("runtime/performance-optimization.js"),
+            networkFallbacks = NETWORK_FALLBACK_ASSETS.map { asset ->
+                RuntimeNetworkFallback(
+                    scheme = asset.scheme,
+                    host = asset.host,
+                    path = asset.path,
+                    mimeType = asset.mimeType,
+                    body = assets.readUtf8(asset.assetPath).toByteArray(Charsets.UTF_8),
+                )
+            },
             frameRate = assets.readUtf8("runtime/frame-rate.js"),
             commonJs = COMMON_JS_PARTS.joinToString(separator = "") { assets.readUtf8(it) },
             workerBudget = assets.readUtf8("runtime/worker-budget.js"),
@@ -49,6 +67,24 @@ internal object RuntimeScriptAssets {
         "runtime/commonjs/20-fs.js",
         "runtime/commonjs/30-builtins-nw.js",
         "runtime/commonjs/40-loader.js",
+    )
+
+    private val NETWORK_FALLBACK_ASSETS = listOf(
+        NetworkFallbackAsset(
+            scheme = "https",
+            host = "cdn.rangetouch.com",
+            path = "/2.0.1/rangetouch.js",
+            mimeType = "application/javascript",
+            assetPath = "runtime/rangetouch-2.0.1.js",
+        ),
+    )
+
+    private data class NetworkFallbackAsset(
+        val scheme: String,
+        val host: String,
+        val path: String,
+        val mimeType: String,
+        val assetPath: String,
     )
 }
 

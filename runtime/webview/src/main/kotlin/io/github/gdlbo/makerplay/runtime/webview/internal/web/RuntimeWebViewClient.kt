@@ -11,6 +11,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
 import io.github.gdlbo.makerplay.runtime.webview.GameOriginResponder
+import io.github.gdlbo.makerplay.runtime.webview.internal.assets.RuntimeNetworkFallback
 import io.github.gdlbo.makerplay.runtime.webview.internal.assets.RuntimeScripts
 import java.io.ByteArrayInputStream
 
@@ -20,6 +21,7 @@ internal class RuntimeWebViewClient(
     private val responder: GameOriginResponder?,
     private val assetLoader: WebViewAssetLoader,
     private val runtimeScripts: RuntimeScripts,
+    private val networkFallbacks: List<RuntimeNetworkFallback>,
     private val onRuntimeError: (String, Map<String, String>) -> Unit,
     private val onPageStarted: () -> Unit,
     private val onPageReady: (WebView) -> Unit,
@@ -54,6 +56,7 @@ internal class RuntimeWebViewClient(
         view: WebView,
         request: WebResourceRequest,
     ): WebResourceResponse? {
+        bundledNetworkResponse(request)?.let { return it }
         if (responder == null) return assetLoader.shouldInterceptRequest(request.url)
         return try {
             val response = responder.respond(
@@ -92,6 +95,28 @@ internal class RuntimeWebViewClient(
                 ByteArrayInputStream(byteArrayOf()),
             )
         }
+    }
+
+    private fun bundledNetworkResponse(request: WebResourceRequest): WebResourceResponse? {
+        val url = request.url
+        if (!url.query.isNullOrEmpty() || request.method.uppercase() !in setOf("GET", "HEAD")) return null
+        val fallback = networkFallbacks.firstOrNull {
+            it.scheme.equals(url.scheme, ignoreCase = true) &&
+                it.host.equals(url.host, ignoreCase = true) &&
+                it.path == url.path
+        } ?: return null
+        val headers = mapOf(
+            "Cache-Control" to "public, max-age=31536000",
+            "Content-Length" to fallback.body.size.toString(),
+        )
+        return WebResourceResponse(
+            fallback.mimeType,
+            "UTF-8",
+            200,
+            "OK",
+            headers,
+            ByteArrayInputStream(if (request.method.equals("HEAD", ignoreCase = true)) byteArrayOf() else fallback.body),
+        )
     }
 
     override fun onReceivedError(
