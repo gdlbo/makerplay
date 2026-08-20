@@ -153,6 +153,7 @@ class AppGraph(context: Context) {
         modules = RuntimeModuleSettings(
             steamCompatibility = preferences.getBoolean(prefix + MODULE_STEAM, true),
             limitWorkerCount = preferences.getBoolean(prefix + LIMIT_BACKGROUND_LOAD, false),
+            performanceOptimization = preferences.getBoolean(prefix + MODULE_PERFORMANCE, true),
             cheatBridge = preferences.getBoolean(prefix + MODULE_CHEATS, true),
             diagnosticsBridge = preferences.getBoolean(prefix + MODULE_DIAGNOSTICS, true),
         ),
@@ -178,6 +179,7 @@ class AppGraph(context: Context) {
             putBoolean(prefix + SHOW_FPS_COUNTER, value.showFpsCounter)
             putBoolean(prefix + MODULE_STEAM, value.modules.steamCompatibility)
             putBoolean(prefix + LIMIT_BACKGROUND_LOAD, value.modules.limitWorkerCount)
+            putBoolean(prefix + MODULE_PERFORMANCE, value.modules.performanceOptimization)
             putBoolean(prefix + MODULE_CHEATS, value.modules.cheatBridge)
             putBoolean(prefix + MODULE_DIAGNOSTICS, value.modules.diagnosticsBridge)
             useCommonSettings?.let { putBoolean(prefix + USE_COMMON_SETTINGS, it) }
@@ -229,6 +231,7 @@ class AppGraph(context: Context) {
         const val SHOW_FPS_COUNTER = "runtime_show_fps_counter"
         const val MODULE_STEAM = "runtime_module_steam"
         const val LIMIT_BACKGROUND_LOAD = "runtime_limit_background_load"
+        const val MODULE_PERFORMANCE = "runtime_module_performance"
         const val MODULE_CHEATS = "runtime_module_cheats"
         const val MODULE_DIAGNOSTICS = "runtime_module_diagnostics"
         const val USE_COMMON_SETTINGS = "use_common_settings"
@@ -248,6 +251,7 @@ class AppGraph(context: Context) {
             SHOW_FPS_COUNTER,
             MODULE_STEAM,
             LIMIT_BACKGROUND_LOAD,
+            MODULE_PERFORMANCE,
             MODULE_CHEATS,
             MODULE_DIAGNOSTICS,
         )

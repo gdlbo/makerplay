@@ -62,6 +62,8 @@
     <string name="module_steam_description">Lets games that require Steam features start correctly</string>
     <string name="limit_background_load">Reduce background load</string>
     <string name="limit_background_load_description">Runs fewer background tasks. This may reduce heat but slow loading</string>
+    <string name="module_performance">Performance optimizations</string>
+    <string name="module_performance_description">Reduces repeated text and picture work in compatible RPG Maker plugins. Turn off if a game behaves incorrectly</string>
     <string name="module_cheats">Cheats</string>
     <string name="module_cheats_description">Adds the cheats menu while playing</string>
     <string name="module_diagnostics">Graphics monitoring</string>

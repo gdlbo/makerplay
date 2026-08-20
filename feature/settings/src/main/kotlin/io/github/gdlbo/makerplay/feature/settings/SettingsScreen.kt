@@ -377,6 +377,18 @@ private fun ColumnScope.RuntimeSettingsOptions(
         },
     )
     ToggleSetting(
+        title = stringResource(R.string.module_performance),
+        description = stringResource(R.string.module_performance_description),
+        checked = runtimeSettings.modules.performanceOptimization,
+        onCheckedChange = {
+            onRuntimeSettingsChange(
+                runtimeSettings.copy(
+                    modules = runtimeSettings.modules.copy(performanceOptimization = it),
+                ),
+            )
+        },
+    )
+    ToggleSetting(
         title = stringResource(R.string.module_cheats),
         description = stringResource(R.string.module_cheats_description),
         checked = runtimeSettings.modules.cheatBridge,

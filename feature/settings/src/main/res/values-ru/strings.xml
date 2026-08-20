@@ -61,6 +61,8 @@
     <string name="module_steam_description">Позволяет запускать игры, которым нужны функции Steam</string>
     <string name="limit_background_load">Снижение нагрузки</string>
     <string name="limit_background_load_description">Сокращает число фоновых задач. Может снизить нагрев, но замедлить загрузку</string>
+    <string name="module_performance">Оптимизация производительности</string>
+    <string name="module_performance_description">Уменьшает повторную обработку текста и картинок в совместимых плагинах RPG Maker. Отключите, если игра работает неправильно</string>
     <string name="module_cheats">Читы</string>
     <string name="module_cheats_description">Добавляет меню читов во время игры</string>
     <string name="module_diagnostics">Контроль графики</string>

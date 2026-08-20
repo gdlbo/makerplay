@@ -23,6 +23,7 @@ val SUPPORTED_FPS_LIMITS = listOf(30, 60, 90, 120, 144)
 data class RuntimeModuleSettings(
     val steamCompatibility: Boolean = true,
     val limitWorkerCount: Boolean = false,
+    val performanceOptimization: Boolean = true,
     val cheatBridge: Boolean = true,
     val diagnosticsBridge: Boolean = true,
 )

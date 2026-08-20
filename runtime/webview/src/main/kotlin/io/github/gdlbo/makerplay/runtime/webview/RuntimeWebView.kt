@@ -109,6 +109,9 @@ fun RuntimeWebView(
                     legacyCompatibility = baseScripts.legacyCompatibility.takeIf {
                         runtimeSettings.legacyCompatibility
                     }.orEmpty(),
+                    performanceOptimization = baseScripts.performanceOptimization.takeIf {
+                        runtimeSettings.modules.performanceOptimization
+                    }.orEmpty(),
                     frameRate = baseScripts.frameRate.takeIf {
                         runtimeSettings.fpsLimit != null || runtimeSettings.showFpsCounter
                     }.orEmpty(),
@@ -214,6 +217,11 @@ fun RuntimeWebView(
                                 setOf(allowedOrigin),
                             )
                         }
+                        WebViewCompat.addDocumentStartJavaScript(
+                            this,
+                            runtimeScripts.performanceOptimization,
+                            setOf(allowedOrigin),
+                        )
                     }
                     val inputBridge = RuntimeInputFrameBridge.install(
                         this,
