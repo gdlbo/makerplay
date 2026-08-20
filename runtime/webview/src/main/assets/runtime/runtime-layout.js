@@ -18,6 +18,26 @@
   const config = globalThis.__makerplayRuntimeConfig || {};
   const content = 'width=device-width,initial-scale=1,minimum-scale=1,maximum-scale=1,user-scalable=no';
   const gameElements = '#GameCanvas, #UpperCanvas, #GameVideo, #gameCanvas, #upperCanvas, #gameVideo';
+  const installCanvasCoordinateMapping = () => {
+    const graphics = globalThis.Graphics;
+    if (!graphics || graphics.__makerplayCanvasCoordinateMapping ||
+        typeof graphics.pageToCanvasX !== 'function' || typeof graphics.pageToCanvasY !== 'function') return false;
+    const pageToCanvas = (pageCoordinate, axis) => {
+      const canvas = graphics._canvas;
+      if (!canvas) return 0;
+      const rect = canvas.getBoundingClientRect();
+      const displayedSize = axis === 'x' ? rect.width : rect.height;
+      const canvasSize = axis === 'x' ? canvas.width : canvas.height;
+      const viewportOffset = axis === 'x' ? window.scrollX : window.scrollY;
+      const displayedOffset = axis === 'x' ? rect.left : rect.top;
+      if (!displayedSize || !canvasSize) return 0;
+      return Math.round((pageCoordinate - displayedOffset - viewportOffset) * canvasSize / displayedSize);
+    };
+    graphics.pageToCanvasX = x => pageToCanvas(x, 'x');
+    graphics.pageToCanvasY = y => pageToCanvas(y, 'y');
+    graphics.__makerplayCanvasCoordinateMapping = true;
+    return true;
+  };
   const fitGameElements = () => {
     const viewportWidth = document.documentElement?.clientWidth || window.innerWidth;
     const viewportHeight = document.documentElement?.clientHeight || window.innerHeight;
@@ -43,6 +63,7 @@
     });
   };
   const applyViewport = () => {
+    installCanvasCoordinateMapping();
     let viewport = document.querySelector('meta[name="viewport"]');
     if (!viewport && document.head) {
       viewport = document.createElement('meta');
