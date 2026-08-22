@@ -26,12 +26,14 @@ class GameDetector(
         if (entries["${prefix}index.html"] == null) return null
         val mzCore = entries["${prefix}js/rmmz_core.js"]
         val mvCore = entries["${prefix}js/rpg_core.js"]
+        val gameScript = entries["${prefix}js/game.js"]
         val engine = when {
             mzCore != null -> GameEngine.MZ
             mvCore != null -> GameEngine.MV
-            else -> return null
-        }
-        val core = mzCore ?: mvCore!!
+            gameScript != null -> detectBundledEngine(gameScript)
+            else -> null
+        } ?: return null
+        val core = mzCore ?: mvCore ?: gameScript!!
         val system = entries["${prefix}data/system.json"]
             ?: throw ImportFailure("The game is missing data/System.json.")
         val title = parseTitle(system).ifBlank {
@@ -43,7 +45,7 @@ class GameDetector(
             sourcePrefix = prefix,
             engine = engine,
             title = title.take(MAX_TITLE_LENGTH),
-            engineVersion = VERSION_PATTERN.find(core.readText())?.groupValues?.get(1),
+            engineVersion = readEngineVersion(core),
             plugins = plugins.distinct().take(MAX_PLUGINS),
             artworkRelativePath = entries["${prefix}icon/icon.png"]
                 ?.relativePath
@@ -55,8 +57,9 @@ class GameDetector(
         val bytes = entry.readBytes()
         if (RpgMakerProtectedData.isCryptoJsOpenSslBase64(bytes)) return ""
         return runCatching {
-            json.parseToJsonElement(String(bytes, StandardCharsets.UTF_8))
-                .jsonObject["gameTitle"]?.jsonPrimitive?.content.orEmpty()
+            json.parseToJsonElement(
+                String(bytes, StandardCharsets.UTF_8).removePrefix(UTF8_BOM),
+            ).jsonObject["gameTitle"]?.jsonPrimitive?.content.orEmpty()
         }.getOrElse { throw ImportFailure("The game has an invalid data/System.json file.", it) }
     }
 
@@ -111,8 +114,41 @@ class GameDetector(
     private fun ImportEntry.readPrefix(limit: Int): String {
         if (size > MAX_METADATA_BYTES) throw ImportFailure("Game metadata exceeds the supported size.")
         return open().use { input ->
-            String(input.readNBytes(limit), StandardCharsets.UTF_8)
+            String(input.readUpTo(limit), StandardCharsets.UTF_8)
         }
+    }
+
+    private fun ImportEntry.readHead(limit: Int): String =
+        open().use { input -> String(input.readUpTo(limit), StandardCharsets.UTF_8) }
+
+    private fun java.io.InputStream.readUpTo(limit: Int): ByteArray {
+        val buffer = ByteArray(limit)
+        var total = 0
+        while (total < buffer.size) {
+            val read = read(buffer, total, buffer.size - total)
+            if (read < 0) break
+            total += read
+        }
+        return buffer.copyOf(total)
+    }
+
+    private fun detectBundledEngine(entry: ImportEntry): GameEngine? {
+        val name = ENGINE_NAME_PATTERN.find(entry.readHead(ENGINE_SCRIPT_PROBE_BYTES))
+            ?.groupValues?.get(1) ?: return null
+        return when {
+            name.equals("MZ", ignoreCase = true) -> GameEngine.MZ
+            name.equals("MV", ignoreCase = true) -> GameEngine.MV
+            else -> null
+        }
+    }
+
+    private fun readEngineVersion(entry: ImportEntry): String? {
+        val text = if (entry.size > MAX_METADATA_BYTES) {
+            entry.readHead(VERSION_PROBE_BYTES)
+        } else {
+            entry.readText()
+        }
+        return VERSION_PATTERN.find(text)?.groupValues?.get(1)
     }
 
     private fun String.findArrayEnd(start: Int): Int {
@@ -140,12 +176,16 @@ class GameDetector(
     }
 
     private companion object {
+        const val UTF8_BOM = "\uFEFF"
         const val MAX_METADATA_BYTES = 2 * 1024 * 1024
         const val MAX_TITLE_LENGTH = 160
         const val MAX_PLUGIN_NAME_LENGTH = 128
         const val MAX_PLUGINS = 512
         const val OBFUSCATION_PROBE_BYTES = 4 * 1024
+        const val ENGINE_SCRIPT_PROBE_BYTES = 256 * 1024
+        const val VERSION_PROBE_BYTES = 256 * 1024
         val VERSION_PATTERN = Regex("RPGMAKER_VERSION\\s*=\\s*[\"']([^\"']+)[\"']")
+        val ENGINE_NAME_PATTERN = Regex("""RPGMAKER_NAME\s*=\s*["']([^"']+)["']""")
         val PLUGINS_ASSIGNMENT_PATTERN = Regex("""(?:var|let|const)?\s*\${'$'}plugins\s*=\s*""")
         val OBFUSCATED_SCRIPT_PATTERN = Regex(
             """^\s*(?:var|let|const|function)\s+_0x[0-9a-f]+""",

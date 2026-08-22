@@ -50,7 +50,7 @@ object RpgMakerGameMount {
             if (result is VfsOpenResult.Found) result.stream.close()
             throw GameMountException("The imported game has invalid system metadata.")
         }
-        val bytes = result.stream.use { it.readNBytes(MAX_SYSTEM_JSON_BYTES + 1) }
+        val bytes = result.stream.use { it.readUpTo(MAX_SYSTEM_JSON_BYTES + 1) }
         if (bytes.size > MAX_SYSTEM_JSON_BYTES) {
             throw GameMountException("The imported game has invalid system metadata.")
         }
@@ -71,6 +71,7 @@ object RpgMakerGameMount {
             .onUnmappableCharacter(CodingErrorAction.REPORT)
             .decode(ByteBuffer.wrap(bytes))
             .toString()
+            .removePrefix(UTF8_BOM)
         val json = Json.parseToJsonElement(text).jsonObject
         EncryptionMetadata(
             hasEncryptedImages = json["hasEncryptedImages"]?.jsonPrimitive?.booleanOrNull == true,
@@ -91,7 +92,7 @@ object RpgMakerGameMount {
             ?: throw IllegalArgumentException("Protected game has no recoverable image key")
         val file =
             index.file(png) ?: throw IllegalArgumentException("Encrypted image is unavailable")
-        val header = file.inputStream().use { it.readNBytes(ENCRYPTED_PNG_HEADER_BYTES) }
+        val header = file.inputStream().use { it.readUpTo(ENCRYPTED_PNG_HEADER_BYTES) }
         val key = RpgMakerAssetCodec.recoverHexKeyFromEncryptedPngHeader(header)
         return EncryptionMetadata(encryptedImages, encryptedAudio, key)
     }
@@ -108,9 +109,21 @@ object RpgMakerGameMount {
     )
 
     private const val SYSTEM_JSON_PATH = "data/System.json"
+    private const val UTF8_BOM = "\uFEFF"
     private const val MAX_SYSTEM_JSON_BYTES = 2 * 1024 * 1024
     private const val ENCRYPTED_PNG_HEADER_BYTES = 32
     private val ENCRYPTED_PNG_SUFFIXES = setOf(".png_", ".rpgmvp")
     private val ENCRYPTED_IMAGE_SUFFIXES = ENCRYPTED_PNG_SUFFIXES
     private val ENCRYPTED_AUDIO_SUFFIXES = setOf(".ogg_", ".m4a_", ".rpgmvo", ".rpgmvm")
+}
+
+private fun java.io.InputStream.readUpTo(limit: Int): ByteArray {
+    val buffer = ByteArray(limit)
+    var total = 0
+    while (total < buffer.size) {
+        val read = read(buffer, total, buffer.size - total)
+        if (read < 0) break
+        total += read
+    }
+    return buffer.copyOf(total)
 }

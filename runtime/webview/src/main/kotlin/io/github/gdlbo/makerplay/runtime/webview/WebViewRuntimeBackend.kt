@@ -15,9 +15,11 @@ import io.github.gdlbo.makerplay.runtime.api.RuntimeBackendCapability
 import io.github.gdlbo.makerplay.runtime.api.RuntimeBackendDescriptor
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEngineMode
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEvent
+import io.github.gdlbo.makerplay.vfs.GameFileSystem
 import io.github.gdlbo.makerplay.vfs.RpgMakerGameMount
 import io.github.gdlbo.makerplay.vfs.VfsOpenResult
 import java.io.File
+import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -313,7 +315,7 @@ private fun newBridgeToken(): String = ByteArray(32)
     .also(SecureRandom()::nextBytes)
     .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
 
-internal fun supportsMzNativeSaves(fileSystem: io.github.gdlbo.makerplay.vfs.GameFileSystem): Boolean =
+internal fun supportsMzNativeSaves(fileSystem: GameFileSystem): Boolean =
     when (
         val result = fileSystem.open("js/rmmz_managers.js")
     ) {
@@ -322,10 +324,10 @@ internal fun supportsMzNativeSaves(fileSystem: io.github.gdlbo.makerplay.vfs.Gam
             true
         }
 
-        else -> false
+        else -> bundledEngineName(fileSystem) == "MZ"
     }
 
-internal fun supportsMvNativeSaves(fileSystem: io.github.gdlbo.makerplay.vfs.GameFileSystem): Boolean =
+internal fun supportsMvNativeSaves(fileSystem: GameFileSystem): Boolean =
     when (
         val result = fileSystem.open("js/rpg_managers.js")
     ) {
@@ -334,5 +336,29 @@ internal fun supportsMvNativeSaves(fileSystem: io.github.gdlbo.makerplay.vfs.Gam
             true
         }
 
-        else -> false
+        else -> bundledEngineName(fileSystem) == "MV"
     }
+
+private fun bundledEngineName(fileSystem: GameFileSystem): String? {
+    val result = fileSystem.open("js/game.js")
+    if (result !is VfsOpenResult.Found) return null
+    val head = result.stream.use { stream ->
+        String(stream.readUpTo(BUNDLED_ENGINE_PROBE_BYTES), StandardCharsets.UTF_8)
+    }
+    return BUNDLED_ENGINE_NAME_PATTERN.find(head)?.groupValues?.get(1)
+}
+
+private const val BUNDLED_ENGINE_PROBE_BYTES = 256 * 1024
+private val BUNDLED_ENGINE_NAME_PATTERN =
+    Regex("""RPGMAKER_NAME\s*=\s*["']([^"']+)["']""")
+
+private fun InputStream.readUpTo(limit: Int): ByteArray {
+    val buffer = ByteArray(limit)
+    var total = 0
+    while (total < buffer.size) {
+        val read = read(buffer, total, buffer.size - total)
+        if (read < 0) break
+        total += read
+    }
+    return buffer.copyOf(total)
+}
