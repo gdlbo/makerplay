@@ -57,6 +57,11 @@ class WebViewRuntimeBackend(
         }
         val root = gameDirectory(request.gameId)
             ?: throw IllegalArgumentException("The imported game is unavailable.")
+        if (looksLikeWolfDeployment(root)) {
+            throw IllegalArgumentException(
+                "WOLF RPG games require the native WOLF runtime; Chromium WebView cannot execute Game.exe.",
+            )
+        }
         val gameLogger = if (request.settings.recordLogs) {
             gameLoggerFactory?.invoke(root) ?: logger
         } else {
@@ -362,3 +367,7 @@ private fun InputStream.readUpTo(limit: Int): ByteArray {
     }
     return buffer.copyOf(total)
 }
+
+private fun looksLikeWolfDeployment(root: File): Boolean =
+    File(root, "Game.exe").isFile && File(root, "Game.dat").isFile &&
+        (File(root, "CommonEvent.dat").isFile || File(root, "Data/BasicData/Game.dat").isFile)

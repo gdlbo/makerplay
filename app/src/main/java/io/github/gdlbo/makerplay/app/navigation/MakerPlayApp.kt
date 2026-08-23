@@ -29,6 +29,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import io.github.gdlbo.makerplay.model.GameEngine
 import io.github.gdlbo.makerplay.app.AppGraph
 import io.github.gdlbo.makerplay.app.ui.MakerPlayTheme
 import io.github.gdlbo.makerplay.feature.importer.StorageRoots
@@ -199,6 +200,7 @@ fun MakerPlayApp(graph: AppGraph) {
                     }
                     GameSettingsScreen(
                         gameTitle = game?.title ?: gameId,
+                        isWolfGame = game?.engine == GameEngine.WOLF,
                         useCommonSettings = useCommonSettings,
                         commonSettings = runtimeSettings,
                         customSettings = customSettings,
@@ -218,7 +220,7 @@ fun MakerPlayApp(graph: AppGraph) {
                 }
                 composable("runtime-smoke") {
                     RuntimeHostScreen(
-                        backend = graph.runtimeBackend,
+                        backend = graph.runtimeBackend("m0-smoke"),
                         request = LaunchRequest(
                             "m0-smoke",
                             smokeTest = true,
@@ -229,14 +231,25 @@ fun MakerPlayApp(graph: AppGraph) {
                 }
                 composable("runtime/{gameId}") { entry ->
                     val gameId = requireNotNull(entry.arguments?.getString("gameId"))
+                    val effectiveSettings = graph.gameRuntimeSettings(gameId) ?: runtimeSettings
                     RuntimeHostScreen(
-                        backend = graph.runtimeBackend,
+                        backend = graph.runtimeBackend(gameId),
                         request = LaunchRequest(
                             gameId,
-                            settings = graph.gameRuntimeSettings(gameId) ?: runtimeSettings,
+                            settings = effectiveSettings,
                         ),
                         layoutFile = graph.controllerLayoutFile(gameId),
                         logFile = graph.runtimeLogFile(gameId),
+                        loggingEnabled = effectiveSettings.recordLogs,
+                        onToggleLogging = {
+                            val updated = effectiveSettings.copy(recordLogs = !effectiveSettings.recordLogs)
+                            if (graph.gameRuntimeSettings(gameId) == null) {
+                                runtimeSettings = updated
+                                graph.runtimeSettings = updated
+                            } else {
+                                graph.setGameRuntimeSettings(gameId, updated)
+                            }
+                        },
                         onBack = navController::popBackStack,
                     )
                 }

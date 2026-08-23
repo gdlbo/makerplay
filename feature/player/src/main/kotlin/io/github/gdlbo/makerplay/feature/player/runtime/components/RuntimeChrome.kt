@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Done
@@ -21,6 +22,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -67,6 +69,8 @@ internal fun PlayerToolbar(
     cheatsAvailable: Boolean,
     layoutLoaded: Boolean,
     controllerMode: ControllerMode,
+    loggingEnabled: Boolean,
+    onToggleLogging: () -> Unit,
     onToggleControls: () -> Unit,
     onToggleEditing: () -> Unit,
     onOpenCheats: () -> Unit,
@@ -119,6 +123,19 @@ internal fun PlayerToolbar(
                     ) {
                         Icon(Icons.Default.AutoAwesome, stringResource(R.string.cheats))
                     }
+                }
+                IconButton(
+                    onClick = onToggleLogging,
+                    modifier = Modifier.size(48.dp),
+                ) {
+                    Icon(
+                        Icons.Default.Description,
+                        stringResource(
+                            if (loggingEnabled) R.string.player_logging_disable
+                            else R.string.player_logging_enable
+                        ),
+                        tint = if (loggingEnabled) Color(0xFF7FD87F) else LocalContentColor.current,
+                    )
                 }
                 IconButton(
                     onClick = onSwitchMode,

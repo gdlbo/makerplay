@@ -15,6 +15,7 @@ import io.github.gdlbo.makerplay.feature.importer.PrivateGameStore
 import io.github.gdlbo.makerplay.feature.importer.StorageRoots
 import io.github.gdlbo.makerplay.feature.settings.ThemeMode
 import io.github.gdlbo.makerplay.model.GameSummary
+import io.github.gdlbo.makerplay.model.RuntimeBackendId
 import io.github.gdlbo.makerplay.runtime.api.FileGameSaveStore
 import io.github.gdlbo.makerplay.runtime.api.GameRuntimeBackend
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEngineMode
@@ -23,6 +24,7 @@ import io.github.gdlbo.makerplay.runtime.api.RuntimeOrientation
 import io.github.gdlbo.makerplay.runtime.api.RuntimeScaleMode
 import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.runtime.api.SUPPORTED_FPS_LIMITS
+import io.github.gdlbo.makerplay.runtime.wolf.WolfRuntimeBackend
 import io.github.gdlbo.makerplay.runtime.webview.WebViewRuntimeBackend
 import java.io.File
 
@@ -38,7 +40,23 @@ class AppGraph(context: Context) {
 
     val catalog = GameCatalogRepository(gameStore)
     val importCoordinator = ImportCoordinator(context, catalog)
-    val runtimeBackend: GameRuntimeBackend = WebViewRuntimeBackend(
+
+    /** Routes to the backend recorded for the game; WOLF never reaches WebView. */
+    fun runtimeBackend(gameId: String): GameRuntimeBackend {
+        val backendId = catalog.games.value.firstOrNull { it.id == gameId }?.backend
+        return when (backendId) {
+            RuntimeBackendId.WOLF_NATIVE -> wolfRuntimeBackend
+            else -> webViewRuntimeBackend
+        }
+    }
+    private val wolfRuntimeBackend: GameRuntimeBackend = WolfRuntimeBackend(
+        logger = logger,
+        gameDirectory = ::resolveGameDirectory,
+        gameLoggerFactory = { gameRoot ->
+            PersistentRuntimeLogger(gameRoot, AndroidRuntimeLogger("MakerPlay"))
+        },
+    )
+    private val webViewRuntimeBackend: GameRuntimeBackend = WebViewRuntimeBackend(
         logger = logger,
         gameDirectory = ::resolveGameDirectory,
         commonJsDataDirectory = ::commonJsDataDirectory,
@@ -149,7 +167,7 @@ class AppGraph(context: Context) {
         fpsLimit = preferences.getInt(prefix + FPS_LIMIT, FPS_AUTO)
             .takeIf { it in SUPPORTED_FPS_LIMITS },
         showFpsCounter = preferences.getBoolean(prefix + SHOW_FPS_COUNTER, false),
-        recordLogs = false,
+        recordLogs = preferences.getBoolean(prefix + RECORD_LOGS, false),
         modules = RuntimeModuleSettings(
             steamCompatibility = preferences.getBoolean(prefix + MODULE_STEAM, true),
             limitWorkerCount = preferences.getBoolean(prefix + LIMIT_BACKGROUND_LOAD, false),
@@ -177,6 +195,7 @@ class AppGraph(context: Context) {
             putBoolean(prefix + IGNORE_MISSING_FILES, value.ignoreMissingFiles)
             putInt(prefix + FPS_LIMIT, value.fpsLimit ?: FPS_AUTO)
             putBoolean(prefix + SHOW_FPS_COUNTER, value.showFpsCounter)
+            putBoolean(prefix + RECORD_LOGS, value.recordLogs)
             putBoolean(prefix + MODULE_STEAM, value.modules.steamCompatibility)
             putBoolean(prefix + LIMIT_BACKGROUND_LOAD, value.modules.limitWorkerCount)
             putBoolean(prefix + MODULE_PERFORMANCE, value.modules.performanceOptimization)
@@ -229,6 +248,7 @@ class AppGraph(context: Context) {
         const val IGNORE_MISSING_FILES = "runtime_ignore_missing_files"
         const val FPS_LIMIT = "runtime_fps_limit"
         const val SHOW_FPS_COUNTER = "runtime_show_fps_counter"
+        const val RECORD_LOGS = "runtime_record_logs"
         const val MODULE_STEAM = "runtime_module_steam"
         const val LIMIT_BACKGROUND_LOAD = "runtime_limit_background_load"
         const val MODULE_PERFORMANCE = "runtime_module_performance"
@@ -249,6 +269,7 @@ class AppGraph(context: Context) {
             IGNORE_MISSING_FILES,
             FPS_LIMIT,
             SHOW_FPS_COUNTER,
+            RECORD_LOGS,
             MODULE_STEAM,
             LIMIT_BACKGROUND_LOAD,
             MODULE_PERFORMANCE,

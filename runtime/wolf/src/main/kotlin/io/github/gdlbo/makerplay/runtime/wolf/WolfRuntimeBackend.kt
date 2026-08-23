@@ -1,0 +1,475 @@
+package io.github.gdlbo.makerplay.runtime.wolf
+
+import android.opengl.GLSurfaceView
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalContext
+import io.github.gdlbo.makerplay.diagnostics.RuntimeLogger
+import io.github.gdlbo.makerplay.input.LogicalInputSnapshot
+import io.github.gdlbo.makerplay.runtime.api.CheatCatalog
+import io.github.gdlbo.makerplay.runtime.api.CheatCommand
+import io.github.gdlbo.makerplay.runtime.api.CheatFlags
+import io.github.gdlbo.makerplay.runtime.api.GameRuntimeBackend
+import io.github.gdlbo.makerplay.runtime.api.GameSaveStore
+import io.github.gdlbo.makerplay.runtime.api.LaunchRequest
+import io.github.gdlbo.makerplay.runtime.api.PreparedSession
+import io.github.gdlbo.makerplay.runtime.api.RuntimeBackendCapability
+import io.github.gdlbo.makerplay.runtime.api.RuntimeBackendDescriptor
+import io.github.gdlbo.makerplay.runtime.api.RuntimeEvent
+import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
+import io.github.gdlbo.makerplay.runtime.api.WolfNativeBridge
+import io.github.gdlbo.makerplay.wolfformat.EventCommand
+import io.github.gdlbo.makerplay.wolfformat.GameDataSource
+import io.github.gdlbo.makerplay.wolfformat.GameDat
+import io.github.gdlbo.makerplay.wolfformat.WolfFormatException
+import io.github.gdlbo.makerplay.input.GameAction
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * Native runtime backend for WOLF RPG (Woditor) deployments.
+ *
+ * WOLF games ship a closed Windows `Game.exe` plus binary project data; they
+ * cannot execute inside the Chromium WebView backend. This backend hosts a
+ * clean-room C++ interpreter through [WolfNativeBridge]. Until the native
+ * library is wired in (milestone 2 of docs/wolf-rpg-runtime.md), sessions are
+ * prepared and validated but playback reports the native runtime as not yet
+ * installed instead of attempting WebView execution.
+ */
+class WolfRuntimeBackend(
+    private val logger: RuntimeLogger,
+    private val gameDirectory: (String) -> File? = { null },
+    private val bridge: WolfNativeBridgeProvider = WolfNativeBridgeProvider { WolfNativeJni.tryCreate() },
+    /** Creates a per-game file logger when [LaunchRequest.settings.recordLogs] is set. */
+    private val gameLoggerFactory: ((File) -> RuntimeLogger)? = null,
+    @Suppress("unused") private val saveStore: GameSaveStore? = null,
+) : GameRuntimeBackend {
+
+    override val descriptor: RuntimeBackendDescriptor by lazy {
+        RuntimeBackendDescriptor(
+            id = BACKEND_ID,
+            displayName = "WOLF RPG Native",
+            capability = if (bridge.get() != null) {
+                RuntimeBackendCapability.AVAILABLE
+            } else {
+                RuntimeBackendCapability.NOT_INSTALLED
+            },
+        )
+    }
+
+    private val sessions = ConcurrentHashMap<String, WolfNativeSession>()
+    private val gameLoopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val currentDirections =
+        AtomicReference<Set<WolfGameEngine.Direction>>(emptySet())
+    private val currentConfirm = AtomicBoolean(false)
+
+    override suspend fun prepare(request: LaunchRequest): PreparedSession {
+        logger.info(
+            "runtime.prepare",
+            mapOf("backend" to descriptor.id, "gameId" to request.gameId),
+        )
+        if (request.smokeTest) {
+            return PreparedSession(
+                sessionId = request.gameId,
+                startUrl = NATIVE_SMOKE_URL,
+                allowedOrigin = NATIVE_ORIGIN,
+                settings = request.settings,
+            )
+        }
+        val root = gameDirectory(request.gameId)
+            ?: throw IllegalArgumentException("The imported game is unavailable.")
+        validateWolfDeployment(root)
+        val settings = loadProjectSettings(root)
+        val sessionLogger =
+            if (request.settings.recordLogs) gameLoggerFactory?.invoke(root) ?: logger else logger
+        val sessionId = UUID.randomUUID().toString()
+        sessions[sessionId] = WolfNativeSession(
+            id = sessionId,
+            gameId = request.gameId,
+            gameRoot = root,
+            settings = request.settings,
+            project = settings,
+            logger = sessionLogger,
+        )
+        return PreparedSession(
+            sessionId = sessionId,
+            startUrl = NATIVE_SESSION_URL,
+            allowedOrigin = NATIVE_ORIGIN,
+            settings = request.settings,
+        )
+    }
+
+    @Composable
+    override fun RuntimeContent(
+        session: PreparedSession,
+        modifier: Modifier,
+        onEvent: (RuntimeEvent) -> Unit,
+        inputEnabled: Boolean,
+        virtualInput: LogicalInputSnapshot,
+        cheatFlags: CheatFlags,
+        cheatCommand: CheatCommand?,
+        onCheatCommandConsumed: (Long) -> Unit,
+        onCheatCatalogChanged: (CheatCatalog) -> Unit,
+        onReadyChanged: (Boolean) -> Unit,
+    ) {
+        // Stable across recompositions so effects keyed on it do not churn.
+        val nativeBridge = remember { bridge.get() }
+
+        // Static boot pipeline (milestone 4): compose the initial map frame,
+        // hand it to the native renderer, then present via GLSurfaceView.
+        var ready by remember(session.sessionId) { mutableStateOf(false) }
+        val uiState = remember(session.sessionId) { WolfUiState() }
+        var confirmWasDown by remember(session.sessionId) { mutableStateOf(false) }
+
+        // Rising-edge detection for the OK action drives message advancement.
+        fun consumeConfirmEdge(): Boolean {
+            val down = currentConfirm.get()
+            val edge = down && !confirmWasDown
+            confirmWasDown = down
+            return edge
+        }
+
+        // Map logical/virtual controller actions onto engine directions.
+        LaunchedEffect(virtualInput) {
+            val pressed = virtualInput.pressedActions
+            val dirs = buildSet {
+                if (GameAction.UP in pressed) add(WolfGameEngine.Direction.UP)
+                if (GameAction.DOWN in pressed) add(WolfGameEngine.Direction.DOWN)
+                if (GameAction.LEFT in pressed) add(WolfGameEngine.Direction.LEFT)
+                if (GameAction.RIGHT in pressed) add(WolfGameEngine.Direction.RIGHT)
+            }
+            currentDirections.set(dirs)
+            currentConfirm.set(GameAction.OK in pressed)
+        }
+        LaunchedEffect(session.sessionId, nativeBridge) {
+            onReadyChanged(false)
+            if (nativeBridge == null) {
+                logger.error(
+                    "runtime.native_unavailable",
+                    mapOf("backend" to descriptor.id, "sessionId" to session.sessionId),
+                )
+                return@LaunchedEffect
+            }
+            val stored = sessions[session.sessionId]
+            val frame = runCatching {
+                withContext(Dispatchers.IO) {
+                    val project = stored?.project ?: return@withContext null
+                    GameDataSource.open(stored.gameRoot).use { source ->
+                        WolfSceneLoader.loadStaticFrame(source, project)
+                    }
+                }
+            }.onFailure {
+                logger.error("runtime.static_frame_failed", mapOf("error" to (it.message ?: "unknown")))
+            }.getOrNull()
+            if (frame != null && stored != null && stored.project != null) {
+                val handle = ensureNativeSession(session, nativeBridge)
+                nativeBridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
+                ready = true
+                onReadyChanged(true)
+                runGameLoop(nativeBridge, handle, stored, uiState) { consumeConfirmEdge() }
+            }
+        }
+
+        // Message/choice presentation over the game surface.
+        uiState.message?.let { text ->
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 120.dp),
+                contentAlignment = Alignment.BottomCenter,
+            ) {
+                Text(
+                    text = text,
+                    color = Color.White,
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier
+                        .background(Color.Black.copy(alpha = 0.75f))
+                        .padding(16.dp),
+                )
+            }
+        }
+        uiState.choices.takeIf { it.isNotEmpty() && uiState.message == null }?.let { options ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(top = 80.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                options.forEach { option ->
+                    Text(
+                        text = option,
+                        color = Color.White,
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier
+                            .background(Color.Black.copy(alpha = 0.7f))
+                            .padding(8.dp),
+                    )
+                }
+            }
+        }
+
+        if (ready && nativeBridge != null) {
+            val handle = remember(session.sessionId) { ensureNativeSession(session, nativeBridge) }
+            AndroidView(
+                modifier = modifier,
+                factory = { ctx ->
+                    WolfRenderSurface(ctx).apply {
+                        setEGLContextClientVersion(2)
+                        setRenderer(WolfFrameRenderer(nativeBridge, handle))
+                        renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                    }
+                },
+                update = { surface -> surface.setHandle(ensureNativeSession(session, nativeBridge)) },
+            )
+        } else {
+            // Preparing state: black until the boot frame is composited.
+            Box(modifier = modifier.background(Color.Black))
+        }
+    }
+
+    /**
+     * Milestone-5 game loop: advances the deterministic engine at the project's
+     * logical fps and pushes recomposed frames to the native presenter.
+     */
+    private fun runGameLoop(
+        bridge: WolfNativeBridge,
+        handle: Long,
+        stored: WolfNativeSession,
+        ui: WolfUiState,
+        confirmEdges: () -> Boolean,
+    ): kotlinx.coroutines.Job? {
+        val project = stored.project ?: return null
+        return gameLoopScope.launch {
+            GameDataSource.open(stored.gameRoot).use { source ->
+                var mapPath = initialMapPath(source)
+                val commonEvents = HashMap<Int, List<EventCommand>>()
+                runCatching {
+                    io.github.gdlbo.makerplay.wolfformat.CommonEventDat.parse(
+                        source.read("Data/BasicData/CommonEvent.dat"),
+                    ).events.forEach { commonEvents[it.id] = it.commands }
+                }.onFailure {
+                    logger.error("runtime.commont_events_failed", mapOf("error" to (it.message ?: "unknown")))
+                }
+                var map = io.github.gdlbo.makerplay.wolfformat.MapFile.parse(source.read(mapPath))
+                val tilesets = io.github.gdlbo.makerplay.wolfformat.TileSetData.parse(
+                    source.read("Data/BasicData/TileSetData.dat"),
+                )
+                val engine = WolfGameEngine(project, map, tilesets)
+
+                var interpreter: WolfInterpreter? = null
+                val savesRoot = java.io.File(stored.gameRoot, "MakerPlaySaves")
+                val saveManager = WolfGameSaveManager(savesRoot)
+                val audio = WolfAudioPlayer()
+                val hostCallbacks = object : WolfInterpreter.Host {
+                    override fun onMessage(text: String) { ui.message = text }
+                    override fun onChoices(options: List<String>) { ui.choices = options }
+                    override fun onTeleport(mapId: Int, tileX: Int, tileY: Int) {
+                        engine.queueTransfer(mapId, tileX, tileY)
+                    }
+                    override fun onSave(slot: Int): Boolean {
+                        return runCatching {
+                            saveManager.save(
+                                "slot-$slot",
+                                WolfSaveFormat.GameState(
+                                    title = project.title,
+                                    mapPath = mapPath,
+                                    tileX = engine.position().tileX,
+                                    tileY = engine.position().tileY,
+                                    variables = HashMap<Int, Int>(),
+                                    strings = HashMap<Int, String>(),
+                                ),
+                            )
+                        }.isSuccess
+                    }
+
+                    override fun onLoad(slot: Int): Boolean {
+                        return runCatching {
+                            val state = saveManager.load("slot-$slot")
+                            if (source.has(state.mapPath)) {
+                                map = io.github.gdlbo.makerplay.wolfformat.MapFile.parse(source.read(state.mapPath))
+                                mapPath = state.mapPath
+                            }
+                            true
+                        }.getOrDefault(false)
+                    }
+
+                    override fun onSound(command: EventCommand) {
+                        // Sound command layout varies by editor revision; the
+                        // first string, when present, names the media file.
+                        val name = command.strings.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+                        val bgmFile = runCatching { source.read("Data/BGM/$name") }.isSuccess
+                        val seFile = runCatching { source.read("Data/SE/$name") }.isSuccess
+                        when {
+                            bgmFile -> audio.playBgm(java.io.File(stored.gameRoot, "Data/BGM/$name"))
+                            seFile -> audio.playSe(java.io.File(stored.gameRoot, "Data/SE/$name"))
+                        }
+                    }
+                }
+
+                val tickMillis = 1000L / project.fps.coerceAtLeast(1)
+                while (isActive) {
+                    val active = interpreter
+                    if (active != null && !active.finished) {
+                        val blocking = active.currentBlocking()
+                        when (blocking) {
+                            is WolfInterpreter.Blocking.Message -> {
+                                if (confirmEdges()) active.advance()
+                            }
+                            is WolfInterpreter.Blocking.Choices -> {
+                                if (confirmEdges()) active.choose(0)
+                            }
+                            else -> Unit
+                        }
+                        active.tick()
+                        if (active.finished && blocking == null) interpreter = null
+                    } else {
+                        engine.setInput(currentDirections.get(), currentConfirm.get())
+                        engine.tick()
+                        val fired = engine.drainFiredTriggers()
+                        for (trigger in fired) {
+                            if (interpreter != null && !interpreter!!.finished) break
+                            val runner = WolfInterpreter(hostCallbacks, commonEvents)
+                            runner.start(trigger.page.commands)
+                            interpreter = runner
+                        }
+                        engine.pendingTransfer?.let { (mapId, pos) ->
+                            val target = "Data/MapData/Map%03d.mps".format(mapId)
+                            val bytes = runCatching { source.read(target) }.getOrNull()
+                                ?: runCatching { source.read("Data/" + mapPath.removePrefix("Data/")) }.getOrNull()
+                            if (bytes != null) {
+                                map = io.github.gdlbo.makerplay.wolfformat.MapFile.parse(bytes)
+                                mapPath = target
+                            }
+                        }
+                    }
+                    val frame = runCatching {
+                        withContext(Dispatchers.Default) {
+                            WolfSceneLoader.composeFrame(
+                                source, project, map, tilesets,
+                                heroTile = if (interpreter?.finished != true) null else engine.position(),
+                            )
+                        }
+                    }.onFailure {
+                        (stored.logger ?: logger).error(
+                            "runtime.loop_frame_failed",
+                            mapOf("error" to (it.message ?: "unknown")),
+                        )
+                    }.getOrNull()
+                    if (frame != null) {
+                        bridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
+                    }
+                    delay(tickMillis)
+                }
+            }
+        }
+    }
+
+    private fun initialMapPath(source: GameDataSource): String =
+        source.list("Data/MapData").filter { it.endsWith(".mps", true) }.sorted()
+            .firstOrNull()?.let { "Data/MapData/$it" }
+            ?: "Data/MapData/Map001.mps"
+
+    private fun ensureNativeSession(
+        session: PreparedSession,
+        bridge: WolfNativeBridge,
+    ): Long {
+        val stored = sessions[session.sessionId] ?: return 0L
+        if (stored.nativeHandle == 0L) {
+            stored.nativeHandle = bridge.loadGame(stored.gameId, stored.gameRoot.absolutePath)
+        }
+        return stored.nativeHandle
+    }
+
+    override suspend fun destroySession(sessionId: String) {
+        val session = sessions.remove(sessionId) ?: return
+        bridge.get()?.destroySession(session.nativeHandle)
+        session.nativeHandle = 0L
+        logger.info(
+            "runtime.destroy",
+            mapOf("backend" to descriptor.id, "gameId" to session.gameId),
+        )
+    }
+
+    /** Parses and validates the deployment's Game.dat via the format library. */
+    internal fun loadProjectSettings(root: File): GameDat = try {
+        GameDataSource.open(root).use { source ->
+            val bytes = runCatching { source.read(GameDataSource.GAME_DAT) }
+                .getOrElse { source.read(GameDataSource.DATA_GAME_DAT) }
+            GameDat.parse(bytes)
+        }
+    } catch (e: WolfFormatException) {
+        throw IllegalArgumentException("The imported WOLF game data is invalid.", e)
+    }
+
+    /** Rejects non-WOLF roots early so misrouted MV/MZ games fail loudly here. */
+    internal fun validateWolfDeployment(root: File) {
+        if (!root.isDirectory) {
+            throw IllegalArgumentException("The imported game directory is missing.")
+        }
+        val hasExecutable = root.resolve(GAME_EXECUTABLE).isFile
+        val hasGameData = root.resolve(GAME_DATA).isFile ||
+            root.resolve(DATA_BASIC_GAME_DATA).isFile
+        if (!hasExecutable || !hasGameData) {
+            throw IllegalArgumentException(
+                "The imported game is not a WOLF RPG deployment.",
+            )
+        }
+    }
+
+    internal data class WolfNativeSession(
+        val id: String,
+        val gameId: String,
+        val gameRoot: File,
+        val settings: RuntimeSettings,
+        val project: GameDat? = null,
+        val logger: RuntimeLogger? = null,
+        var nativeHandle: Long = 0L,
+    )
+
+    fun interface WolfNativeBridgeProvider {
+        fun get(): WolfNativeBridge?
+    }
+
+    companion object {
+        const val BACKEND_ID = "wolf-native"
+        const val GAME_EXECUTABLE = "Game.exe"
+        const val GAME_DATA = "Game.dat"
+        const val DATA_BASIC_GAME_DATA = "Data/BasicData/Game.dat"
+        const val NATIVE_ORIGIN = "wolf-native://makerplay"
+        const val NATIVE_SMOKE_URL = "$NATIVE_ORIGIN/smoke"
+        const val NATIVE_SESSION_URL = "$NATIVE_ORIGIN/session"
+    }
+}
+
+
+/** Presentation state emitted by the running event interpreter. */
+class WolfUiState {
+    var message: String? = null
+    var choices: List<String> = emptyList()
+}

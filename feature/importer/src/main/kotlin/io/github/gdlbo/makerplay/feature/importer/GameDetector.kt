@@ -13,9 +13,50 @@ class GameDetector(
 ) {
     fun detect(entries: List<ImportEntry>, fallbackTitle: String? = null): DetectedGame {
         val byLowerPath = entries.associateBy { it.relativePath.lowercase() }
+        detectWolf(byLowerPath, fallbackTitle)?.let { return it }
         return detectAtPrefix(byLowerPath, "", fallbackTitle)
             ?: detectAtPrefix(byLowerPath, "www/", fallbackTitle)
-            ?: throw ImportFailure("The selected folder is not an RPG Maker MV or MZ deployment.")
+            ?: throw ImportFailure("The selected folder is not a supported RPG Maker or WOLF RPG deployment.")
+    }
+
+    /**
+     * WOLF games ship a closed native Game.exe and binary data files. Detect the
+     * deployment without requiring an index.html (which is the MV/MZ contract).
+     */
+    private fun detectWolf(
+        entries: Map<String, ImportEntry>,
+        fallbackTitle: String?,
+    ): DetectedGame? {
+        entries["game.exe"] ?: return null
+        val gameDat = entries["game.dat"] ?: entries["data/basicdata/game.dat"] ?: return null
+        val hasWolfData = entries.keys.any {
+            it == "commonevent.dat" || it == "data/basicdata/commonevent.dat" ||
+                it.endsWith("/mapdata/maptree.dat") || it.endsWith("/maptree.dat")
+        }
+        if (!hasWolfData) return null
+        val title = fallbackTitle?.trim().orEmpty().ifBlank { "Imported WOLF RPG game" }
+        return DetectedGame(
+            sourcePrefix = "",
+            engine = GameEngine.WOLF,
+            title = title.take(MAX_TITLE_LENGTH),
+            engineVersion = wolfVersion(gameDat),
+            plugins = emptyList(),
+            artworkRelativePath = entries["icon.png"]?.relativePath,
+        )
+    }
+
+    private fun wolfVersion(gameDat: ImportEntry): String? {
+        // WOLF v3 files use a 0x55 version marker in their binary headers. Do not
+        // guess a precise editor revision from it; preserve an explicit format label.
+        val marker = gameDat.open().use { input ->
+            input.skip(8)
+            input.read()
+        }
+        return when (marker) {
+            0x55 -> "WOLF RPG v3"
+            0 -> "WOLF RPG v2"
+            else -> "WOLF RPG"
+        }
     }
 
     private fun detectAtPrefix(

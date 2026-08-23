@@ -4,9 +4,32 @@ import io.github.gdlbo.makerplay.fixtures.RpgMakerFixtureGenerator
 import io.github.gdlbo.makerplay.model.GameEngine
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import java.io.ByteArrayInputStream
 import java.util.Base64
 
 class GameDetectorTest {
+
+    @Test
+    fun `detects wolf native deployment`() {
+        val entries = listOf(
+            entry("Game.exe", byteArrayOf(0x4d, 0x5a)),
+            entry("Game.dat", ByteArray(9) { if (it == 8) 0x55 else 0 }),
+            entry("CommonEvent.dat", byteArrayOf(1)),
+            entry("Data/MapData/MapTree.dat", byteArrayOf(1)),
+        )
+
+        val detected = GameDetector().detect(entries, "Wolf sample")
+
+        assertEquals(GameEngine.WOLF, detected.engine)
+        assertEquals("Wolf sample", detected.title)
+        assertEquals("WOLF RPG v3", detected.engineVersion)
+    }
+
+    private fun entry(path: String, bytes: ByteArray) = ImportEntry(
+        relativePath = path,
+        size = bytes.size.toLong(),
+        open = { ByteArrayInputStream(bytes) },
+    )
     private val detector = GameDetector()
 
     @Test

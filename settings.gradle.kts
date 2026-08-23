@@ -25,11 +25,13 @@ include(
     ":core:input",
     ":core:model",
     ":core:vfs",
+    ":core:wolfformat",
     ":feature:importer",
     ":feature:library",
     ":feature:player",
     ":feature:settings",
     ":fixtures",
     ":runtime:api",
+    ":runtime:wolf",
     ":runtime:webview",
 )

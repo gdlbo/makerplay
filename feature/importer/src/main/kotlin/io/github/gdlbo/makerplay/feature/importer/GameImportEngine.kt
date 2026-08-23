@@ -1,7 +1,7 @@
 package io.github.gdlbo.makerplay.feature.importer
 
 import io.github.gdlbo.makerplay.model.GameSummary
-import io.github.gdlbo.makerplay.model.RuntimeBackendId
+import io.github.gdlbo.makerplay.model.defaultBackendId
 import io.github.gdlbo.makerplay.vfs.GameFileIndex
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -261,7 +261,7 @@ class GameImportEngine(
         id = gameId,
         title = title,
         engine = engine,
-        backend = RuntimeBackendId.WEBVIEW,
+        backend = engine.defaultBackendId(),
         engineVersion = engineVersion,
         plugins = plugins,
         artworkRelativePath = artworkRelativePath,

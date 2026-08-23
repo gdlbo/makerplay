@@ -32,6 +32,7 @@ dependencies {
     implementation(project(":feature:player"))
     implementation(project(":feature:settings"))
     implementation(project(":runtime:api"))
+    implementation(project(":runtime:wolf"))
     implementation(project(":runtime:webview"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)

@@ -1,8 +1,21 @@
 package io.github.gdlbo.makerplay.model
 
-enum class GameEngine { MV, MZ }
+/** Supported game formats. WOLF is a native binary engine, not an RPG Maker web deployment. */
+enum class GameEngine { MV, MZ, WOLF }
 
-enum class RuntimeBackendId { WEBVIEW, GECKO }
+/**
+ * Runtime backends available for playback. WOLF games require the clean-room
+ * native interpreter; they can never run through the Chromium WebView backend.
+ */
+enum class RuntimeBackendId { WEBVIEW, GECKO, WOLF_NATIVE }
+
+/** Maps a detected game engine to the backend that must execute it. */
+fun GameEngine.defaultBackendId(): RuntimeBackendId = when (this) {
+    GameEngine.WOLF -> RuntimeBackendId.WOLF_NATIVE
+    GameEngine.MV,
+    GameEngine.MZ,
+    -> RuntimeBackendId.WEBVIEW
+}
 
 data class GameSummary(
     val id: String,

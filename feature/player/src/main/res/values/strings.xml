@@ -120,6 +120,8 @@
     <string name="controller_show_controls">Show controls</string>
     <string name="controller_hide_controls">Hide controls</string>
     <string name="controller_switch_mode">Switch input mode</string>
+    <string name="player_logging_enable">Enable game logging</string>
+    <string name="player_logging_disable">Disable game logging</string>
     <string name="controller_edit">Edit controls</string>
     <string name="controller_finish_editing">Finish editing</string>
     <string name="controller_save">Save layout</string>

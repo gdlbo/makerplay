@@ -174,6 +174,7 @@ fun SettingsScreen(
 @Composable
 fun GameSettingsScreen(
     gameTitle: String,
+    isWolfGame: Boolean = false,
     useCommonSettings: Boolean,
     commonSettings: RuntimeSettings,
     customSettings: RuntimeSettings,
@@ -235,7 +236,11 @@ fun GameSettingsScreen(
 private fun ColumnScope.RuntimeSettingsOptions(
     runtimeSettings: RuntimeSettings,
     onRuntimeSettingsChange: (RuntimeSettings) -> Unit,
+    isWolfGame: Boolean = false,
 ) {
+    // WOLF games run on the native backend: Chromium WebView options do not
+    // apply and are hidden entirely.
+
     SettingsSection(stringResource(R.string.display_section))
     ChoiceSetting(
         title = stringResource(R.string.orientation),
@@ -293,7 +298,7 @@ private fun ColumnScope.RuntimeSettingsOptions(
         onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(vibrationEnabled = it)) },
     )
     SettingsSection(stringResource(R.string.compatibility_section))
-    ChoiceSetting(
+    if (!isWolfGame) ChoiceSetting(
         title = stringResource(R.string.engine_mode),
         values = RuntimeEngineMode.entries,
         selected = runtimeSettings.engineMode,
@@ -308,30 +313,32 @@ private fun ColumnScope.RuntimeSettingsOptions(
         },
         onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(engineMode = it)) },
     )
-    ToggleSetting(
-        title = stringResource(R.string.webgl_enabled),
-        description = stringResource(R.string.webgl_description),
-        checked = runtimeSettings.webGlEnabled,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(webGlEnabled = it)) },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.legacy_compatibility),
-        description = stringResource(R.string.legacy_compatibility_description),
-        checked = runtimeSettings.legacyCompatibility,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(legacyCompatibility = it)) },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.ignore_missing_files),
-        description = stringResource(R.string.ignore_missing_files_description),
-        checked = runtimeSettings.ignoreMissingFiles,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(ignoreMissingFiles = it)) },
-    )
-    Text(
-        stringResource(R.string.compatibility_restart_description),
-        modifier = Modifier.padding(horizontal = 12.dp),
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-    )
+    if (!isWolfGame) {
+        ToggleSetting(
+            title = stringResource(R.string.webgl_enabled),
+            description = stringResource(R.string.webgl_description),
+            checked = runtimeSettings.webGlEnabled,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(webGlEnabled = it)) },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.legacy_compatibility),
+            description = stringResource(R.string.legacy_compatibility_description),
+            checked = runtimeSettings.legacyCompatibility,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(legacyCompatibility = it)) },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.ignore_missing_files),
+            description = stringResource(R.string.ignore_missing_files_description),
+            checked = runtimeSettings.ignoreMissingFiles,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(ignoreMissingFiles = it)) },
+        )
+        Text(
+            stringResource(R.string.compatibility_restart_description),
+            modifier = Modifier.padding(horizontal = 12.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
     SettingsSection(stringResource(R.string.performance_section))
     ChoiceSetting(
         title = stringResource(R.string.fps_limit),
@@ -342,6 +349,12 @@ private fun ColumnScope.RuntimeSettingsOptions(
                 ?: stringResource(R.string.fps_auto)
         },
         onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(fpsLimit = it)) },
+    )
+    ToggleSetting(
+        title = stringResource(R.string.record_logs),
+        description = stringResource(R.string.record_logs_description),
+        checked = runtimeSettings.recordLogs,
+        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(recordLogs = it)) },
     )
     ToggleSetting(
         title = stringResource(R.string.show_fps_counter),
@@ -356,38 +369,40 @@ private fun ColumnScope.RuntimeSettingsOptions(
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    ToggleSetting(
-        title = stringResource(R.string.module_steam),
-        description = stringResource(R.string.module_steam_description),
-        checked = runtimeSettings.modules.steamCompatibility,
-        onCheckedChange = {
-            onRuntimeSettingsChange(
-                runtimeSettings.copy(modules = runtimeSettings.modules.copy(steamCompatibility = it)),
-            )
-        },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.limit_background_load),
-        description = stringResource(R.string.limit_background_load_description),
-        checked = runtimeSettings.modules.limitWorkerCount,
-        onCheckedChange = {
-            onRuntimeSettingsChange(
-                runtimeSettings.copy(modules = runtimeSettings.modules.copy(limitWorkerCount = it)),
-            )
-        },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.module_performance),
-        description = stringResource(R.string.module_performance_description),
-        checked = runtimeSettings.modules.performanceOptimization,
-        onCheckedChange = {
-            onRuntimeSettingsChange(
-                runtimeSettings.copy(
-                    modules = runtimeSettings.modules.copy(performanceOptimization = it),
-                ),
-            )
-        },
-    )
+    if (!isWolfGame) {
+        ToggleSetting(
+            title = stringResource(R.string.module_steam),
+            description = stringResource(R.string.module_steam_description),
+            checked = runtimeSettings.modules.steamCompatibility,
+            onCheckedChange = {
+                onRuntimeSettingsChange(
+                    runtimeSettings.copy(modules = runtimeSettings.modules.copy(steamCompatibility = it)),
+                )
+            },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.limit_background_load),
+            description = stringResource(R.string.limit_background_load_description),
+            checked = runtimeSettings.modules.limitWorkerCount,
+            onCheckedChange = {
+                onRuntimeSettingsChange(
+                    runtimeSettings.copy(modules = runtimeSettings.modules.copy(limitWorkerCount = it)),
+                )
+            },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.module_performance),
+            description = stringResource(R.string.module_performance_description),
+            checked = runtimeSettings.modules.performanceOptimization,
+            onCheckedChange = {
+                onRuntimeSettingsChange(
+                    runtimeSettings.copy(
+                        modules = runtimeSettings.modules.copy(performanceOptimization = it),
+                    ),
+                )
+            },
+        )
+    }
     ToggleSetting(
         title = stringResource(R.string.module_cheats),
         description = stringResource(R.string.module_cheats_description),

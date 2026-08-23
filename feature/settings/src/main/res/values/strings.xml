@@ -50,6 +50,8 @@
     <string name="fps_limit">FPS limit</string>
     <string name="fps_value">%1$d FPS</string>
     <string name="fps_auto">Auto</string>
+    <string name="record_logs">Record game logs</string>
+    <string name="record_logs_description">Writes runtime diagnostics to a log file for this game (applies on next launch)</string>
     <string name="show_fps_counter">FPS counter</string>
     <string name="show_fps_counter_description">Shows the current FPS in the top-left corner</string>
     <string name="game_settings_title">%1$s settings</string>

@@ -68,6 +68,8 @@ fun RuntimeHostScreen(
     onBack: () -> Unit,
     layoutFile: File? = null,
     logFile: File? = null,
+    loggingEnabled: Boolean = false,
+    onToggleLogging: () -> Unit = {},
 ) {
     var session by remember { mutableStateOf<PreparedSession?>(null) }
     var gameReady by remember { mutableStateOf(false) }
@@ -341,6 +343,8 @@ fun RuntimeHostScreen(
                 cheatsAvailable = request.settings.modules.cheatBridge && cheatsAvailable == true,
                 layoutLoaded = layoutLoaded,
                 controllerMode = layouts.mode,
+                loggingEnabled = loggingEnabled,
+                onToggleLogging = onToggleLogging,
                 onToggleControls = {
                     if (showControls && editControls) scope.launch(Dispatchers.IO) {
                         layoutStore?.save(
