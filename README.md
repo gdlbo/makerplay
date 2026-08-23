@@ -18,6 +18,13 @@
 
 ## Build
 
+First, fetch the SDL3 submodule (pinned to `release-3.4.14`) used by the
+native WOLF RPG runtime:
+
+```bash
+git submodule update --init --recursive
+```
+
 Windows:
 
 ```powershell
