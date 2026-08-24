@@ -70,14 +70,15 @@ class GameImportEngine(
 
         val canonicalSource = sourceRoot.canonicalFile
         val actualSourcePrefix = entries
-            .first {
+            .firstOrNull {
                 it.relativePath.equals(
                     "${detected.sourcePrefix}index.html",
                     ignoreCase = true
                 )
             }
-            .relativePath
-            .dropLast("index.html".length)
+            ?.relativePath
+            ?.dropLast("index.html".length)
+            .orEmpty()
         val contentRoot = actualSourcePrefix.removeSuffix("/")
             .takeIf(String::isNotEmpty)
             ?.let { File(canonicalSource, it).canonicalFile }
