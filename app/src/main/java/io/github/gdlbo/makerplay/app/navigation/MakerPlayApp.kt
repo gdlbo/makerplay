@@ -111,7 +111,16 @@ fun MakerPlayApp(graph: AppGraph) {
     MakerPlayTheme(themeMode = themeMode) {
         Surface(modifier = Modifier.fillMaxSize()) {
             NavHost(navController = navController, startDestination = "library") {
-                composable("library") {
+                composable("library") { entry ->
+                    DisposableEffect(entry) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_RESUME) {
+                                scope.launch(Dispatchers.IO) { graph.catalog.refresh() }
+                            }
+                        }
+                        entry.lifecycle.addObserver(observer)
+                        onDispose { entry.lifecycle.removeObserver(observer) }
+                    }
                     LibraryScreen(
                         games = games,
                         importState = importState,
