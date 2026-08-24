@@ -179,19 +179,27 @@ object WolfSceneLoader {
         project.startingHeroGraphic.takeIf { it.isNotBlank() }
 
     private fun loadInitialMap(source: GameDataSource): MapFile {
-        // Deployments number maps inconsistently (Map001, Map002, ...); pick the
-        // first map file in listing order for the static boot frame.
+        // Deployments number maps inconsistently and ship pseudo-maps/format
+        // variants the parser rejects; try each in listing order.
+        val errors = mutableListOf<String>()
         val names = source.list("Data/MapData")
-            .filter { it.endsWith(".mps", ignoreCase = true) }
+            .filter { it.endsWith(".mps", true) }
             .sorted()
             .ifEmpty {
                 (1..20).map { "Map%03d.mps".format(it) }.filter { source.has("Data/MapData/$it") }
             }
         for (name in names) {
             val bytes = runCatching { source.read("Data/MapData/$name") }.getOrNull() ?: continue
-            return MapFile.parse(bytes)
+            val map = runCatching { MapFile.parse(bytes) }.getOrElse {
+                errors += "$name: ${it.message?.take(60)}"
+                continue
+            }
+            return map
         }
-        throw WolfFormatException("No initial map found under Data/MapData/")
+        throw WolfFormatException(
+            "No parseable map under Data/MapData (${errors.size} tried)" +
+                if (errors.isNotEmpty()) ": ${errors.first()}" else "",
+        )
     }
 
     private fun decodeBitmap(source: GameDataSource, path: String): Bitmap {

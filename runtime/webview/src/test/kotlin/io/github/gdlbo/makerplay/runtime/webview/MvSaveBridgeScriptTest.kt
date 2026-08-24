@@ -26,7 +26,7 @@ class MvSaveBridgeScriptTest {
         assertTrue(source.contains("return \"global\""))
         assertTrue(source.contains("return \"file\" + id"))
         assertTrue(source.contains("return \"plugin-\" + savefileId"))
-        assertTrue(source.contains("[A-Za-z0-9._-]{0,106}"))
+        assertTrue(source.contains("[A-Za-z0-9_][A-Za-z0-9._-]{0,106}"))
         assertTrue(source.contains("+ \"-engine-backup\""))
         assertTrue(source.contains("refreshKnownKeys()"))
         assertTrue(source.contains("knownKeys.has(keyFor(savefileId))"))

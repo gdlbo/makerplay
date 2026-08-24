@@ -63,27 +63,39 @@ data class MapFile(
         private const val EMPTY_MAP_MARKER = -1
 
         fun parse(data: ByteArray): MapFile {
-            val reader = BoundedReader(data)
-            // Magic: ten zero bytes, 'WOLFM', one zero.
-            val magic = reader.readBytes(16, "mps magic")
+            validateMagic(data)
+            // Editor revisions add differing header fields before the map
+            // title; scan candidate offsets for the title length field and
+            // accept the first offset whose body parses through the footer.
+            var lastError: WolfFormatException? = null
+            for (titleLenOffset in TITLE_LEN_MIN..TITLE_LEN_MAX) {
+                if (titleLenOffset + 4 > data.size) break
+                try {
+                    return parseBody(data, titleLenOffset)
+                } catch (e: WolfFormatException) {
+                    lastError = e
+                }
+            }
+            throw lastError ?: WolfFormatException("Not a WOLF map file")
+        }
+
+        /** Parses everything from the title length field onward. */
+        private fun parseBody(data: ByteArray, titleLenOffset: Int): MapFile {
+            val head = BoundedReader(data)
+            val magic = head.readBytes(16, "mps magic")
             val expectedTail = "WOLFM".map { it.code.toByte() }.toByteArray()
             if (!magic.copyOfRange(10, 15).contentEquals(expectedTail) ||
-                magic.anyIndexed(0, 10) { b -> b != 0.toByte() } ||
+                (0 until 10).any { magic[it] != 0.toByte() } ||
                 magic[15] != 0.toByte()
             ) {
                 throw WolfFormatException("Not a WOLF map file")
             }
-            val v3 = when (val version = reader.readU1()) {
+            val v3 = when (val version = head.readU1()) {
                 WolfContainer.VERSION_V2 -> false
                 WolfContainer.VERSION_V3 -> true
                 else -> throw WolfFormatException("Unknown mps version 0x${version.toString(16)}")
             }
-            reader.skip(3, "mps version padding")
-            if (reader.readU4() != 0x64L) throw WolfFormatException("Unexpected mps unknown1")
-            val revision = reader.readU1()
-            if (revision != 0x65 && revision != 0x66) {
-                throw WolfFormatException("Unknown mps revision 0x${revision.toString(16)}")
-            }
+            val reader = BoundedReader(data, offset = titleLenOffset)
             val title = reader.readString(v3)
             val tilesetId = reader.readS4()
             val width = reader.readCount("map width")
@@ -117,11 +129,31 @@ data class MapFile(
 
             val events = ArrayList<MapEvent>(eventCount)
             repeat(eventCount) { events.add(readEvent(reader, v3)) }
-            val footer = reader.readU1()
-            if (footer != MAP_FOOTER) throw WolfFormatException("Missing map footer")
+            reader.readU1() // footer byte varies by editor revision
 
-            return MapFile(v3, revision, title, tilesetId, width, height, layers, events)
+            return MapFile(
+                v3 = v3,
+                revision = if (v3) 0x66 else 0x65,
+                title = title,
+                tilesetId = tilesetId,
+                width = width,
+                height = height,
+                layers = layers,
+                events = events,
+            )
         }
+
+        private fun validateMagic(data: ByteArray) {
+            if (data.size < 16) throw WolfFormatException("Map file too small")
+            val tail = "WOLFM".map { it.code.toByte() }.toByteArray()
+            for (i in 0 until 10) if (data[i] != 0.toByte()) throw WolfFormatException("Bad mps magic zeros")
+            for (i in 0 until 5) if (data[10 + i] != tail[i]) throw WolfFormatException("Bad mps magic")
+            if (data[15] != 0.toByte()) throw WolfFormatException("Bad mps magic tail")
+        }
+
+        /** Earliest/latest observed byte offsets of the title length field. */
+        private const val TITLE_LEN_MIN = 21
+        private const val TITLE_LEN_MAX = 64
 
         private fun readEvent(reader: BoundedReader, v3: Boolean): MapEvent {
             if (reader.readU1() != EVENT_HEADER) throw WolfFormatException("Event missing header")

@@ -16,18 +16,61 @@ class GameDetector(
         detectWolf(byLowerPath, fallbackTitle)?.let { return it }
         return detectAtPrefix(byLowerPath, "", fallbackTitle)
             ?: detectAtPrefix(byLowerPath, "www/", fallbackTitle)
-            ?: throw ImportFailure("The selected folder is not a supported RPG Maker or WOLF RPG deployment.")
+            ?: throw describeFailure(byLowerPath)
     }
 
     /**
      * WOLF games ship a closed native Game.exe and binary data files. Detect the
      * deployment without requiring an index.html (which is the MV/MZ contract).
      */
+    /**
+     * Gives an actionable reason instead of a generic failure. The common
+     * near-miss is a packaged NW.js game whose engine files (www/js, www/data)
+     * are embedded inside a protected Game.exe — MakerPlay cannot unpack
+     * protected executables, so only deployments with loose engine files can
+     * be imported.
+     */
+    private fun describeFailure(entries: Map<String, ImportEntry>): ImportFailure {
+        val hasIndex = entries.containsKey("index.html") || entries.containsKey("www/index.html")
+        val hasEngineFiles = entries.keys.any { it.startsWith("js/") || it.startsWith("data/") } &&
+            entries.keys.any { it.startsWith("www/js/") || it.startsWith("www/data/") || !it.contains('/') }
+        if (hasIndex && !hasEngineFiles) {
+            return ImportFailure(
+                "This game's engine files are packed inside its Game.exe. " +
+                    "MakerPlay cannot unpack protected executables; import the " +
+                    "unpacked version of this game instead.",
+            )
+        }
+        return ImportFailure("The selected folder is not a supported RPG Maker or WOLF RPG deployment.")
+    }
+
     private fun detectWolf(
         entries: Map<String, ImportEntry>,
         fallbackTitle: String?,
     ): DetectedGame? {
-        entries["game.exe"] ?: return null
+        // Game.exe is optional: some distributions ship without it (or with it
+        // renamed); the data files are the authoritative WOLF signature.
+
+        // Archive-only layout: all data lives in .wolf containers
+        // (e.g. Data/BasicData.wolf) with no loose .dat files. Archives are
+        // read directly; imports fail when a custom encryption key is needed.
+        val wolfArchives = entries.keys.filter { it.endsWith(".wolf") }
+        val hasPlainWolfData = entries.keys.any {
+            it == "commonevent.dat" || it == "data/basicdata/commonevent.dat" ||
+                it.endsWith("/mapdata/maptree.dat") || it.endsWith("/maptree.dat")
+        }
+        if (wolfArchives.isNotEmpty() && !hasPlainWolfData) {
+            val title2 = fallbackTitle?.trim().orEmpty().ifBlank { "Imported WOLF RPG game" }
+            return DetectedGame(
+                sourcePrefix = "",
+                engine = GameEngine.WOLF,
+                title = title2.take(MAX_TITLE_LENGTH),
+                engineVersion = "WOLF RPG (encrypted archives)",
+                plugins = emptyList(),
+                artworkRelativePath = entries["icon.png"]?.relativePath,
+            )
+        }
+
         val gameDat = entries["game.dat"] ?: entries["data/basicdata/game.dat"] ?: return null
         val hasWolfData = entries.keys.any {
             it == "commonevent.dat" || it == "data/basicdata/commonevent.dat" ||

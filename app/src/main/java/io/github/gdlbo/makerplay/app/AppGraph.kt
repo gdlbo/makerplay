@@ -219,7 +219,8 @@ class AppGraph(context: Context) {
         File(commonJsDataRoot, WebViewRuntimeBackend.gameStorageKey(gameId))
 
     private fun resolveGameDirectory(gameId: String): File? {
-        val directory = gameStore.findInstalledGame(gameId) ?: return null
+        val directory = gameStore.findInstalledGame(gameId)
+        if (directory == null) return null
         if (!gameStore.isDirectGame(gameId)) return directory
         if (!Environment.isExternalStorageManager()) return null
         return directory.takeIf { source ->

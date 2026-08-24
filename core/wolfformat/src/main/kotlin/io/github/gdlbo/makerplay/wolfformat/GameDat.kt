@@ -66,18 +66,17 @@ data class GameDat(
             val fpsByte = u8SettingsByte(data, 4)
             val heroMoveSpeedByte = u8SettingsByte(data, 16).coerceIn(4, 9)
 
-            // v3 has thirteen strings; v2 has eight Shift-JIS strings plus one trailing.
-            val stringCount = if (v3) 13 else 9
-            val stringBlockLen = reader.readU4()
-            if (stringBlockLen > BoundedReader.Limits.DEFAULT.maxStringBytes) {
-                throw WolfFormatException("Game.dat string block too large: $stringBlockLen")
-            }
+            // Editor revisions differ by a few bytes between the u8 settings
+            // block and the string table (Pro fields, extra counters), so scan
+            // a small window for an offset whose header validates cleanly.
+            val (stringsOffset, stringCount) = locateStringTable(reader.position(), data, v3)
+            val stringReader = BoundedReader(data, offset = stringsOffset + 4)
             var title = ""
             var serial = ""
             var encryptionKey = ""
             var startingHeroGraphic = ""
             repeat(stringCount) { index ->
-                val value = reader.readString(v3)
+                val value = stringReader.readString(v3)
                 when (index) {
                     0 -> title = value
                     1 -> serial = value
@@ -86,17 +85,21 @@ data class GameDat(
                 }
             }
 
-            reader.readU4() // static randoms section size marker ("filesize")
-            reader.readU4() // unknown
+            val afterStrings = BoundedReader(
+                data,
+                offset = stringsOffset + 4 + stringReader.position(),
+            )
+            afterStrings.readU4() // static randoms section size marker ("filesize")
+            afterStrings.readU4() // unknown
 
-            val u16Count = reader.readCount("Game.dat u16 settings").also {
+            val u16Count = afterStrings.readCount("Game.dat u16 settings").also {
                 if (it < 19) throw WolfFormatException("Game.dat u16 settings too short: $it")
             }
             var width = 0
             var height = 0
             var versionWord = 0
             for (i in 0 until u16Count) {
-                val value = reader.readU2()
+                val value = afterStrings.readU2()
                 when (i) {
                     16 -> width = value
                     17 -> height = value
@@ -120,6 +123,43 @@ data class GameDat(
                 fps = if (fpsByte == 60) 60 else 30,
                 heroMoveSpeed = heroMoveSpeedByte,
             )
+        }
+
+        /**
+         * Editor revisions place a few differing bytes between the u8 settings
+         * block and the string table (Pro fields, extra counters). Scans a
+         * small window for an offset whose [count][strings] header validates:
+         * count in 9..32 and every contained string decoding cleanly, with a
+         * plausible filesize marker following. Returns the absolute offset of
+         * the count field and the count.
+         */
+        private fun locateStringTable(
+            searchBase: Int,
+            data: ByteArray,
+            v3: Boolean,
+        ): Pair<Int, Int> {
+            val expected = if (v3) 9..32 else 5..20
+            for (extra in 0..16) {
+                val headerOffset = searchBase + extra
+                if (headerOffset + 4 > data.size) break
+                val count = BoundedReader(data, offset = headerOffset).readU4().toInt()
+                System.out.println("LOCATE extra=$extra off=$headerOffset count=$count")
+                if (count !in expected) continue
+                val probe = BoundedReader(data, offset = headerOffset + 4)
+                var valid = true
+                repeat(count) {
+                    if (valid) {
+                        valid = runCatching { probe.readString(v3) }.isSuccess
+                    }
+                }
+                if (!valid) continue
+                val marker = runCatching {
+                    BoundedReader(data, offset = headerOffset + 4 + probe.position()).readU4()
+                }.getOrNull()
+                if (marker == null || marker.toInt() > data.size) continue
+                return headerOffset to count
+            }
+            throw WolfFormatException("Could not locate Game.dat string table")
         }
 
         private fun u8SettingsByte(data: ByteArray, index: Int): Int {

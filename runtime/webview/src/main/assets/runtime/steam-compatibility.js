@@ -131,8 +131,10 @@
     isDLCInstalled: () => false,
     installDLC: () => false,
     uninstallDLC: () => false,
-    isSubscribedApp: () => false,
-    isAppInstalled: () => false,
+    // Locally imported games are entitled by definition; several plugins
+    // (e.g. MadeWithMv) hard-block on these checks.
+    isSubscribedApp: () => true,
+    isAppInstalled: () => true,
     saveTextToFile: (name, contents, success, failure) => {
       name = key(name);
       if (!name || typeof contents !== "string") { callback(failure, "Invalid file"); return false; }
@@ -217,7 +219,10 @@
     api.isDLCInstalled = () => false;
     api.installDLC = () => false;
     api.uninstallDLC = () => false;
-    api.isSubscribedApp = () => false;
+    // Locally imported games are entitled by definition; several plugins
+    // (e.g. MadeWithMv) hard-block on these checks.
+    api.isSubscribedApp = () => true;
+    api.isAppInstalled = () => true;
     return true;
   };
 

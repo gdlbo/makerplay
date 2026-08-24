@@ -8,6 +8,7 @@ android { namespace = "io.github.gdlbo.makerplay.feature.importer" }
 dependencies {
     api(project(":core:model"))
     implementation(project(":core:vfs"))
+    implementation(project(":core:wolfformat"))
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.foundation)

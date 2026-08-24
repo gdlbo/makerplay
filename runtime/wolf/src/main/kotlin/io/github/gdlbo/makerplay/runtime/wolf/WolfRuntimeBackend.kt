@@ -104,8 +104,9 @@ class WolfRuntimeBackend(
         }
         val root = gameDirectory(request.gameId)
             ?: throw IllegalArgumentException("The imported game is unavailable.")
-        validateWolfDeployment(root)
-        val settings = loadProjectSettings(root)
+        val archiveOnly = hasWolfArchives(root)
+        if (!archiveOnly) validateWolfDeployment(root)
+        val project = loadProjectSettings(root, archiveOnly)
         val sessionLogger =
             if (request.settings.recordLogs) gameLoggerFactory?.invoke(root) ?: logger else logger
         val sessionId = UUID.randomUUID().toString()
@@ -114,7 +115,7 @@ class WolfRuntimeBackend(
             gameId = request.gameId,
             gameRoot = root,
             settings = request.settings,
-            project = settings,
+            project = project,
             logger = sessionLogger,
         )
         return PreparedSession(
@@ -180,7 +181,7 @@ class WolfRuntimeBackend(
             val frame = runCatching {
                 withContext(Dispatchers.IO) {
                     val project = stored?.project ?: return@withContext null
-                    GameDataSource.open(stored.gameRoot).use { source ->
+                    openDataSource(stored).use { source ->
                         WolfSceneLoader.loadStaticFrame(source, project)
                     }
                 }
@@ -265,8 +266,9 @@ class WolfRuntimeBackend(
         confirmEdges: () -> Boolean,
     ): kotlinx.coroutines.Job? {
         val project = stored.project ?: return null
-        return gameLoopScope.launch {
-            GameDataSource.open(stored.gameRoot).use { source ->
+        val job = gameLoopScope.launch {
+            try {
+            openDataSource(stored).use { source ->
                 var mapPath = initialMapPath(source)
                 val commonEvents = HashMap<Int, List<EventCommand>>()
                 runCatching {
@@ -333,6 +335,9 @@ class WolfRuntimeBackend(
                 }
 
                 val tickMillis = 1000L / project.fps.coerceAtLeast(1)
+                var lastFrameKey: Any? = null
+                var lastFrame: WolfSceneLoader.StaticFrame? = null
+                var forceCompose = true
                 while (isActive) {
                     val active = interpreter
                     if (active != null && !active.finished) {
@@ -368,32 +373,71 @@ class WolfRuntimeBackend(
                             }
                         }
                     }
-                    val frame = runCatching {
-                        withContext(Dispatchers.Default) {
-                            WolfSceneLoader.composeFrame(
-                                source, project, map, tilesets,
-                                heroTile = if (interpreter?.finished != true) null else engine.position(),
+                    // Recompose only when something visible changed: hero moved
+                    // or an event switched the presented state.
+                    val heroPos = if (interpreter?.finished != true) null else engine.position()
+                    val key = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, heroPos?.offsetX)
+                    val frame = if (key != lastFrameKey || forceCompose) {
+                        lastFrameKey = key
+                        runCatching {
+                            withContext(Dispatchers.Default) {
+                                WolfSceneLoader.composeFrame(
+                                    source, project, map, tilesets, heroTile = heroPos,
+                                )
+                            }
+                        }.onFailure {
+                            (stored.logger ?: logger).error(
+                                "runtime.loop_frame_failed",
+                                mapOf("error" to (it.message ?: "unknown")),
                             )
-                        }
-                    }.onFailure {
-                        (stored.logger ?: logger).error(
-                            "runtime.loop_frame_failed",
-                            mapOf("error" to (it.message ?: "unknown")),
-                        )
-                    }.getOrNull()
+                        }.getOrNull()
+                    } else {
+                        lastFrame
+                    }
                     if (frame != null) {
                         bridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
                     }
+                    lastFrame = frame
                     delay(tickMillis)
                 }
             }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                stored.logger ?: logger
+                logger.error("runtime.loop_crashed", mapOf("error" to (e.message ?: "unknown")))
+            } finally {
+                stored.loopJob = null
+            }
         }
+        stored.loopJob = job
+        return job
     }
 
-    private fun initialMapPath(source: GameDataSource): String =
-        source.list("Data/MapData").filter { it.endsWith(".mps", true) }.sorted()
-            .firstOrNull()?.let { "Data/MapData/$it" }
-            ?: "Data/MapData/Map001.mps"
+    /**
+     * Picks the first map file whose bytes actually parse. Some deployments
+     * ship special pseudo-maps (000title.mps) or format variants that the
+     * parser rejects; skipping them lets compatible maps still boot.
+     */
+    private fun initialMapPath(source: GameDataSource): String {
+        val candidates = source.list("Data/MapData")
+            .filter { it.endsWith(".mps", true) }
+            .sorted()
+        val errors = mutableListOf<String>()
+        for (name in candidates) {
+            val path = "Data/MapData/$name"
+            try {
+                io.github.gdlbo.makerplay.wolfformat.MapFile.parse(source.read(path))
+                return path
+            } catch (e: WolfFormatException) {
+                errors += "$name: ${e.message?.take(60)}"
+            }
+        }
+        throw WolfFormatException(
+            "No parseable map found under Data/MapData (${errors.size} tried)" +
+                if (errors.isNotEmpty()) ": ${errors.first()}" else "",
+        )
+    }
 
     private fun ensureNativeSession(
         session: PreparedSession,
@@ -408,6 +452,8 @@ class WolfRuntimeBackend(
 
     override suspend fun destroySession(sessionId: String) {
         val session = sessions.remove(sessionId) ?: return
+        session.loopJob?.cancel()
+        session.loopJob = null
         bridge.get()?.destroySession(session.nativeHandle)
         session.nativeHandle = 0L
         logger.info(
@@ -416,26 +462,48 @@ class WolfRuntimeBackend(
         )
     }
 
-    /** Parses and validates the deployment's Game.dat via the format library. */
-    internal fun loadProjectSettings(root: File): GameDat = try {
-        GameDataSource.open(root).use { source ->
-            val bytes = runCatching { source.read(GameDataSource.GAME_DAT) }
-                .getOrElse { source.read(GameDataSource.DATA_GAME_DAT) }
+    /** Picks the right data source: plain files, or encrypted .wolf archives. */
+    internal fun openDataSource(stored: WolfNativeSession): GameDataSource {
+        val hasArchives = stored.gameRoot.walkTopDown()
+            .any { it.isFile && it.extension.equals("wolf", true) }
+        return if (hasArchives) {
+            WolfArchiveGameDataSource(stored.gameRoot)
+        } else {
+            GameDataSource.open(stored.gameRoot)
+        }
+    }
+
+    internal fun loadProjectSettings(
+        root: File,
+        archiveOnly: Boolean = false,
+    ): GameDat = try {
+        val source = if (archiveOnly) {
+            WolfArchiveGameDataSource(root)
+        } else {
+            GameDataSource.open(root)
+        }
+        source.use { ds ->
+            val bytes = runCatching { ds.read(GameDataSource.GAME_DAT) }
+                .getOrElse { ds.read(GameDataSource.DATA_GAME_DAT) }
             GameDat.parse(bytes)
         }
     } catch (e: WolfFormatException) {
         throw IllegalArgumentException("The imported WOLF game data is invalid.", e)
     }
 
+    private fun hasWolfArchives(root: File): Boolean =
+        root.walkTopDown().any { it.isFile && it.extension.equals("wolf", true) }
+
     /** Rejects non-WOLF roots early so misrouted MV/MZ games fail loudly here. */
     internal fun validateWolfDeployment(root: File) {
         if (!root.isDirectory) {
             throw IllegalArgumentException("The imported game directory is missing.")
         }
-        val hasExecutable = root.resolve(GAME_EXECUTABLE).isFile
+        // Game.exe is optional (some distributions omit it); the data files
+        // are the authoritative WOLF signature, matching the detector.
         val hasGameData = root.resolve(GAME_DATA).isFile ||
             root.resolve(DATA_BASIC_GAME_DATA).isFile
-        if (!hasExecutable || !hasGameData) {
+        if (!hasGameData) {
             throw IllegalArgumentException(
                 "The imported game is not a WOLF RPG deployment.",
             )
@@ -450,6 +518,8 @@ class WolfRuntimeBackend(
         val project: GameDat? = null,
         val logger: RuntimeLogger? = null,
         var nativeHandle: Long = 0L,
+        /** Set while the per-session game loop is running; cancelled on destroy. */
+        @Volatile var loopJob: kotlinx.coroutines.Job? = null,
     )
 
     fun interface WolfNativeBridgeProvider {

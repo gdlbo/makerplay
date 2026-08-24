@@ -148,7 +148,7 @@ class PrivateGameStore(private val gamesRoot: File) {
         findCatalogDirectory(gameId)?.let { File(it, CONTROLLER_LAYOUT_FILE) }
 
     private fun findCatalogDirectory(gameId: String): File? {
-        if (!SAFE_ID.matches(gameId)) return null
+        if (!SAFE_ID.matches(gameId)) { return null }
         val directory = File(gamesRoot, gameId)
         if (Files.isSymbolicLink(directory.toPath()) || !directory.isDirectory) return null
         val canonical = runCatching { directory.canonicalFile }.getOrNull() ?: return null

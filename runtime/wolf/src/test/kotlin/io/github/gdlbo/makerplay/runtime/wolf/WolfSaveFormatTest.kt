@@ -12,7 +12,7 @@ import java.io.File
 class WolfSaveFormatTest {
 
     private val state = WolfSaveFormat.GameState(
-        title = "Artemis Pearl 2",
+        title = "Sample Game",
         mapPath = "Data/MapData/Map001.mps",
         tileX = 12,
         tileY = 34,

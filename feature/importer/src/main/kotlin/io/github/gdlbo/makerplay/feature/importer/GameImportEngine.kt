@@ -3,6 +3,8 @@ package io.github.gdlbo.makerplay.feature.importer
 import io.github.gdlbo.makerplay.model.GameSummary
 import io.github.gdlbo.makerplay.model.defaultBackendId
 import io.github.gdlbo.makerplay.vfs.GameFileIndex
+import io.github.gdlbo.makerplay.wolfformat.WolfArchiveReader
+import io.github.gdlbo.makerplay.wolfformat.WolfFormatException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -15,6 +17,8 @@ import java.util.UUID
 class GameImportEngine(
     private val detector: GameDetector = GameDetector(),
     private val now: () -> Long = System::currentTimeMillis,
+    /** Parent directory for EVB spool files; null disables packed-exe expansion. */
+    private val evbSpoolDir: File? = null,
 ) {
     suspend fun link(
         source: ImportSource,
@@ -22,6 +26,28 @@ class GameImportEngine(
         store: PrivateGameStore,
         importId: String = UUID.randomUUID().toString(),
         onProgress: suspend (ImportProgress) -> Unit = {},
+    ): ImportResult = withContext(Dispatchers.IO) {
+        expandEvb(source) { expandedSource ->
+            linkExpanded(expandedSource, sourceRoot, store, importId, onProgress)
+        }
+    }
+
+    private suspend fun <T> expandEvb(source: ImportSource, block: suspend (ImportSource) -> T): T {
+        val spoolDir = evbSpoolDir?.let { File(it, "evb-" + UUID.randomUUID()) }
+        if (spoolDir == null) return block(source)
+        try {
+            return block(EvbExpandingImportSource(source, spoolDir))
+        } finally {
+            spoolDir.deleteRecursively()
+        }
+    }
+
+    private suspend fun linkExpanded(
+        source: ImportSource,
+        sourceRoot: File,
+        store: PrivateGameStore,
+        importId: String,
+        onProgress: suspend (ImportProgress) -> Unit,
     ): ImportResult = withContext(Dispatchers.IO) {
         val entries = scanEntries(source, onProgress)
         val detected = detector.detect(entries, source.rootName ?: sourceRoot.name)
@@ -61,6 +87,7 @@ class GameImportEngine(
         ) {
             throw ImportFailure("The selected folder is no longer available.")
         }
+        validateWolfArchives(contentRoot)
 
         val staging = store.begin(importId)
         try {
@@ -89,6 +116,15 @@ class GameImportEngine(
         store: PrivateGameStore,
         importId: String = UUID.randomUUID().toString(),
         onProgress: suspend (ImportProgress) -> Unit = {},
+    ): ImportResult = expandEvb(source) { expandedSource ->
+        importExpanded(expandedSource, store, importId, onProgress)
+    }
+
+    private suspend fun importExpanded(
+        source: ImportSource,
+        store: PrivateGameStore,
+        importId: String,
+        onProgress: suspend (ImportProgress) -> Unit,
     ): ImportResult = withContext(Dispatchers.IO) {
         val entries = scanEntries(source, onProgress)
         val fallbackTitle = source.rootName
@@ -163,6 +199,7 @@ class GameImportEngine(
                     selected.size.toLong(),
                 ),
             )
+            validateWolfArchives(staging)
             val detected = detector.detect(staging.asImportSource().entries(), fallbackTitle)
             val game = detected.toGameSummary(importId)
             GameFileIndex.build(staging).write()
@@ -232,6 +269,22 @@ class GameImportEngine(
         return entries
     }
 
+    /** Rejects deployments whose `.wolf` archives cannot be read without an external key. */
+    private fun validateWolfArchives(root: File) {
+        root.walkTopDown()
+            .filter { it.isFile && it.extension.equals("wolf", true) }
+            .forEach { file ->
+                try {
+                    WolfArchiveReader(file).entries()
+                } catch (e: WolfFormatException) {
+                    throw ImportFailure(
+                        "The game data is stored in encrypted archives; " +
+                            "decryption is not supported.",
+                    )
+                }
+            }
+    }
+
     private fun validateRelativePath(path: String) {
         val segments = path.split('/')
         if (
@@ -268,7 +321,7 @@ class GameImportEngine(
         installedAtEpochMillis = now(),
     )
 
-    private fun File.asImportSource(): ImportSource = ImportSource {
+    internal fun File.asImportSource(): ImportSource = ImportSource {
         walkTopDown()
             .filter(File::isFile)
             .map { file ->
@@ -287,6 +340,7 @@ class GameImportEngine(
         const val MAX_DEPTH = 64
         const val MAX_FILE_BYTES = 2L * 1024 * 1024 * 1024
         const val MAX_TOTAL_BYTES = 16L * 1024 * 1024 * 1024
+        const val MIN_EVB_IMAGE_BYTES = 1L * 1024 * 1024
         const val SCAN_PROGRESS_INTERVAL_NANOS = 200L * 1_000_000L
     }
 }

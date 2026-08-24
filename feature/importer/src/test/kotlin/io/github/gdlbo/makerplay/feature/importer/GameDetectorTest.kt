@@ -25,6 +25,21 @@ class GameDetectorTest {
         assertEquals("WOLF RPG v3", detected.engineVersion)
     }
 
+    @Test
+    fun detectsWolfWithoutGameExe() {
+        // Some distributions ship without Game.exe; data files are the signature.
+        val entries = listOf(
+            entry("Data/BasicData/Game.dat", ByteArray(9) { if (it == 8) 0x55 else 0 }),
+            entry("Data/BasicData/CommonEvent.dat", byteArrayOf(1)),
+            entry("Data/BasicData/MapTree.dat", byteArrayOf(1)),
+        )
+
+        val detected = GameDetector().detect(entries, "No exe sample")
+
+        assertEquals(GameEngine.WOLF, detected.engine)
+        assertEquals("WOLF RPG v3", detected.engineVersion)
+    }
+
     private fun entry(path: String, bytes: ByteArray) = ImportEntry(
         relativePath = path,
         size = bytes.size.toLong(),

@@ -23,7 +23,7 @@ import java.nio.charset.Charset
 class WolfArchiveReader(
     private val file: File,
     /** Key string from Game.dat; falls back to the DxLib default when short. */
-    private val keyString: String,
+    private val keyString: String = "",
     private val limits: Limits = Limits(),
 ) {
     data class Limits(val maxEntryBytes: Long = 512L * 1024 * 1024, val maxEntries: Int = 500_000)
@@ -37,10 +37,6 @@ class WolfArchiveReader(
     ) {
         override fun equals(other: Any?): Boolean = other is Entry && other.path == path
         override fun hashCode(): Int = path.hashCode()
-    }
-
-    init {
-        require(keyString.isNotEmpty()) { "Archive key string must not be empty" }
     }
 
     private val root: Node by lazy { open() }

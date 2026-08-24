@@ -93,8 +93,8 @@ class WolfGameEngineTest {
         engine.setInput(setOf(WolfGameEngine.Direction.RIGHT), confirmPressed = false)
         repeat(8) { engine.tick() }
         assertEquals(WolfGameEngine.Direction.RIGHT, engine.facing)
-        // 8 ticks * 0.125 tiles * 40px * 1.0x = 40px = one tile.
-        assertEquals(startX + 40.0, engine.playerPixelX, 0.001)
+        // 8 ticks * (speed 4 -> 1 px/frame) = 8 px.
+        assertEquals(startX + 8.0, engine.playerPixelX, 0.001)
     }
 
     @Test
@@ -102,7 +102,8 @@ class WolfGameEngineTest {
         val fast = WolfGameEngine(project(speed = 8), map(layer0 = flatMapLayer { 0 }))
         fast.setInput(setOf(WolfGameEngine.Direction.RIGHT), false)
         repeat(8) { fast.tick() }
-        assertEquals(80.0, fast.playerPixelX, 0.001) // 2.0x
+        // Speed 8 moves 2 px/frame.
+        assertEquals(16.0, fast.playerPixelX, 0.001)
     }
 
     /** Tileset where chip 0 is fully open and chip 1 blocks left/right. */
@@ -146,7 +147,7 @@ class WolfGameEngineTest {
         val touchMap = map(layer0 = layer, events = listOf(event(7, x = 1, y = 0, pages = listOf(page(3)))))
         val engine = WolfGameEngine(project(), touchMap)
         engine.setInput(setOf(WolfGameEngine.Direction.RIGHT), false)
-        repeat(12) { engine.tick() } // cross into tile (1,0)
+        repeat(60) { engine.tick() } // cross into tile (1,0)
         val fired = engine.drainFiredTriggers()
         assertTrue(fired.any { it.eventId == 7 && it.trigger == WolfGameEngine.Trigger.PLAYER_TOUCH })
     }

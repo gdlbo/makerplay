@@ -224,4 +224,18 @@ class GameImportEngineTest {
 
         assertEquals("The selected folder contains an unsafe file path.", error.userMessage)
     }
+
+    @Test
+    fun rejectsUndecryptableWolfArchives() {
+        val sourceFiles = mapOf("Data/BasicData.wolf" to ByteArray(64))
+
+        val error = assertThrows(ImportFailure::class.java) {
+            runBlocking {
+                GameImportEngine().import(sourceFiles.asImportSource(), store, "wolf-encrypted")
+            }
+        }
+
+        assertTrue(error.userMessage.contains("decryption is not supported"))
+        assertFalse(java.io.File(root, "wolf-encrypted").exists())
+    }
 }

@@ -26,12 +26,12 @@ class WolfGameEngine(
     initialY: Int = 0,
 ) {
     companion object {
-        /** Move-speed multipliers keyed by the raw settings byte. */
-        val SPEED_MULTIPLIERS: Map<Int, Double> = mapOf(
-            4 to 1.0, 5 to 1.25, 6 to 1.5, 7 to 1.75, 8 to 2.0,
-        )
-
-        const val BASE_TILES_PER_TICK = 0.125
+        /**
+         * WOLF stores the hero move speed as a raw setting whose value maps
+         * directly to pixels per logical frame: value * 0.25 px (per the
+         * editor's own speed table, e.g. setting 8 moves 2 px/frame).
+         */
+        const val PIXELS_PER_FRAME_PER_SPEED_UNIT = 0.25
     }
 
     enum class Direction { UP, DOWN, LEFT, RIGHT }
@@ -118,9 +118,9 @@ class WolfGameEngine(
         }
 
     private fun step(direction: Direction) {
+        // Movement is expressed directly in pixels per logical frame.
         val ts = project.tileSize.toDouble()
-        val speed = BASE_TILES_PER_TICK * project.tileSize *
-            SPEED_MULTIPLIERS.getOrDefault(project.heroMoveSpeed, 1.0)
+        val speed = project.heroMoveSpeed * PIXELS_PER_FRAME_PER_SPEED_UNIT
         val dx = when (direction) {
             Direction.LEFT -> -speed
             Direction.RIGHT -> speed

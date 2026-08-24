@@ -19,7 +19,7 @@
       if (id === 0) return "global";
       return "file" + id;
     }
-    if (typeof savefileId === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,106}$/.test(savefileId)) {
+    if (typeof savefileId === "string" && /^[A-Za-z0-9_][A-Za-z0-9._-]{0,106}$/.test(savefileId)) {
       return "plugin-" + savefileId;
     }
     throw new Error("Invalid save ID");

@@ -51,11 +51,10 @@ data class TileSetData(
                 throw WolfFormatException("Not a TileSetData.dat file")
             }
             val revision = reader.readU1()
-            if (revision != REVISION_V2 && revision != REVISION_V3) {
-                throw WolfFormatException("Unknown tileset revision $revision")
-            }
+            // Revisions beyond 211 exist in newer editors; they keep the
+            // v3 record layout. Only the slot count differs for v2.
+            val autoTileSlots = if (revision <= REVISION_V2) 15 else 31
             val count = reader.readCount("tileset")
-            val autoTileSlots = if (revision == REVISION_V2) 15 else 31
 
             fun readTileset(): Tileset {
                 val title = reader.readString(v3 && revision != REVISION_V2)

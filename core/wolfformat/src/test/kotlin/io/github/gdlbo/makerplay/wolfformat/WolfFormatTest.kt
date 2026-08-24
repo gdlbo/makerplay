@@ -99,16 +99,19 @@ object WolfFixture {
         out.write(if (v3) 0x55 else 0x00)
         writeU4(out, u8Settings.size.toLong())
         out.write(u8Settings)
-        writeU4(out, stringBlock.size.toLong())
+        // The field here is the STRING COUNT (u4), matching real files.
+        writeU4(out, strings.size.toLong())
         out.write(stringBlock)
-        writeU4(out, 29001L) // static randoms size marker (filesize - pos)
+        // ksy guarantees filesize == total size - 1; keep the fixture honest.
+        val randomsSize = 3000L
+        writeU4(out, randomsSize)
         writeU4(out, 0) // unknown3
         writeU4(out, u16.size.toLong())
         u16.forEach {
             out.write(it.toInt() and 0xFF)
             out.write((it.toInt() shr 8) and 0xFF)
         }
-        repeat(28000) { out.write(7) } // static randoms filler
+        repeat(randomsSize.toInt()) { out.write(7) } // static randoms filler
         out.write(0xC3) // footer
         return out.toByteArray()
     }
@@ -185,10 +188,10 @@ class GameDatTest {
     @Test
     fun parsesSyntheticV3GameDat() {
         val dat = GameDat.parse(
-            WolfFixture.gameDat(title = "Colette", encryptionKey = "SECRET", width = 1280, height = 720),
+            WolfFixture.gameDat(title = "Sample Game", encryptionKey = "SECRET", width = 1280, height = 720),
         )
         assertTrue(dat.v3)
-        assertEquals("Colette", dat.title)
+        assertEquals("Sample Game", dat.title)
         assertEquals("SECRET", dat.encryptionKey)
         assertEquals(1280, dat.screenWidth)
         assertEquals(720, dat.screenHeight)

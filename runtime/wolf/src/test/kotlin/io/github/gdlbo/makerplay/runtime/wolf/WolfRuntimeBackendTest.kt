@@ -71,7 +71,7 @@ class WolfRuntimeBackendTest {
         fun u2(v: Int) { out.write(v and 0xFF); out.write((v ushr 8) and 0xFF) }
         u4(u8Settings.size)
         out.write(u8Settings)
-        u4(stringBlock.size)
+        u4(strings.size) // string count field
         out.write(stringBlock)
         u4(100) // static randoms size marker
         u4(0) // unknown
@@ -120,7 +120,20 @@ class WolfRuntimeBackendTest {
         val exception = assertThrows(IllegalArgumentException::class.java) {
             runBlocking { backend.prepare(LaunchRequest("mv-1")) }
         }
-        assertEquals("The imported game is not a WOLF RPG deployment.", exception.message)
+        assertTrue(exception.message!!.contains("not a WOLF RPG deployment"))
+    }
+
+    @Test
+    fun wolfDataSignatureIsSufficientWithoutGameExe() {
+        // Data-only distribution: Data/BasicData/Game.dat, no exe.
+        val root = temporaryFolder.newFolder("no-exe-wolf")
+        root.resolve("Data/BasicData").mkdirs()
+        root.resolve("Data/BasicData/Game.dat").writeBytes(minimalGameDat())
+        val backend = WolfRuntimeBackend(logger = logger, gameDirectory = { root })
+        runBlocking {
+            val session = backend.prepare(LaunchRequest("dragon", settings = RuntimeSettings()))
+            assertTrue(session.sessionId.isNotBlank())
+        }
     }
 
     @Test

@@ -207,13 +207,13 @@ fun RuntimeWebView(
                             WebViewCompat.addDocumentStartJavaScript(
                                 this,
                                 runtimeScripts.frameRate,
-                                setOf(allowedOrigin)
+                                setOf(allowedOrigin),
                             )
                         }
-                        if (runtimeScripts.legacyCompatibility.isNotEmpty()) {
+                        if (runtimeScripts.frameResilience.isNotEmpty()) {
                             WebViewCompat.addDocumentStartJavaScript(
                                 this,
-                                runtimeScripts.legacyCompatibility,
+                                runtimeScripts.frameResilience,
                                 setOf(allowedOrigin),
                             )
                         }

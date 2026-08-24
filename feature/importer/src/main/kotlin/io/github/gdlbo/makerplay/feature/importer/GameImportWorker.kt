@@ -68,7 +68,9 @@ class GameImportWorker(
                     ),
                 )
             }
-            val engine = GameImportEngine()
+            val engine = GameImportEngine(
+                evbSpoolDir = File(applicationContext.cacheDir, "evb-spool"),
+            )
             val result = when (installMode) {
                 GameInstallMode.COPY -> engine.import(source, store, importId, progressReporter)
                 GameInstallMode.DIRECT -> {
