@@ -29,7 +29,7 @@ data class EventCommand(
     override fun hashCode(): Int = paramCount * 31 + commandType
 
     companion object {
-        fun parse(reader: BoundedReader, v3: Boolean): EventCommand {
+        fun parse(reader: BoundedReader, v3: Boolean, v35: Boolean = false): EventCommand {
             val paramCount = reader.readU1()
             if (paramCount == 0) {
                 return EventCommand(0, 0, IntArray(0), 0, emptyList(), null)
@@ -47,13 +47,17 @@ data class EventCommand(
             repeat(stringCount) { strings.add(reader.readString(v3)) }
             val haveRoute = reader.readU1()
             val route = if (haveRoute != 0) MoveRoute.parse(reader) else null
+            if (v35) {
+                val extraLength = reader.readU1()
+                reader.skip(extraLength.toLong(), "v3.5 event command metadata")
+            }
             return EventCommand(paramCount, commandType, params, branchDepth, strings, route)
         }
 
-        fun parseList(reader: BoundedReader, v3: Boolean): List<EventCommand> {
+        fun parseList(reader: BoundedReader, v3: Boolean, v35: Boolean = false): List<EventCommand> {
             val count = reader.readCount("event command")
             val commands = ArrayList<EventCommand>(count)
-            repeat(count) { commands.add(parse(reader, v3)) }
+            repeat(count) { commands.add(parse(reader, v3, v35)) }
             return commands
         }
     }

@@ -145,6 +145,7 @@ class WolfRuntimeBackend(
         // Static boot pipeline (milestone 4): compose the initial map frame,
         // hand it to the native renderer, then present via GLSurfaceView.
         var ready by remember(session.sessionId) { mutableStateOf(false) }
+        var loadError by remember(session.sessionId) { mutableStateOf<String?>(null) }
         val uiState = remember(session.sessionId) { WolfUiState() }
         var confirmWasDown by remember(session.sessionId) { mutableStateOf(false) }
 
@@ -170,7 +171,9 @@ class WolfRuntimeBackend(
         }
         LaunchedEffect(session.sessionId, nativeBridge) {
             onReadyChanged(false)
+            loadError = null
             if (nativeBridge == null) {
+                loadError = "The WOLF native runtime is unavailable."
                 logger.error(
                     "runtime.native_unavailable",
                     mapOf("backend" to descriptor.id, "sessionId" to session.sessionId),
@@ -178,17 +181,28 @@ class WolfRuntimeBackend(
                 return@LaunchedEffect
             }
             val stored = sessions[session.sessionId]
+            if (stored == null) {
+                loadError = "The WOLF session is no longer available."
+                return@LaunchedEffect
+            }
+            if (stored.project == null) {
+                loadError = "The WOLF project settings could not be loaded."
+                return@LaunchedEffect
+            }
             val frame = runCatching {
                 withContext(Dispatchers.IO) {
-                    val project = stored?.project ?: return@withContext null
+                    val project = stored.project
                     openDataSource(stored).use { source ->
                         WolfSceneLoader.loadStaticFrame(source, project)
                     }
                 }
             }.onFailure {
+                loadError = it.message?.takeIf(String::isNotBlank)
+                    ?: it::class.simpleName
+                    ?: "Unknown WOLF loading error"
                 logger.error("runtime.static_frame_failed", mapOf("error" to (it.message ?: "unknown")))
             }.getOrNull()
-            if (frame != null && stored != null && stored.project != null) {
+            if (frame != null) {
                 val handle = ensureNativeSession(session, nativeBridge)
                 nativeBridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
                 ready = true
@@ -249,8 +263,24 @@ class WolfRuntimeBackend(
                 update = { surface -> surface.setHandle(ensureNativeSession(session, nativeBridge)) },
             )
         } else {
-            // Preparing state: black until the boot frame is composited.
-            Box(modifier = modifier.background(Color.Black))
+            Box(
+                modifier = modifier.background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (loadError != null) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "WOLF RPG game could not be displayed",
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                        Text(
+                            text = loadError.orEmpty(),
+                            color = Color.White,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 
