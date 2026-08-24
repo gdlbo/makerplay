@@ -32,34 +32,24 @@
   }, 4);
 })();
 
-// Some environments (emulated images, suspended compositors) never deliver
-// requestAnimationFrame callbacks even though timers run. Detect a stalled
-// frame counter and fall back to a timer-driven loop.
+// Compose overlays do not give Android WebView DOM focus even while the game
+// page is visible. MZ treats that as an inactive window and stops scene updates.
 (function () {
-  let lastFrameCount = -1;
-  let stableChecks = 0;
-  let pump = null;
-  setInterval(() => {
-    const graphics = globalThis.Graphics;
+  let attempts = 0;
+  const timer = setInterval(() => {
+    attempts += 1;
     const manager = globalThis.SceneManager;
-    if (!graphics || !manager || typeof manager.update !== "function") return;
-    const current = typeof graphics.frameCount === "number" ? graphics.frameCount : -1;
-    if (current !== lastFrameCount) {
-      lastFrameCount = current;
-      stableChecks = 0;
-      if (pump) { clearInterval(pump); pump = null; }
-      return;
+    if (manager && typeof manager.isGameActive === "function" &&
+        !manager.isGameActive.__makerplayVisibilityActive) {
+      const isVisible = function () {
+        return document.visibilityState !== "hidden";
+      };
+      isVisible.__makerplayVisibilityActive = true;
+      manager.isGameActive = isVisible;
     }
-    stableChecks += 1;
-    if (stableChecks >= 2 && !pump) {
-      pump = setInterval(() => {
-        try {
-          if (typeof manager.update === "function") manager.update();
-          if (typeof graphics.render === "function" && graphics._stage) {
-            graphics.render(graphics._stage);
-          }
-        } catch (_) { /* keep pumping */ }
-      }, 16);
+    if ((manager && manager.isGameActive && manager.isGameActive.__makerplayVisibilityActive) ||
+        attempts >= 600) {
+      clearInterval(timer);
     }
-  }, 500);
+  }, 4);
 })();

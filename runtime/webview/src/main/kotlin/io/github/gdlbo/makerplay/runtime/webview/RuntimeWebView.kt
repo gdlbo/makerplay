@@ -120,6 +120,8 @@ fun RuntimeWebView(
                     .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(context))
                     .build()
                 RuntimeInputWebView(context).apply {
+                    isFocusable = true
+                    isFocusableInTouchMode = true
                     setBackgroundColor(Color.BLACK)
                     setLayerType(
                         if (runtimeSettings.webGlEnabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_SOFTWARE,
@@ -371,6 +373,7 @@ fun RuntimeWebView(
                         },
                     )
                     loadUrl(startUrl)
+                    post { requestFocus() }
                 }
             },
             update = { webView ->
