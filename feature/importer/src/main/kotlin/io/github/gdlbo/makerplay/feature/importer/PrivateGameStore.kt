@@ -75,7 +75,14 @@ class PrivateGameStore(private val gamesRoot: File) {
             .orEmpty()
             .asSequence()
             .filter { it.isDirectory && it.name != STAGING_DIRECTORY }
-            .mapNotNull { readStoredGame(it)?.summary }
+            .mapNotNull { directory ->
+                val stored = readStoredGame(directory) ?: return@mapNotNull null
+                if (stored.directSourcePath != null && !isAvailableDirectSource(stored.directSourcePath)) {
+                    directory.deleteRecursively()
+                    return@mapNotNull null
+                }
+                stored.summary
+            }
             .sortedByDescending(GameSummary::installedAtEpochMillis)
             .toList()
         val savedOrder = readGameOrder()
@@ -132,9 +139,8 @@ class PrivateGameStore(private val gamesRoot: File) {
         val directory = findCatalogDirectory(gameId) ?: return null
         val stored = readStoredGame(directory) ?: return null
         val directSource = stored.directSourcePath ?: return directory
-        val source = File(directSource)
-        if (Files.isSymbolicLink(source.toPath()) || !source.isDirectory) return null
-        return runCatching { source.canonicalFile }.getOrNull()
+        if (!isAvailableDirectSource(directSource)) return null
+        return runCatching { File(directSource).canonicalFile }.getOrNull()
     }
 
     fun findIndexDirectory(gameId: String): File? = findCatalogDirectory(gameId)
@@ -146,6 +152,11 @@ class PrivateGameStore(private val gamesRoot: File) {
 
     fun controllerLayoutFile(gameId: String): File? =
         findCatalogDirectory(gameId)?.let { File(it, CONTROLLER_LAYOUT_FILE) }
+
+    private fun isAvailableDirectSource(path: String): Boolean {
+        val source = File(path)
+        return !Files.isSymbolicLink(source.toPath()) && source.isDirectory
+    }
 
     private fun findCatalogDirectory(gameId: String): File? {
         if (!SAFE_ID.matches(gameId)) { return null }

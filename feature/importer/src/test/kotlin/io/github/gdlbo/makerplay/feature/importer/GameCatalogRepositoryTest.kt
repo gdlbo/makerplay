@@ -36,7 +36,20 @@ class GameCatalogRepositoryTest {
         assertEquals(listOf("older", "newer"), GameCatalogRepository(store).games.value.map { it.id })
     }
 
-    private fun installGame(id: String, installedAt: Long) {
+    @Test
+    fun refreshRemovesDirectGameWhoseSourceFolderWasDeleted() {
+        val source = File(testRoot, "linked-game").apply { mkdirs() }
+        installGame("linked", installedAt = 1L, directSource = source)
+        val catalog = GameCatalogRepository(store)
+
+        source.deleteRecursively()
+        catalog.refresh()
+
+        assertEquals(emptyList<String>(), catalog.games.value.map { it.id })
+        assertEquals(false, File(testRoot, "games/linked").exists())
+    }
+
+    private fun installGame(id: String, installedAt: Long, directSource: File? = null) {
         val game = GameSummary(
             id = id,
             title = id,
@@ -45,7 +58,7 @@ class GameCatalogRepositoryTest {
             installedAtEpochMillis = installedAt,
         )
         val staging = store.begin(id)
-        store.writeMetadata(staging, game)
+        store.writeMetadata(staging, game, directSource)
         store.commit(staging, id)
     }
 }

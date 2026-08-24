@@ -297,9 +297,16 @@ fun RuntimeWebView(
                         },
                     )
                     audioFocus = RuntimeAudioFocusController.create(context) { hasFocus ->
-                        // Focus interruptions pause media without relinquishing the lifecycle's ownership.
-                        if (runtimeSettings.pauseOnBackground) {
-                            if (hasFocus) onResume() else onPause()
+                        // Focus interruptions must NOT pause the WebView renderer:
+                        // the game's own media (played inside the WebView) requests
+                        // audio focus itself, which would duck the app and freeze
+                        // rendering mid-scene (e.g. Live2D event scenes). Genuine
+                        // backgrounding is handled by the lifecycle observer below.
+                        if (hasFocus) {
+                            inputMixer?.setPlatformActive(true)
+                        } else {
+                            inputMixer?.setPlatformActive(false)
+                            clearPhysicalInput()
                         }
                     }
                     lifecycleControllers[this] = lifecycle

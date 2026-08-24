@@ -32,22 +32,25 @@
   }, 4);
 })();
 
-// Compose overlays do not give Android WebView DOM focus even while the game
-// page is visible. MZ treats that as an inactive window and stops scene updates.
+// MZ/MV gate scene updates on window focus/page visibility, neither of which
+// is reliable inside an embedded Android WebView: DOM focus is never granted by
+// Compose overlays, and the page reports "hidden" once WebView.onPause() fires
+// (e.g. an audio-focus transition when a Live2D scene starts). The host already
+// owns background pausing via the WebView lifecycle, so keep the game active here.
 (function () {
   let attempts = 0;
   const timer = setInterval(() => {
     attempts += 1;
     const manager = globalThis.SceneManager;
     if (manager && typeof manager.isGameActive === "function" &&
-        !manager.isGameActive.__makerplayVisibilityActive) {
-      const isVisible = function () {
-        return document.visibilityState !== "hidden";
+        !manager.isGameActive.__makerplayAlwaysActive) {
+      const alwaysActive = function () {
+        return true;
       };
-      isVisible.__makerplayVisibilityActive = true;
-      manager.isGameActive = isVisible;
+      alwaysActive.__makerplayAlwaysActive = true;
+      manager.isGameActive = alwaysActive;
     }
-    if ((manager && manager.isGameActive && manager.isGameActive.__makerplayVisibilityActive) ||
+    if ((manager && manager.isGameActive && manager.isGameActive.__makerplayAlwaysActive) ||
         attempts >= 600) {
       clearInterval(timer);
     }
