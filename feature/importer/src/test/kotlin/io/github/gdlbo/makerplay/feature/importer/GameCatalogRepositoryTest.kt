@@ -40,13 +40,15 @@ class GameCatalogRepositoryTest {
     fun refreshRemovesDirectGameWhoseSourceFolderWasDeleted() {
         val source = File(testRoot, "linked-game").apply { mkdirs() }
         installGame("linked", installedAt = 1L, directSource = source)
+        installGame("copied", installedAt = 2L)
         val catalog = GameCatalogRepository(store)
 
         source.deleteRecursively()
         catalog.refresh()
 
-        assertEquals(emptyList<String>(), catalog.games.value.map { it.id })
+        assertEquals(listOf("copied"), catalog.games.value.map { it.id })
         assertEquals(false, File(testRoot, "games/linked").exists())
+        assertEquals(true, File(testRoot, "games/copied").exists())
     }
 
     private fun installGame(id: String, installedAt: Long, directSource: File? = null) {

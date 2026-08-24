@@ -14,11 +14,16 @@
     const manager = globalThis.SceneManager;
     if (manager && typeof manager.update === "function" && !manager.update.__makerplayResilient) {
       const original = manager.update;
+      let lastReportedErrorAt = -Infinity;
       const resilient = function () {
         try {
           return original.apply(this, arguments);
         } catch (error) {
-          if (globalThis.console && console.warn) {
+          // A persistent plugin error must not turn console forwarding into a
+          // second per-frame workload. Recovery remains active for every frame.
+          const now = globalThis.performance ? performance.now() : Date.now();
+          if (now - lastReportedErrorAt >= 1000 && globalThis.console && console.warn) {
+            lastReportedErrorAt = now;
             console.warn("MakerPlay: recovered from frame error", error && error.message);
           }
         }
