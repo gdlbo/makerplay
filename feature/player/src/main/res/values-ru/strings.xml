@@ -174,4 +174,6 @@
     <string name="action_tab">Tab</string>
     <string name="action_debug">Отладка</string>
     <string name="action_pointer">Указатель</string>
+    <string name="player_logging_enable">Включить запись логов игры</string>
+    <string name="player_logging_disable">Отключить запись логов игры</string>
 </resources>

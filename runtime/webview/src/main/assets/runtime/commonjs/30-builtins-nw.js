@@ -64,6 +64,54 @@
     spawnSync: function() { var error = new Error("child_process is not supported by MakerPlay"); error.code = "ENOSYS"; return { pid: 0, output: [null, Buffer.alloc(0), Buffer.from(error.message)], stdout: Buffer.alloc(0), stderr: Buffer.from(error.message), status: 1, signal: null, error: error }; },
     fork: function() { return fakeChildProcess(); }
   });
+  function fakeHttpClientRequest() {
+    var request = new EventEmitter();
+    request.end = function() {};
+    request.abort = function() {};
+    request.destroy = function() {};
+    request.write = function() { return false; };
+    request.flushHeaders = function() {};
+    request.setHeader = function() {};
+    request.getHeader = function() { return undefined; };
+    request.removeHeader = function() {};
+    request.setNoDelay = function() {};
+    request.setSocketKeepAlive = function() {};
+    request.setTimeout = function(timeout, callback) { if (typeof callback === "function") callback(); return request; };
+    setTimeout(function() {
+      var error = new Error("network requests are not supported by MakerPlay");
+      error.code = "ENOSYS";
+      request.emit("error", error);
+    }, 0);
+    return request;
+  }
+  function fakeHttpServer() {
+    var server = new EventEmitter();
+    server.listen = function() {
+      var callback = Array.prototype.filter.call(arguments, function(value) { return typeof value === "function"; })[0];
+      setTimeout(function() {
+        var error = new Error("http servers are not supported by MakerPlay");
+        error.code = "ENOSYS";
+        server.emit("error", error);
+        if (typeof callback === "function") callback(error);
+      }, 0);
+      return server;
+    };
+    server.close = function(callback) { if (typeof callback === "function") callback(); return server; };
+    server.address = function() { return null; };
+    return server;
+  }
+  var httpModule = {
+    Agent: function() {},
+    globalAgent: { keepAlive: false, keepAliveMsecs: 1000, maxSockets: Infinity, maxFreeSockets: 256, sockets: {}, freeSockets: {}, requests: {} },
+    STATUS_CODES: {},
+    METHODS: [],
+    createServer: function() { return fakeHttpServer(); },
+    createClient: function() { return fakeHttpClientRequest(); },
+    request: function() { return fakeHttpClientRequest(); },
+    get: function() { return fakeHttpClientRequest(); },
+  };
+  builtin("http", httpModule);
+  builtin("https", httpModule);
   var nwWindow = new EventEmitter();
   Object.assign(nwWindow, {
     menu: null,

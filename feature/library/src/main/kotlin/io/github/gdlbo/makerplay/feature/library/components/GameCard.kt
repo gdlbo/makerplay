@@ -190,16 +190,18 @@ internal fun GameCard(
                             game.engineVersion
                         ).joinToString(" "),
                     )
-                    MetadataLabel(
-                        text = game.plugins.size.toString(),
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.Extension,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                            )
-                        },
-                    )
+                    if (game.plugins.isNotEmpty()) {
+                        MetadataLabel(
+                            text = game.plugins.size.toString(),
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Default.Extension,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                            },
+                        )
+                    }
                 }
                 Button(
                     onClick = onPlay,

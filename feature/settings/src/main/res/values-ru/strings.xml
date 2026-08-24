@@ -67,4 +67,6 @@
     <string name="module_cheats_description">Добавляет меню читов во время игры</string>
     <string name="module_diagnostics">Контроль графики</string>
     <string name="module_diagnostics_description">Отслеживает сбои изображения и сообщает о них приложению</string>
+    <string name="record_logs">Запись логов игры</string>
+    <string name="record_logs_description">Записывает диагностику работы игры в файл лога (применяется при следующем запуске)</string>
 </resources>
