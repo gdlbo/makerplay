@@ -35,4 +35,17 @@
       },
     });
   }
+
+  // Older RPG Maker plugins pass scaled touch coordinates directly to
+  // getImageData. Android WebView requires integer canvas coordinates.
+  const getImageData = canvasContext?.prototype?.getImageData;
+  if (typeof getImageData === "function" && !getImageData.__makerplayIntegerCoordinates) {
+    const compatibleGetImageData = function (x, y) {
+      const compatibleX = Number.isFinite(x) ? Math.trunc(x) : x;
+      const compatibleY = Number.isFinite(y) ? Math.trunc(y) : y;
+      return getImageData.call(this, compatibleX, compatibleY, ...Array.prototype.slice.call(arguments, 2));
+    };
+    compatibleGetImageData.__makerplayIntegerCoordinates = true;
+    canvasContext.prototype.getImageData = compatibleGetImageData;
+  }
 })();

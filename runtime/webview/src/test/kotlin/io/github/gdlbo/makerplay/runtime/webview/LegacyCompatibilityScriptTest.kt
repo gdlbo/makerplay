@@ -20,6 +20,9 @@ class LegacyCompatibilityScriptTest {
               get() { return alignments.get(this) || "start"; },
               set(value) { alignments.set(this, value); },
             });
+            CanvasRenderingContext2D.prototype.getImageData = function getImageData(x, y, width, height) {
+              return { x, y, width, height };
+            };
 
             $compatibilityScript
 
@@ -34,6 +37,18 @@ class LegacyCompatibilityScriptTest {
             assert.equal(context.textAlign, "left");
             bitmap.drawText("valid alignment", 0, 0, 100, 24, "center");
             assert.equal(context.textAlign, "center");
+            assert.deepEqual(context.getImageData(24.8, -3.2, 1, 1), {
+              x: 24,
+              y: -3,
+              width: 1,
+              height: 1,
+            });
+            assert.deepEqual(context.getImageData(Infinity, NaN, 1, 1), {
+              x: Infinity,
+              y: NaN,
+              width: 1,
+              height: 1,
+            });
         """.trimIndent()
         val scriptFile = Files.createTempFile("legacy-compatibility", ".js")
         try {
