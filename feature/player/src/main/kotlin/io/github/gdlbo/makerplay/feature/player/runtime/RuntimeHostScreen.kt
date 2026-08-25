@@ -4,10 +4,14 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -26,9 +30,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import io.github.gdlbo.makerplay.feature.player.R
 import io.github.gdlbo.makerplay.feature.player.controller.data.ControllerLayoutStore
 import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerLayouts
@@ -40,8 +48,8 @@ import io.github.gdlbo.makerplay.feature.player.runtime.components.CheatOverlay
 import io.github.gdlbo.makerplay.feature.player.runtime.components.PlayerBackButton
 import io.github.gdlbo.makerplay.feature.player.runtime.components.PlayerToolbar
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeFailureScreen
-import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeOverlayTheme
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeFailureUi
+import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeOverlayTheme
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimePreparing
 import io.github.gdlbo.makerplay.feature.player.runtime.components.buildRuntimeFailureReport
 import io.github.gdlbo.makerplay.input.LogicalInputSnapshot
@@ -217,10 +225,13 @@ fun RuntimeHostScreen(
 
     val runtimeModifier = Modifier
         .fillMaxSize()
-        .then(if (request.settings.immersiveMode) Modifier else Modifier.safeDrawingPadding())
         .background(Color.Black)
     BoxWithConstraints(modifier = runtimeModifier) {
         val compactHeight = maxHeight < 480.dp
+        val safeLeft = with(LocalDensity.current) {
+            WindowInsets.safeDrawing.getLeft(this, LocalLayoutDirection.current).toDp()
+        }
+        val overlayWidth = maxWidth - safeLeft
         when {
             session != null -> backend.RuntimeContent(
                 session = session!!,
@@ -299,12 +310,16 @@ fun RuntimeHostScreen(
             // which covers every Compose sibling in this window. Host the
             // controller chrome in its own always-on-top window so buttons are
             // visible above the surface and receive taps.
-            androidx.compose.ui.window.Popup(
+            Popup(
                 alignment = Alignment.TopStart,
                 onDismissRequest = {},
-                properties = androidx.compose.ui.window.PopupProperties(focusable = true),
+                properties = PopupProperties(focusable = false),
             ) {
-                androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .width(overlayWidth),
+                ) {
         if (session != null && gameReady && showControls && layoutLoaded && !showCheats) {
             VirtualControllerOverlay(
                 profile = layouts.activeProfile(),
