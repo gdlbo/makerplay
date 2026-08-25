@@ -22,6 +22,17 @@ class RuntimeInputFrameBridgeTest {
     }
 
     @Test
+    fun `document bridge maps overlay pointers through the canvas client rect`() {
+        val source = RuntimeInputFrameBridge.source(runtimeAsset("bridges/input-bridge.js"))
+
+        assertTrue(source.contains("toCanvasPoint"))
+        assertTrue(source.contains("getBoundingClientRect()"))
+        assertTrue(source.contains("normalized 0..1 fractions"))
+        assertTrue(source.contains("clientWidth"))
+        assertTrue(source.contains("canvas.width / rect.width"))
+    }
+
+    @Test
     fun `document bridge clears state when the page loses visibility or focus`() {
         val source = RuntimeInputFrameBridge.source(runtimeAsset("bridges/input-bridge.js"))
 
@@ -138,6 +149,23 @@ class RuntimeInputFrameBridgeTest {
         assertEquals(2, scripts.size)
         assertTrue(scripts.first().contains("\"KeyZ\""))
         assertTrue(scripts.last().contains("\"keys\":[]"))
+    }
+
+    @Test
+    fun `short virtual touch keeps both frame edges`() {
+        val frames = mutableListOf<() -> Unit>()
+        val scripts = mutableListOf<String>()
+        val batcher = RuntimeInputFrameBatcher(frames::add, scripts::add)
+        val pointer = PointerContact("touch", 1, 30f, 40f)
+
+        batcher.submit(LogicalInputSnapshot(emptySet(), setOf(pointer)))
+        batcher.submit(LogicalInputSnapshot(emptySet(), emptySet()))
+        frames.removeFirst().invoke()
+        frames.removeFirst().invoke()
+
+        assertEquals(2, scripts.size)
+        assertTrue(scripts.first().contains("\"pointers\":[{\"id\":\"touch:1\""))
+        assertTrue(scripts.last().contains("\"pointers\":[]"))
     }
 
     @Test

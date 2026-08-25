@@ -1,9 +1,11 @@
 package io.github.gdlbo.makerplay.feature.player
 
 import io.github.gdlbo.makerplay.feature.player.controller.model.DefaultGamepadProfile
+import io.github.gdlbo.makerplay.feature.player.controller.ui.circularControlSidePx
 import io.github.gdlbo.makerplay.feature.player.controller.ui.dPadActionsForPosition
 import io.github.gdlbo.makerplay.feature.player.controller.ui.moveVirtualControl
 import io.github.gdlbo.makerplay.input.GameAction
+import io.github.gdlbo.makerplay.input.VirtualControlShape
 import io.github.gdlbo.makerplay.input.VirtualControlType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -18,6 +20,7 @@ class VirtualControllerOverlayTest {
         )
         assertEquals(VirtualControlType.D_PAD, DefaultGamepadProfile.controls.single { it.id == "dpad" }.type)
         assertEquals(setOf(66, 111, 54, 30), DefaultGamepadProfile.controls.mapNotNull { it.keyCode }.toSet())
+        assertTrue(DefaultGamepadProfile.controls.filter { it.id != "dpad" }.all { it.shape == VirtualControlShape.CIRCLE })
     }
 
     @Test
@@ -35,12 +38,22 @@ class VirtualControllerOverlayTest {
     }
 
     @Test
+    fun `circular controls square to the shorter axis`() {
+        val dpad = DefaultGamepadProfile.controls.single { it.id == "dpad" }
+        val button = DefaultGamepadProfile.controls.single { it.id == "enter" }
+
+        assertEquals(302.4f, circularControlSidePx(dpad, canvasWidthPx = 1920f, canvasHeightPx = 1080f), .001f)
+        assertEquals(151.2f, circularControlSidePx(button, canvasWidthPx = 1920f, canvasHeightPx = 1080f), .001f)
+    }
+
+    @Test
     fun `dragging remains cumulative and bounded inside the canvas`() {
+        val enter = DefaultGamepadProfile.controls.single { it.id == "enter" }
         val first = moveVirtualControl(DefaultGamepadProfile, "enter", -.1f, .1f)
         val second = moveVirtualControl(first, "enter", -.1f, .5f)
         val moved = second.controls.single { it.id == "enter" }
 
-        assertEquals(.62f, moved.x, .0001f)
+        assertEquals((enter.x - .2f).coerceAtLeast(0f), moved.x, .0001f)
         assertEquals(1f - moved.height, moved.y, .0001f)
         assertTrue(second.controls.all { it.x >= 0f && it.y >= 0f && it.x + it.width <= 1f && it.y + it.height <= 1f })
     }

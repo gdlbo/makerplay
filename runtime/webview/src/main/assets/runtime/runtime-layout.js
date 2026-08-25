@@ -25,13 +25,14 @@
     const pageToCanvas = (pageCoordinate, axis) => {
       const canvas = graphics._canvas;
       if (!canvas) return 0;
+      // getBoundingClientRect is viewport-relative; page coords include scroll.
       const rect = canvas.getBoundingClientRect();
       const displayedSize = axis === 'x' ? rect.width : rect.height;
       const canvasSize = axis === 'x' ? canvas.width : canvas.height;
-      const viewportOffset = axis === 'x' ? window.scrollX : window.scrollY;
+      const clientCoordinate = pageCoordinate - (axis === 'x' ? window.scrollX : window.scrollY);
       const displayedOffset = axis === 'x' ? rect.left : rect.top;
       if (!displayedSize || !canvasSize) return 0;
-      return Math.round((pageCoordinate - displayedOffset - viewportOffset) * canvasSize / displayedSize);
+      return Math.round((clientCoordinate - displayedOffset) * canvasSize / displayedSize);
     };
     graphics.pageToCanvasX = x => pageToCanvas(x, 'x');
     graphics.pageToCanvasY = y => pageToCanvas(y, 'y');

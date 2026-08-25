@@ -6,7 +6,9 @@ import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerLayou
 import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerMode
 import io.github.gdlbo.makerplay.feature.player.controller.model.DefaultGamepadProfile
 import io.github.gdlbo.makerplay.feature.player.controller.model.DefaultKeyboardProfile
+import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousDefaultGamepadProfile
 import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousDefaultKeyboardProfile
+import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousLargeGamepadProfile
 import io.github.gdlbo.makerplay.input.GameAction
 import io.github.gdlbo.makerplay.input.VirtualControlType
 import java.io.File
@@ -25,7 +27,7 @@ class ControllerLayoutStoreTest {
             val store = ControllerLayoutStore(file)
             val previousLayouts = ControllerLayouts(keyboard = PreviousDefaultKeyboardProfile)
             val previousJson = ControllerLayoutJsonCodec.encode(previousLayouts).toString()
-                .replace("\"version\":5", "\"version\":4")
+                .replace("\"version\":7", "\"version\":4")
             file.writeText(previousJson)
 
             val upgraded = store.load()
@@ -38,7 +40,7 @@ class ControllerLayoutStoreTest {
                 },
             )
             val customizedJson = ControllerLayoutJsonCodec.encode(previousLayouts.copy(keyboard = customized)).toString()
-                .replace("\"version\":5", "\"version\":4")
+                .replace("\"version\":7", "\"version\":4")
             file.writeText(customizedJson)
 
             val restoredCustomized = store.load().keyboard
@@ -94,6 +96,70 @@ class ControllerLayoutStoreTest {
                 keyboard.keyboard.controls.mapNotNull { it.keyCode },
                 restored.keyboard.controls.mapNotNull { it.keyCode },
             )
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `upgrades oversized square fit gamepad defaults without replacing custom layouts`() {
+        val directory = Files.createTempDirectory("makerplay-gamepad-large-migration-").toFile()
+        try {
+            val file = File(directory, "gamepad.json")
+            val store = ControllerLayoutStore(file)
+            val previousJson = ControllerLayoutJsonCodec.encode(
+                ControllerLayouts(gamepad = PreviousLargeGamepadProfile),
+            ).toString().replace("\"version\":7", "\"version\":6")
+            file.writeText(previousJson)
+
+            assertEquals(DefaultGamepadProfile, store.load().gamepad)
+
+            val customized = PreviousLargeGamepadProfile.copy(
+                controls = PreviousLargeGamepadProfile.controls.mapIndexed { index, control ->
+                    if (index == 0) control.copy(x = control.x + .01f) else control
+                },
+            )
+            file.writeText(
+                ControllerLayoutJsonCodec.encode(ControllerLayouts(gamepad = customized))
+                    .toString()
+                    .replace("\"version\":7", "\"version\":6"),
+            )
+
+            val restored = store.load().gamepad
+            assertNotEquals(DefaultGamepadProfile, restored)
+            assertEquals(customized.controls.first().x, restored.controls.first().x, .0001f)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `upgrades stretched circular gamepad defaults without replacing custom layouts`() {
+        val directory = Files.createTempDirectory("makerplay-gamepad-stretch-migration-").toFile()
+        try {
+            val file = File(directory, "gamepad.json")
+            val store = ControllerLayoutStore(file)
+            val previousJson = ControllerLayoutJsonCodec.encode(
+                ControllerLayouts(gamepad = PreviousDefaultGamepadProfile),
+            ).toString().replace("\"version\":7", "\"version\":5")
+            file.writeText(previousJson)
+
+            val upgraded = store.load()
+            assertEquals(DefaultGamepadProfile, upgraded.gamepad)
+
+            val customized = PreviousDefaultGamepadProfile.copy(
+                controls = PreviousDefaultGamepadProfile.controls.mapIndexed { index, control ->
+                    if (index == 0) control.copy(x = control.x + .01f) else control
+                },
+            )
+            val customizedJson = ControllerLayoutJsonCodec.encode(
+                ControllerLayouts(gamepad = customized),
+            ).toString().replace("\"version\":7", "\"version\":5")
+            file.writeText(customizedJson)
+
+            val restored = store.load().gamepad
+            assertNotEquals(DefaultGamepadProfile, restored)
+            assertEquals(customized.controls.first().x, restored.controls.first().x, .0001f)
         } finally {
             directory.deleteRecursively()
         }

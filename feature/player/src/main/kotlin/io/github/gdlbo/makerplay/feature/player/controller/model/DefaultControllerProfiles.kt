@@ -7,14 +7,62 @@ import io.github.gdlbo.makerplay.input.VirtualControlType
 import io.github.gdlbo.makerplay.input.VirtualControllerProfile
 import io.github.gdlbo.makerplay.input.VirtualControllerProfileValidator
 
+private val PREVIOUS_GAMEPAD_COLOR = 0xFF25272B.toInt()
+
 internal val DefaultGamepadProfile = VirtualControllerProfile(
     id = "gamepad",
     controls = listOf(
         dPadControl(),
-        gamepadControl("enter", GameAction.OK, .82f, .63f, .07f, .14f, keyCode = 66),
-        gamepadControl("escape", GameAction.CANCEL, .91f, .63f, .07f, .14f, keyCode = 111),
-        gamepadControl("key-z", GameAction.OK, .82f, .81f, .07f, .14f, keyCode = 54),
-        gamepadControl("key-b", GameAction.CANCEL, .91f, .81f, .07f, .14f, keyCode = 30),
+        gamepadControl("enter", GameAction.OK, .80f, .64f, .08f, .14f, keyCode = 66),
+        gamepadControl("escape", GameAction.CANCEL, .90f, .64f, .08f, .14f, keyCode = 111),
+        gamepadControl("key-z", GameAction.OK, .80f, .82f, .08f, .14f, keyCode = 54),
+        gamepadControl("key-b", GameAction.CANCEL, .90f, .82f, .08f, .14f, keyCode = 30),
+    ),
+).also(VirtualControllerProfileValidator::validate)
+
+/** Oversized square-fit defaults used before the compact gamepad pass. */
+internal val PreviousLargeGamepadProfile = VirtualControllerProfile(
+    id = "gamepad",
+    controls = listOf(
+        VirtualControl(
+            id = "dpad",
+            type = VirtualControlType.D_PAD,
+            action = GameAction.UP,
+            x = .02f,
+            y = .52f,
+            width = .24f,
+            height = .42f,
+            opacity = .78f,
+            shape = VirtualControlShape.CIRCLE,
+            color = 0xFF2A2E33.toInt(),
+        ),
+        gamepadControl("enter", GameAction.OK, .76f, .58f, .12f, .20f, keyCode = 66),
+        gamepadControl("escape", GameAction.CANCEL, .88f, .58f, .12f, .20f, keyCode = 111),
+        gamepadControl("key-z", GameAction.OK, .76f, .78f, .12f, .20f, keyCode = 54),
+        gamepadControl("key-b", GameAction.CANCEL, .88f, .78f, .12f, .20f, keyCode = 30),
+    ),
+).also(VirtualControllerProfileValidator::validate)
+
+/** Stretched circular defaults used before the square-fit gamepad redesign. */
+internal val PreviousDefaultGamepadProfile = VirtualControllerProfile(
+    id = "gamepad",
+    controls = listOf(
+        VirtualControl(
+            id = "dpad",
+            type = VirtualControlType.D_PAD,
+            action = GameAction.UP,
+            x = .02f,
+            y = .58f,
+            width = .165f,
+            height = .39f,
+            opacity = .82f,
+            shape = VirtualControlShape.CIRCLE,
+            color = PREVIOUS_GAMEPAD_COLOR,
+        ),
+        previousGamepadControl("enter", GameAction.OK, .82f, .63f, keyCode = 66),
+        previousGamepadControl("escape", GameAction.CANCEL, .91f, .63f, keyCode = 111),
+        previousGamepadControl("key-z", GameAction.OK, .82f, .81f, keyCode = 54),
+        previousGamepadControl("key-b", GameAction.CANCEL, .91f, .81f, keyCode = 30),
     ),
 ).also(VirtualControllerProfileValidator::validate)
 
@@ -22,13 +70,13 @@ private fun dPadControl() = VirtualControl(
     id = "dpad",
     type = VirtualControlType.D_PAD,
     action = GameAction.UP,
-    x = .02f,
-    y = .58f,
-    width = .165f,
-    height = .39f,
-    opacity = .82f,
+    x = .03f,
+    y = .64f,
+    width = .16f,
+    height = .28f,
+    opacity = .78f,
     shape = VirtualControlShape.CIRCLE,
-    color = 0xFF25272B.toInt(),
+    color = 0xFF2A2E33.toInt(),
 )
 
 internal val DefaultKeyboardProfile = VirtualControllerProfile(
@@ -40,7 +88,7 @@ internal val DefaultKeyboardProfile = VirtualControllerProfile(
         rowHeight = .052f,
         horizontalGap = .003f,
         verticalGap = .006f,
-        color = 0xFF25272B.toInt(),
+        color = 0xFF2A2E33.toInt(),
         opacity = .82f,
     ),
 ).also(VirtualControllerProfileValidator::validate)
@@ -76,10 +124,30 @@ private fun gamepadControl(
     y = y,
     width = width,
     height = height,
-    opacity = .82f,
+    opacity = .78f,
     label = label,
     shape = if (keyCode == null) VirtualControlShape.ROUNDED_RECTANGLE else VirtualControlShape.CIRCLE,
-    color = 0xFF25272B.toInt(),
+    color = 0xFF2A2E33.toInt(),
+    keyCode = keyCode,
+)
+
+private fun previousGamepadControl(
+    id: String,
+    action: GameAction,
+    x: Float,
+    y: Float,
+    keyCode: Int,
+) = VirtualControl(
+    id = id,
+    type = VirtualControlType.BUTTON,
+    action = action,
+    x = x,
+    y = y,
+    width = .07f,
+    height = .14f,
+    opacity = .82f,
+    shape = VirtualControlShape.CIRCLE,
+    color = PREVIOUS_GAMEPAD_COLOR,
     keyCode = keyCode,
 )
 

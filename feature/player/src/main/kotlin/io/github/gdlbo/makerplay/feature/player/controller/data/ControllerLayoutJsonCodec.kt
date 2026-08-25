@@ -2,7 +2,9 @@ package io.github.gdlbo.makerplay.feature.player.controller.data
 
 import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerLayouts
 import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerMode
+import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousDefaultGamepadProfile
 import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousDefaultKeyboardProfile
+import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousLargeGamepadProfile
 import io.github.gdlbo.makerplay.input.GameAction
 import io.github.gdlbo.makerplay.input.VirtualControl
 import io.github.gdlbo.makerplay.input.VirtualControlBehavior
@@ -31,7 +33,7 @@ internal object ControllerLayoutJsonCodec {
     }
 
     fun encode(layouts: ControllerLayouts): JsonObject = buildJsonObject {
-        put("version", 5)
+        put("version", 7)
         put("mode", layouts.mode.name)
         put("orientation", 6)
         put("profiles", buildJsonObject {
@@ -106,6 +108,8 @@ internal object ControllerLayoutJsonCodec {
             gamepad = when {
                 version < 3 && loadedGamepad.isPreviousBuiltInGamepad() -> defaults.gamepad
                 version < 4 && loadedGamepad.isPreviousSplitDpadGamepad() -> defaults.gamepad
+                version < 6 && loadedGamepad.matchesProfile(PreviousDefaultGamepadProfile) -> defaults.gamepad
+                version < 7 && loadedGamepad.matchesProfile(PreviousLargeGamepadProfile) -> defaults.gamepad
                 else -> loadedGamepad
             },
             keyboard = when {

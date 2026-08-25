@@ -303,19 +303,10 @@ fun RuntimeWebView(
                             destroy()
                         },
                     )
-                    audioFocus = RuntimeAudioFocusController.create(context) { hasFocus ->
-                        // Focus interruptions must NOT pause the WebView renderer:
-                        // the game's own media (played inside the WebView) requests
-                        // audio focus itself, which would duck the app and freeze
-                        // rendering mid-scene (e.g. Live2D event scenes). Genuine
-                        // backgrounding is handled by the lifecycle observer below.
-                        if (hasFocus) {
-                            inputMixer?.setPlatformActive(true)
-                        } else {
-                            inputMixer?.setPlatformActive(false)
-                            clearPhysicalInput()
-                        }
-                    }
+                    // Game audio inside the WebView can steal audio focus from the host.
+                    // Keep requesting focus for media routing, but do not gate input or
+                    // pause rendering on transient focus loss; lifecycle handles backgrounding.
+                    audioFocus = RuntimeAudioFocusController.create(context) { _ -> }
                     lifecycleControllers[this] = lifecycle
                     val observer = LifecycleEventObserver { _, event ->
                         when (event) {

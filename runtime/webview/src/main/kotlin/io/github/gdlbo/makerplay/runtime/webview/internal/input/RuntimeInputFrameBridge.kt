@@ -13,8 +13,9 @@ internal class RuntimeInputFrameBatcher(
     private val dispatch: (String) -> Unit,
 ) {
     private var pending: String? = null
-    private val keyTransitions = ArrayDeque<String>()
+    private val inputTransitions = ArrayDeque<String>()
     private var lastSubmittedKeyCodes = emptySet<Int>()
+    private var lastSubmittedPointers = emptySet<PointerContact>()
     private var lastDispatched: String? = null
     private var scheduled = false
     private var closed = false
@@ -23,10 +24,14 @@ internal class RuntimeInputFrameBatcher(
         if (closed) return
         val script = RuntimeInputFrameBridge.script(snapshot)
         if (script == lastDispatched && pending == null) return
-        if (snapshot.pressedKeyCodes != lastSubmittedKeyCodes) {
-            require(keyTransitions.size < MAX_QUEUED_KEY_TRANSITIONS) { "Too many queued key transitions" }
-            keyTransitions.addLast(script)
+        if (
+            snapshot.pressedKeyCodes != lastSubmittedKeyCodes ||
+            snapshot.pointers != lastSubmittedPointers
+        ) {
+            require(inputTransitions.size < MAX_QUEUED_INPUT_TRANSITIONS) { "Too many queued input transitions" }
+            inputTransitions.addLast(script)
             lastSubmittedKeyCodes = snapshot.pressedKeyCodes
+            lastSubmittedPointers = snapshot.pointers
         } else {
             pending = script
         }
@@ -39,27 +44,27 @@ internal class RuntimeInputFrameBatcher(
     fun close() {
         closed = true
         pending = null
-        keyTransitions.clear()
+        inputTransitions.clear()
     }
 
     private fun dispatchFrame() {
         scheduled = false
         if (closed) return
-        val fromKeyQueue = keyTransitions.isNotEmpty()
-        val script = if (fromKeyQueue) keyTransitions.removeFirst() else pending ?: return
-        if (!fromKeyQueue) pending = null
+        val fromInputQueue = inputTransitions.isNotEmpty()
+        val script = if (fromInputQueue) inputTransitions.removeFirst() else pending ?: return
+        if (!fromInputQueue) pending = null
         if (script != lastDispatched) {
             lastDispatched = script
             dispatch(script)
         }
-        if (keyTransitions.isNotEmpty() || pending != null) {
+        if (inputTransitions.isNotEmpty() || pending != null) {
             scheduled = true
             scheduleFrame(::dispatchFrame)
         }
     }
 
     private companion object {
-        const val MAX_QUEUED_KEY_TRANSITIONS = 160
+        const val MAX_QUEUED_INPUT_TRANSITIONS = 160
     }
 }
 

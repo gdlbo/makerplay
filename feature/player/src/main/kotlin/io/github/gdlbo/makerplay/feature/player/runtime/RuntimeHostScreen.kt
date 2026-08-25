@@ -4,14 +4,10 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
@@ -30,8 +26,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
@@ -228,10 +222,8 @@ fun RuntimeHostScreen(
         .background(Color.Black)
     BoxWithConstraints(modifier = runtimeModifier) {
         val compactHeight = maxHeight < 480.dp
-        val safeLeft = with(LocalDensity.current) {
-            WindowInsets.safeDrawing.getLeft(this, LocalLayoutDirection.current).toDp()
-        }
-        val overlayWidth = maxWidth - safeLeft
+        // Overlay Popup is anchored at the window origin and must share the same
+        // client coordinate space as the WebView canvas mapping in input-bridge.js.
         when {
             session != null -> backend.RuntimeContent(
                 session = session!!,
@@ -315,11 +307,7 @@ fun RuntimeHostScreen(
                 onDismissRequest = {},
                 properties = PopupProperties(focusable = false),
             ) {
-                Box(
-                    Modifier
-                        .fillMaxHeight()
-                        .width(overlayWidth),
-                ) {
+                Box(Modifier.fillMaxSize()) {
         if (session != null && gameReady && showControls && layoutLoaded && !showCheats) {
             VirtualControllerOverlay(
                 profile = layouts.activeProfile(),
