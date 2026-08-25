@@ -147,11 +147,9 @@ object WolfSceneLoader {
             val pictureState = WolfPictureState()
             for (picture in pictures) {
                 val path = pictureState.resolvePath(source, picture.fileName)
-                Log.i("WolfScene", "pic slot=${picture.slot} file=${picture.fileName} path=$path")
                 val decoded = path?.let { runCatching { cachedDecode(source, it) }.getOrNull() } ?: continue
                 val px = picture.x.coerceIn(-decoded.width, width)
                 val py = picture.y.coerceIn(-decoded.height, height)
-                Log.i("WolfScene", "pic drew ${decoded.width}x${decoded.height} at $px,$py")
                 canvas.drawBitmap(decoded, px.toFloat(), py.toFloat(), paint)
             }
             // Message window + choices draw into the frame: the GL surface

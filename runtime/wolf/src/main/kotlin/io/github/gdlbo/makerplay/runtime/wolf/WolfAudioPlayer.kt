@@ -59,8 +59,10 @@ class WolfAudioPlayer {
             player.setDataSource(file.canonicalPath)
             player.setVolume(volume, volume)
             player.setOnCompletionListener { it.release() }
+            // start() must wait for prepare; calling it on a not-yet-prepared
+            // player throws INVALID_OPERATION (-38).
+            player.setOnPreparedListener { it.start() }
             player.prepareAsync()
-            player.start()
         }
     }
 

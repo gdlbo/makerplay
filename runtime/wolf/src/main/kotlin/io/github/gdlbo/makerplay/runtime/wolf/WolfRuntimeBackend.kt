@@ -173,13 +173,6 @@ class WolfRuntimeBackend(
             // map them through the same table as physical keyboard input.
             val pressed = virtualInput.pressedActions +
                 virtualInput.pressedKeyCodes.mapNotNull { PhysicalInputNormalizer.keyMap[it] }
-            logger.info(
-                "runtime.debug_input",
-                mapOf(
-                    "actions" to virtualInput.pressedActions.toString(),
-                    "keys" to virtualInput.pressedKeyCodes.toString(),
-                ),
-            )
             val dirs = buildSet {
                 if (GameAction.UP in pressed) add(WolfGameEngine.Direction.UP)
                 if (GameAction.DOWN in pressed) add(WolfGameEngine.Direction.DOWN)
@@ -315,10 +308,6 @@ class WolfRuntimeBackend(
                 }.onFailure {
                     logger.error("runtime.commont_events_failed", mapOf("error" to (it.message ?: "unknown")))
                 }
-                logger.info(
-                    "runtime.debug_ce",
-                    mapOf("byId" to commonEvents.size.toString(), "byName" to commonEventsByName.size.toString()),
-                )
                 var map = initialMap
                 val tilesets = io.github.gdlbo.makerplay.wolfformat.TileSetData.parse(
                     source.read("Data/BasicData/TileSetData.dat"),
@@ -338,19 +327,7 @@ class WolfRuntimeBackend(
                     override fun onMessage(text: String) { ui.message = text }
                     override fun onChoices(options: List<String>) { ui.choices = options }
                     override fun onKeyPoll(): Int = currentWolfKey.get()
-                    override fun onCondition(command: EventCommand, satisfied: Boolean) {
-                        if (command.params.firstOrNull() == 20) {
-                            logger.info(
-                                "runtime.debug_condition",
-                                mapOf("params" to command.params.joinToString(), "satisfied" to satisfied.toString()),
-                            )
-                        }
-                    }
                     override fun onTeleport(mapId: Int, tileX: Int, tileY: Int) {
-                        logger.info(
-                            "runtime.debug_teleport",
-                            mapOf("mapId" to mapId.toString(), "x" to tileX.toString(), "y" to tileY.toString()),
-                        )
                         // WOLF applies a move-place immediately: the map and
                         // hero change at the teleport point, and the calling
                         // event continues on the new map (fade/inits run after).
@@ -360,7 +337,6 @@ class WolfRuntimeBackend(
                             val nextMap = MapFile.parse(bytes)
                             map = nextMap
                             mapPath = target
-                            logger.info("runtime.debug_transfer", mapOf("path" to target))
                             pictures.clear()
                             engine.replaceMap(nextMap, tileX, tileY)
                         } else {
@@ -403,12 +379,6 @@ class WolfRuntimeBackend(
                     override fun onPicture(command: EventCommand) {
                         pictures.apply(command)
                     }
-                    override fun onCommand(command: EventCommand) {
-                        logger.info(
-                            "runtime.debug_command",
-                            mapOf("op" to command.commandType.toString(), "params" to command.params.joinToString()),
-                        )
-                    }
 
                     override fun onScreenEffect(command: EventCommand) {
                         // Transitions/color changes reset overlays; recompose.
@@ -437,41 +407,12 @@ class WolfRuntimeBackend(
 
                 val tickMillis = 1000L / project.fps.coerceAtLeast(1)
                 var lastFrameKey: Any? = null
-                var lastBlockingKey: String? = null
-                var lastRunningPc = -1
-                var samePcTicks = 0
                 var lastFrame: WolfSceneLoader.StaticFrame? = null
                 var forceCompose = true
                 while (isActive) {
                     val active = interpreter
                     if (active != null && !active.finished) {
-                        val blocking = active.currentBlocking()
-                        val stateKey = blocking?.let { it::class.simpleName ?: "?" } ?: "running"
-                        if (currentConfirm.get()) {
-                            (stored.logger ?: logger).info(
-                                "runtime.debug_confirm",
-                                mapOf("state" to stateKey, "pc" to (active.currentPc().toString())),
-                            )
-                        }
-                        if (stateKey != lastBlockingKey) {
-                            (stored.logger ?: logger).info(
-                                "runtime.debug_block",
-                                mapOf("state" to stateKey, "pc" to (active.currentPc().toString())),
-                            )
-                            lastBlockingKey = stateKey
-                        } else if (stateKey == "running" && active.currentPc() == lastRunningPc) {
-                            samePcTicks++
-                            if (samePcTicks % 120 == 0) {
-                                (stored.logger ?: logger).info(
-                                    "runtime.debug_stuck",
-                                    mapOf("pc" to lastRunningPc.toString(), "ticks" to samePcTicks.toString()),
-                                )
-                            }
-                        } else {
-                            lastRunningPc = active.currentPc()
-                            samePcTicks = 0
-                        }
-                        when (blocking) {
+                        when (val blocking = active.currentBlocking()) {
                             is WolfInterpreter.Blocking.Message -> {
                                 if (confirmEdges()) active.advance()
                             }
@@ -481,7 +422,7 @@ class WolfRuntimeBackend(
                             else -> Unit
                         }
                         active.tick()
-                        if (active.finished && blocking == null) interpreter = null
+                        if (active.finished && active.currentBlocking() == null) interpreter = null
                     } else {
                         engine.pendingTransfer?.let { (mapId, pos) ->
                             val target = "Data/MapData/Map%03d.mps".format(mapId)
@@ -491,7 +432,6 @@ class WolfRuntimeBackend(
                                 val nextMap = MapFile.parse(bytes)
                                 map = nextMap
                                 mapPath = target
-                                logger.info("runtime.debug_transfer", mapOf("path" to target))
                                 pictures.clear()
                                 engine.replaceMap(nextMap, pos.first, pos.second)
                             }
@@ -507,14 +447,6 @@ class WolfRuntimeBackend(
                                 initialStrings = machineStrings,
                             )
                             runner.start(trigger.page.commands)
-                            logger.info(
-                                "runtime.debug_fire",
-                                mapOf(
-                                    "eventId" to trigger.eventId.toString(),
-                                    "cmds" to trigger.page.commands.size.toString(),
-                                    "first" to (trigger.page.commands.firstOrNull()?.commandType?.toString() ?: "none"),
-                                ),
-                            )
                             interpreter = runner
                         }
                     }

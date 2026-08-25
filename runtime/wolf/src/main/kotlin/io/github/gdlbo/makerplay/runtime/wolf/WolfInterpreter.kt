@@ -56,12 +56,6 @@ class WolfInterpreter(
          *  WOLF ids: 1 up, 2 down, 3 left, 4 right, 5 decide, 6 cancel, 7 shift. */
         fun onKeyPoll(): Int = 0
 
-        /** Diagnostic hook for version-specific condition layouts. */
-        fun onCondition(command: EventCommand, satisfied: Boolean) {}
-
-        /** Narrow runtime trace hook for difficult v3.5 event flows. */
-        fun onCommand(command: EventCommand) {}
-
         /** Input gating (125 auto input, 126 ban/unban). */
         fun onAutoInput(command: EventCommand) {}
         fun onBanInput(banned: Boolean) {}
@@ -248,9 +242,6 @@ class WolfInterpreter(
     }
 
     private fun execute(command: EventCommand) {
-        if (command.commandType in setOf(111, 123, 130, 170, 172, 210, 121)) {
-            host.onCommand(command)
-        }
         when (command.commandType) {
             0 -> Unit // blank padding line
             99 -> Unit // checkpoint
@@ -578,7 +569,6 @@ class WolfInterpreter(
                 cursor = endPc
             }
         }
-        host.onCondition(command, satisfied)
     }
 
     /** Pure walk: pc of the first command after the case body at [headerPc]. */

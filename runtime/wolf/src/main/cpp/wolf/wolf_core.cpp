@@ -141,8 +141,6 @@ void setStaticFrame(uint64_t handle, const uint8_t* rgba, int32_t size, int32_t 
     blob->width = width;
     blob->height = height;
     blob->version = (session->staticFrame ? session->staticFrame->version : 0) + 1;
-    __android_log_print(ANDROID_LOG_INFO, "WolfNative", "setStaticFrame v=%llu w=%d h=%d",
-                        (unsigned long long)blob->version, width, height);
     session->staticFrame = std::move(blob);
 }
 
@@ -161,12 +159,6 @@ void renderFrame(uint64_t handle, int width, int height) {
     // boot milestone presents the composited map frame as-is.
     if (pausedOrExiting) return;
     if (frame) {
-        static uint64_t loggedVersion = 0;
-        if (frame->version != loggedVersion) {
-            __android_log_print(ANDROID_LOG_INFO, "WolfNative", "renderFrame sees v=%llu",
-                                (unsigned long long)frame->version);
-            loggedVersion = frame->version;
-        }
         rendererDrawFrame(width, height,
                           frame->rgba.data(), frame->width, frame->height,
                           frame->version, /*newFrame=*/true);
