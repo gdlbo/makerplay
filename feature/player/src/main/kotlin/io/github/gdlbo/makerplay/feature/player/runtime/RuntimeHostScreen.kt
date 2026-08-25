@@ -294,6 +294,17 @@ fun RuntimeHostScreen(
         if (session != null && !gameReady) {
             RuntimePreparing(modifier = Modifier.align(Alignment.Center))
         }
+        if (session != null && gameReady) {
+            // The WOLF game surface is an opaque GLSurfaceView (ZOrderOnTop),
+            // which covers every Compose sibling in this window. Host the
+            // controller chrome in its own always-on-top window so buttons are
+            // visible above the surface and receive taps.
+            androidx.compose.ui.window.Popup(
+                alignment = Alignment.TopStart,
+                onDismissRequest = {},
+                properties = androidx.compose.ui.window.PopupProperties(focusable = true),
+            ) {
+                androidx.compose.foundation.layout.Box(Modifier.fillMaxSize()) {
         if (session != null && gameReady && showControls && layoutLoaded && !showCheats) {
             VirtualControllerOverlay(
                 profile = layouts.activeProfile(),
@@ -407,6 +418,9 @@ fun RuntimeHostScreen(
                 onClose = { showCheats = false },
                 modifier = Modifier.fillMaxSize(),
             )
+        }
+                }
+            }
         }
     }
 

@@ -13,6 +13,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -22,6 +24,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.platform.LocalContext
 import io.github.gdlbo.makerplay.diagnostics.RuntimeLogger
 import io.github.gdlbo.makerplay.input.LogicalInputSnapshot
+import io.github.gdlbo.makerplay.input.PhysicalInputNormalizer
 import io.github.gdlbo.makerplay.runtime.api.CheatCatalog
 import io.github.gdlbo.makerplay.runtime.api.CheatCommand
 import io.github.gdlbo.makerplay.runtime.api.CheatFlags
@@ -39,6 +42,7 @@ import io.github.gdlbo.makerplay.wolfformat.GameDataSource
 import io.github.gdlbo.makerplay.wolfformat.GameDat
 import io.github.gdlbo.makerplay.wolfformat.WolfFormatException
 import io.github.gdlbo.makerplay.input.GameAction
+import io.github.gdlbo.makerplay.wolfformat.MapFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -50,7 +54,9 @@ import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * Native runtime backend for WOLF RPG (Woditor) deployments.
@@ -88,6 +94,10 @@ class WolfRuntimeBackend(
     private val currentDirections =
         AtomicReference<Set<WolfGameEngine.Direction>>(emptySet())
     private val currentConfirm = AtomicBoolean(false)
+
+    /** Latest pressed WOLF key id (0 none; 1-4 dirs, 5 decide, 6 cancel, 7 shift),
+     *  published by the input LaunchedEffect for the interpreter's InputKey poll. */
+    private val currentWolfKey = AtomicInteger(0)
 
     override suspend fun prepare(request: LaunchRequest): PreparedSession {
         logger.info(
@@ -159,7 +169,17 @@ class WolfRuntimeBackend(
 
         // Map logical/virtual controller actions onto engine directions.
         LaunchedEffect(virtualInput) {
-            val pressed = virtualInput.pressedActions
+            // Virtual controller buttons dispatch key codes (e.g. Enter = 66);
+            // map them through the same table as physical keyboard input.
+            val pressed = virtualInput.pressedActions +
+                virtualInput.pressedKeyCodes.mapNotNull { PhysicalInputNormalizer.keyMap[it] }
+            logger.info(
+                "runtime.debug_input",
+                mapOf(
+                    "actions" to virtualInput.pressedActions.toString(),
+                    "keys" to virtualInput.pressedKeyCodes.toString(),
+                ),
+            )
             val dirs = buildSet {
                 if (GameAction.UP in pressed) add(WolfGameEngine.Direction.UP)
                 if (GameAction.DOWN in pressed) add(WolfGameEngine.Direction.DOWN)
@@ -168,6 +188,18 @@ class WolfRuntimeBackend(
             }
             currentDirections.set(dirs)
             currentConfirm.set(GameAction.OK in pressed)
+            currentWolfKey.set(
+                when {
+                    GameAction.OK in pressed -> 10 // 決定
+                    GameAction.CANCEL in pressed || GameAction.ESCAPE in pressed -> 11 // キャンセル
+                    GameAction.UP in pressed -> 8
+                    GameAction.DOWN in pressed -> 2
+                    GameAction.LEFT in pressed -> 4
+                    GameAction.RIGHT in pressed -> 6
+                    GameAction.SHIFT in pressed -> 7
+                    else -> 0
+                },
+            )
         }
         LaunchedEffect(session.sessionId, nativeBridge) {
             onReadyChanged(false)
@@ -211,44 +243,8 @@ class WolfRuntimeBackend(
             }
         }
 
-        // Message/choice presentation over the game surface.
-        uiState.message?.let { text ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(bottom = 120.dp),
-                contentAlignment = Alignment.BottomCenter,
-            ) {
-                Text(
-                    text = text,
-                    color = Color.White,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier
-                        .background(Color.Black.copy(alpha = 0.75f))
-                        .padding(16.dp),
-                )
-            }
-        }
-        uiState.choices.takeIf { it.isNotEmpty() && uiState.message == null }?.let { options ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(top = 80.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                options.forEach { option ->
-                    Text(
-                        text = option,
-                        color = Color.White,
-                        style = MaterialTheme.typography.bodyLarge,
-                        modifier = Modifier
-                            .background(Color.Black.copy(alpha = 0.7f))
-                            .padding(8.dp),
-                    )
-                }
-            }
-        }
-
+        // Message/choice presentation over the game surface. Declared after
+        // the GL surface so the opaque SurfaceView cannot cover it.
         if (ready && nativeBridge != null) {
             val handle = remember(session.sessionId) { ensureNativeSession(session, nativeBridge) }
             AndroidView(
@@ -256,6 +252,10 @@ class WolfRuntimeBackend(
                 factory = { ctx ->
                     WolfRenderSurface(ctx).apply {
                         setEGLContextClientVersion(2)
+                        // Render above the Compose window: the game frame is the
+                        // primary content and carries messages/choices in-frame.
+                        setZOrderOnTop(true)
+                        holder.setFormat(android.graphics.PixelFormat.OPAQUE)
                         setRenderer(WolfFrameRenderer(nativeBridge, handle))
                         renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
                     }
@@ -282,6 +282,8 @@ class WolfRuntimeBackend(
                 }
             }
         }
+        // Message/choices render in-frame (composeFrame): the GL surface is
+        // ZOrderOnTop, so Compose overlays would be hidden beneath it.
     }
 
     /**
@@ -299,33 +301,78 @@ class WolfRuntimeBackend(
         val job = gameLoopScope.launch {
             try {
             openDataSource(stored).use { source ->
-                var mapPath = initialMapPath(source)
+                val (initialPath, initialMap) = initialMapPath(source)
+                var mapPath = initialPath
                 val commonEvents = HashMap<Int, List<EventCommand>>()
+                val commonEventsByName = HashMap<String, List<EventCommand>>()
                 runCatching {
                     io.github.gdlbo.makerplay.wolfformat.CommonEventDat.parse(
                         source.read("Data/BasicData/CommonEvent.dat"),
-                    ).events.forEach { commonEvents[it.id] = it.commands }
+                    ).events.forEach {
+                        commonEvents[it.id] = it.commands
+                        commonEventsByName[it.title] = it.commands
+                    }
                 }.onFailure {
                     logger.error("runtime.commont_events_failed", mapOf("error" to (it.message ?: "unknown")))
                 }
-                var map = io.github.gdlbo.makerplay.wolfformat.MapFile.parse(source.read(mapPath))
+                logger.info(
+                    "runtime.debug_ce",
+                    mapOf("byId" to commonEvents.size.toString(), "byName" to commonEventsByName.size.toString()),
+                )
+                var map = initialMap
                 val tilesets = io.github.gdlbo.makerplay.wolfformat.TileSetData.parse(
                     source.read("Data/BasicData/TileSetData.dat"),
                 )
                 val engine = WolfGameEngine(project, map, tilesets)
 
                 var interpreter: WolfInterpreter? = null
-                val savesRoot = java.io.File(stored.gameRoot, "MakerPlaySaves")
+                val pictures = WolfPictureState()
+                val savesRoot = File(stored.gameRoot, "MakerPlaySaves")
                 val saveManager = WolfGameSaveManager(savesRoot)
                 val audio = WolfAudioPlayer()
+                // Persisted machine state: saves snapshot the live interpreter,
+                // loads seed every subsequently created interpreter.
+                val machineVariables = HashMap<Int, Int>()
+                val machineStrings = HashMap<Int, String>()
                 val hostCallbacks = object : WolfInterpreter.Host {
                     override fun onMessage(text: String) { ui.message = text }
                     override fun onChoices(options: List<String>) { ui.choices = options }
+                    override fun onKeyPoll(): Int = currentWolfKey.get()
+                    override fun onCondition(command: EventCommand, satisfied: Boolean) {
+                        if (command.params.firstOrNull() == 20) {
+                            logger.info(
+                                "runtime.debug_condition",
+                                mapOf("params" to command.params.joinToString(), "satisfied" to satisfied.toString()),
+                            )
+                        }
+                    }
                     override fun onTeleport(mapId: Int, tileX: Int, tileY: Int) {
-                        engine.queueTransfer(mapId, tileX, tileY)
+                        logger.info(
+                            "runtime.debug_teleport",
+                            mapOf("mapId" to mapId.toString(), "x" to tileX.toString(), "y" to tileY.toString()),
+                        )
+                        // WOLF applies a move-place immediately: the map and
+                        // hero change at the teleport point, and the calling
+                        // event continues on the new map (fade/inits run after).
+                        val target = "Data/MapData/Map%03d.mps".format(mapId)
+                        val bytes = runCatching { source.read(target) }.getOrNull()
+                        if (bytes != null) {
+                            val nextMap = MapFile.parse(bytes)
+                            map = nextMap
+                            mapPath = target
+                            logger.info("runtime.debug_transfer", mapOf("path" to target))
+                            pictures.clear()
+                            engine.replaceMap(nextMap, tileX, tileY)
+                        } else {
+                            engine.queueTransfer(mapId, tileX, tileY)
+                        }
                     }
                     override fun onSave(slot: Int): Boolean {
                         return runCatching {
+                            interpreter?.let {
+                                machineVariables.clear(); machineVariables.putAll(it.variables)
+                                machineStrings.clear(); machineStrings.putAll(it.strings)
+                            }
                             saveManager.save(
                                 "slot-$slot",
                                 WolfSaveFormat.GameState(
@@ -333,8 +380,8 @@ class WolfRuntimeBackend(
                                     mapPath = mapPath,
                                     tileX = engine.position().tileX,
                                     tileY = engine.position().tileY,
-                                    variables = HashMap<Int, Int>(),
-                                    strings = HashMap<Int, String>(),
+                                    variables = HashMap(machineVariables),
+                                    strings = HashMap(machineStrings),
                                 ),
                             )
                         }.isSuccess
@@ -343,35 +390,87 @@ class WolfRuntimeBackend(
                     override fun onLoad(slot: Int): Boolean {
                         return runCatching {
                             val state = saveManager.load("slot-$slot")
+                            machineVariables.clear(); machineVariables.putAll(state.variables)
+                            machineStrings.clear(); machineStrings.putAll(state.strings)
                             if (source.has(state.mapPath)) {
-                                map = io.github.gdlbo.makerplay.wolfformat.MapFile.parse(source.read(state.mapPath))
+                                map = MapFile.parse(source.read(state.mapPath))
                                 mapPath = state.mapPath
                             }
                             true
                         }.getOrDefault(false)
                     }
 
+                    override fun onPicture(command: EventCommand) {
+                        pictures.apply(command)
+                    }
+                    override fun onCommand(command: EventCommand) {
+                        logger.info(
+                            "runtime.debug_command",
+                            mapOf("op" to command.commandType.toString(), "params" to command.params.joinToString()),
+                        )
+                    }
+
+                    override fun onScreenEffect(command: EventCommand) {
+                        // Transitions/color changes reset overlays; recompose.
+                        pictures.clear()
+                    }
+
+                    override fun onEffect(command: EventCommand) {
+                        // Effect commands may load mask pictures; recompose.
+                        pictures.apply(command)
+                    }
+
                     override fun onSound(command: EventCommand) {
                         // Sound command layout varies by editor revision; the
                         // first string, when present, names the media file.
-                        val name = command.strings.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
-                        val bgmFile = runCatching { source.read("Data/BGM/$name") }.isSuccess
-                        val seFile = runCatching { source.read("Data/SE/$name") }.isSuccess
+                        val raw = command.strings.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+                        if (raw.contains('\\')) return // unresolved escape tag
+                        val name = raw.substringAfterLast('/').removePrefix("/")
+                        val bgmPath = resolveMedia(source, "Data/BGM", name)
+                        val sePath = resolveMedia(source, "Data/SE", name)
                         when {
-                            bgmFile -> audio.playBgm(java.io.File(stored.gameRoot, "Data/BGM/$name"))
-                            seFile -> audio.playSe(java.io.File(stored.gameRoot, "Data/SE/$name"))
+                            bgmPath != null -> audio.playBgm(File(stored.gameRoot, bgmPath))
+                            sePath != null -> audio.playSe(File(stored.gameRoot, sePath))
                         }
                     }
                 }
 
                 val tickMillis = 1000L / project.fps.coerceAtLeast(1)
                 var lastFrameKey: Any? = null
+                var lastBlockingKey: String? = null
+                var lastRunningPc = -1
+                var samePcTicks = 0
                 var lastFrame: WolfSceneLoader.StaticFrame? = null
                 var forceCompose = true
                 while (isActive) {
                     val active = interpreter
                     if (active != null && !active.finished) {
                         val blocking = active.currentBlocking()
+                        val stateKey = blocking?.let { it::class.simpleName ?: "?" } ?: "running"
+                        if (currentConfirm.get()) {
+                            (stored.logger ?: logger).info(
+                                "runtime.debug_confirm",
+                                mapOf("state" to stateKey, "pc" to (active.currentPc().toString())),
+                            )
+                        }
+                        if (stateKey != lastBlockingKey) {
+                            (stored.logger ?: logger).info(
+                                "runtime.debug_block",
+                                mapOf("state" to stateKey, "pc" to (active.currentPc().toString())),
+                            )
+                            lastBlockingKey = stateKey
+                        } else if (stateKey == "running" && active.currentPc() == lastRunningPc) {
+                            samePcTicks++
+                            if (samePcTicks % 120 == 0) {
+                                (stored.logger ?: logger).info(
+                                    "runtime.debug_stuck",
+                                    mapOf("pc" to lastRunningPc.toString(), "ticks" to samePcTicks.toString()),
+                                )
+                            }
+                        } else {
+                            lastRunningPc = active.currentPc()
+                            samePcTicks = 0
+                        }
                         when (blocking) {
                             is WolfInterpreter.Blocking.Message -> {
                                 if (confirmEdges()) active.advance()
@@ -384,35 +483,58 @@ class WolfRuntimeBackend(
                         active.tick()
                         if (active.finished && blocking == null) interpreter = null
                     } else {
-                        engine.setInput(currentDirections.get(), currentConfirm.get())
-                        engine.tick()
-                        val fired = engine.drainFiredTriggers()
-                        for (trigger in fired) {
-                            if (interpreter != null && !interpreter!!.finished) break
-                            val runner = WolfInterpreter(hostCallbacks, commonEvents)
-                            runner.start(trigger.page.commands)
-                            interpreter = runner
-                        }
                         engine.pendingTransfer?.let { (mapId, pos) ->
                             val target = "Data/MapData/Map%03d.mps".format(mapId)
                             val bytes = runCatching { source.read(target) }.getOrNull()
                                 ?: runCatching { source.read("Data/" + mapPath.removePrefix("Data/")) }.getOrNull()
                             if (bytes != null) {
-                                map = io.github.gdlbo.makerplay.wolfformat.MapFile.parse(bytes)
+                                val nextMap = MapFile.parse(bytes)
+                                map = nextMap
                                 mapPath = target
+                                logger.info("runtime.debug_transfer", mapOf("path" to target))
+                                pictures.clear()
+                                engine.replaceMap(nextMap, pos.first, pos.second)
                             }
+                        }
+                        engine.setInput(currentDirections.get(), currentConfirm.get())
+                        engine.tick()
+                        val fired = engine.drainFiredTriggers()
+                        for (trigger in fired) {
+                            if (interpreter != null && !interpreter!!.finished) break
+                            val runner = WolfInterpreter(
+                                hostCallbacks, commonEvents, commonEventsByName,
+                                initialVariables = machineVariables,
+                                initialStrings = machineStrings,
+                            )
+                            runner.start(trigger.page.commands)
+                            logger.info(
+                                "runtime.debug_fire",
+                                mapOf(
+                                    "eventId" to trigger.eventId.toString(),
+                                    "cmds" to trigger.page.commands.size.toString(),
+                                    "first" to (trigger.page.commands.firstOrNull()?.commandType?.toString() ?: "none"),
+                                ),
+                            )
+                            interpreter = runner
                         }
                     }
                     // Recompose only when something visible changed: hero moved
                     // or an event switched the presented state.
                     val heroPos = if (interpreter?.finished != true) null else engine.position()
-                    val key = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, heroPos?.offsetX)
+                    val msgText = (interpreter?.currentBlocking() as? WolfInterpreter.Blocking.Message)?.text
+                    val choiceOpts = (interpreter?.currentBlocking() as? WolfInterpreter.Blocking.Choices)?.options
+                        ?: emptyList()
+                    val key = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, heroPos?.offsetX) to
+                        pictures.version() to (msgText to choiceOpts)
                     val frame = if (key != lastFrameKey || forceCompose) {
                         lastFrameKey = key
                         runCatching {
                             withContext(Dispatchers.Default) {
                                 WolfSceneLoader.composeFrame(
                                     source, project, map, tilesets, heroTile = heroPos,
+                                    pictures = pictures.all(),
+                                    messageText = msgText,
+                                    choiceOptions = choiceOpts,
                                 )
                             }
                         }.onFailure {
@@ -428,7 +550,7 @@ class WolfRuntimeBackend(
                         bridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
                     }
                     lastFrame = frame
-                    delay(tickMillis)
+                    delay(tickMillis.milliseconds)
                 }
             }
             } catch (e: kotlinx.coroutines.CancellationException) {
@@ -444,26 +566,48 @@ class WolfRuntimeBackend(
         return job
     }
 
+    /** Finds a media file by base name (extension- and case-insensitive). */
+    private fun resolveMedia(
+        source: GameDataSource,
+        dir: String,
+        name: String,
+    ): String? {
+        val lower = name.lowercase()
+        val base = lower.substringBeforeLast('.')
+        return source.list(dir).firstOrNull {
+            val entry = it.lowercase()
+            entry == lower || entry.substringBeforeLast('.') == base
+        }?.let { "$dir/$it" }
+    }
+
     /**
      * Picks the first map file whose bytes actually parse. Some deployments
      * ship special pseudo-maps (000title.mps) or format variants that the
      * parser rejects; skipping them lets compatible maps still boot.
      */
-    private fun initialMapPath(source: GameDataSource): String {
+    /** Picks the first map file whose bytes actually parse, returning the parsed map. */
+    private fun initialMapPath(source: GameDataSource): Pair<String, MapFile> {
         val candidates = source.list("Data/MapData")
             .filter { it.endsWith(".mps", true) }
             .sorted()
         val errors = mutableListOf<String>()
+        var fallback: Pair<String, MapFile>? = null
         for (name in candidates) {
             val path = "Data/MapData/$name"
             try {
-                io.github.gdlbo.makerplay.wolfformat.MapFile.parse(source.read(path))
-                return path
+                val parsed = MapFile.parse(source.read(path))
+                // Boot into the game's real start map: games' opening maps
+                // carry an autorun (triggerCondition 1) page, while test/sample
+                // maps (alphabetically first) may be empty of events entirely.
+                if (parsed.events.any { e -> e.pages.any { it.triggerCondition == 1 } }) {
+                    return path to parsed
+                }
+                if (fallback == null) fallback = path to parsed
             } catch (e: WolfFormatException) {
                 errors += "$name: ${e.message?.take(60)}"
             }
         }
-        throw WolfFormatException(
+        return fallback ?: throw WolfFormatException(
             "No parseable map found under Data/MapData (${errors.size} tried)" +
                 if (errors.isNotEmpty()) ": ${errors.first()}" else "",
         )
@@ -570,6 +714,6 @@ class WolfRuntimeBackend(
 
 /** Presentation state emitted by the running event interpreter. */
 class WolfUiState {
-    var message: String? = null
-    var choices: List<String> = emptyList()
+    var message: String? by mutableStateOf(null)
+    var choices: List<String> by mutableStateOf(emptyList())
 }

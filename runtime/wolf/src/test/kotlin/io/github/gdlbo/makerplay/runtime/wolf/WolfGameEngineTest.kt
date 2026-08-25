@@ -87,6 +87,16 @@ class WolfGameEngineTest {
         List(width * height) { value() }
 
     @Test
+    fun replaceMapResetsTransferAndPlacesHero() {
+        val engine = WolfGameEngine(project(), map(layer0 = flatMapLayer { 0 }))
+        val next = map(width = 6, height = 6, layer0 = flatMapLayer(6, 6) { 0 })
+        engine.replaceMap(next, tileX = 3, tileY = 4)
+        assertEquals(3, engine.position().tileX)
+        assertEquals(4, engine.position().tileY)
+        assertNull(engine.pendingTransfer)
+    }
+
+    @Test
     fun holdingRightMovesPlayerAndUpdatesFacing() {
         val engine = WolfGameEngine(project(), map(layer0 = flatMapLayer { 0 }))
         val startX = engine.playerPixelX

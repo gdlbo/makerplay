@@ -64,14 +64,32 @@ data class MapFile(
 
         fun parse(data: ByteArray): MapFile {
             validateMagic(data)
+            // v3.5+ maps (revision byte at offset 20) LZ4-pack the body from
+            // offset 25 onward; decompress into a header-prefixed buffer and
+            // parse from there.
+            val revision = if (data.size > 20) data[20].toInt() and 0xFF else 0
+            var working = data
+            var bodyOffset = -1
+            if (revision >= 0x65) {
+                val head = BoundedReader(data, offset = 25)
+                val decompressedSize = head.readU4().toInt()
+                val compressedSize = head.readU4().toInt()
+                if (decompressedSize < 0 || compressedSize < 0 || compressedSize > head.remaining) {
+                    throw WolfFormatException("Invalid v3.5 map compression header")
+                }
+                val compressed = head.readBytes(compressedSize, "v3.5 map payload")
+                val decompressed = WolfLz4.decompress(compressed, decompressedSize)
+                working = data.copyOfRange(0, 25) + decompressed
+                bodyOffset = 25
+            }
             // Editor revisions add differing header fields before the map
             // title; scan candidate offsets for the title length field and
             // accept the first offset whose body parses through the footer.
             var lastError: WolfFormatException? = null
-            for (titleLenOffset in TITLE_LEN_MIN..TITLE_LEN_MAX) {
-                if (titleLenOffset + 4 > data.size) break
+            for (titleLenOffset in (if (bodyOffset >= 0) bodyOffset..bodyOffset else TITLE_LEN_MIN..TITLE_LEN_MAX)) {
+                if (titleLenOffset + 4 > working.size) break
                 try {
-                    return parseBody(data, titleLenOffset)
+                    return parseBody(working, titleLenOffset, revision)
                 } catch (e: WolfFormatException) {
                     lastError = e
                 }
@@ -80,7 +98,7 @@ data class MapFile(
         }
 
         /** Parses everything from the title length field onward. */
-        private fun parseBody(data: ByteArray, titleLenOffset: Int): MapFile {
+        private fun parseBody(data: ByteArray, titleLenOffset: Int, revision: Int = 0): MapFile {
             val head = BoundedReader(data)
             val magic = head.readBytes(16, "mps magic")
             val expectedTail = "WOLFM".map { it.code.toByte() }.toByteArray()
@@ -105,35 +123,41 @@ data class MapFile(
             }
             val eventCount = reader.readCount("map event")
 
+            // v3.5+ maps record an extra word and the actual layer count.
+            val layerCount = if (revision >= 0x67) {
+                reader.readS4() // unknown4
+                reader.readS4().coerceIn(1, 8)
+            } else {
+                3
+            }
+
             // Map layers: three blocks of width*height*3? No — the layer area is
             // width*height pixels per plane across three planes; each block starts
             // at its recorded offset. We read linearly after validating the first
             // word of the block (0xFFFFFFFF marks an empty map).
             val totalPixels = width * height
-            // One contiguous layer area of width*height*3 pixel words; a leading
-            // 0xFFFFFFFF marks an empty (all-default) map.
+            // One contiguous layer area of width*height*layerCount pixel words; a
+            // leading 0xFFFFFFFF marks an empty (all-default) map.
             val firstPixel = reader.readU4()
             val layers: List<IntArray> = if (firstPixel == 0xFFFFFFFFL) {
                 // Empty map: only the marker word is present.
-                listOf(IntArray(totalPixels), IntArray(totalPixels), IntArray(totalPixels))
+                List(layerCount) { IntArray(totalPixels) }
             } else {
-                val all = IntArray(totalPixels * 3)
+                val all = IntArray(totalPixels * layerCount)
                 all[0] = firstPixel.toInt()
-                for (i in 1 until totalPixels * 3) all[i] = reader.readU4().toInt()
-                listOf(
-                    all.copyOfRange(0, totalPixels),
-                    all.copyOfRange(totalPixels, totalPixels * 2),
-                    all.copyOfRange(totalPixels * 2, totalPixels * 3),
-                )
+                for (i in 1 until totalPixels * layerCount) all[i] = reader.readU4().toInt()
+                List(layerCount) { plane ->
+                    all.copyOfRange(plane * totalPixels, (plane + 1) * totalPixels)
+                }
             }
 
             val events = ArrayList<MapEvent>(eventCount)
-            repeat(eventCount) { events.add(readEvent(reader, v3)) }
+            repeat(eventCount) { events.add(readEvent(reader, v3, revision)) }
             reader.readU1() // footer byte varies by editor revision
 
             return MapFile(
                 v3 = v3,
-                revision = if (v3) 0x66 else 0x65,
+                revision = revision.takeIf { it > 0 } ?: if (v3) 0x66 else 0x65,
                 title = title,
                 tilesetId = tilesetId,
                 width = width,
@@ -155,7 +179,7 @@ data class MapFile(
         private const val TITLE_LEN_MIN = 21
         private const val TITLE_LEN_MAX = 64
 
-        private fun readEvent(reader: BoundedReader, v3: Boolean): MapEvent {
+        private fun readEvent(reader: BoundedReader, v3: Boolean, revision: Int): MapEvent {
             if (reader.readU1() != EVENT_HEADER) throw WolfFormatException("Event missing header")
             if (reader.readU4() != 0x3039L) throw WolfFormatException("Event missing header2")
             val eventId = reader.readS4()
@@ -165,12 +189,17 @@ data class MapFile(
             val pageCount = reader.readCount("event page")
             if (reader.readU4() != 0L) throw WolfFormatException("Event separator must be zero")
             val pages = ArrayList<Page>(pageCount)
-            repeat(pageCount) { pages.add(readPage(reader, v3)) }
-            if (reader.readU1() != EVENT_FOOTER) throw WolfFormatException("Event missing footer")
+            repeat(pageCount) { pages.add(readPage(reader, v3, revision)) }
+            val eventFooter = reader.readU1()
+            if (eventFooter != EVENT_FOOTER) {
+                throw WolfFormatException(
+                    "Event missing footer (got 0x${eventFooter.toString(16)} at ${reader.position() - 1})",
+                )
+            }
             return MapEvent(eventId, title, x, y, pages)
         }
 
-        private fun readPage(reader: BoundedReader, v3: Boolean): Page {
+        private fun readPage(reader: BoundedReader, v3: Boolean, revision: Int): Page {
             if (reader.readU1() != PAGE_HEADER) throw WolfFormatException("Page missing header")
             val chipId = reader.readS4()
             val file = reader.readString(v3)
@@ -186,11 +215,13 @@ data class MapFile(
             val triggerVariables = IntArray(4) { reader.readU4().toInt() }
             val triggerValues = IntArray(4) { reader.readS4() }
             val route = MoveRoute.parse(reader)
-            val commands = EventCommand.parseList(reader, v3)
-            if (reader.readU4() != 3L) throw WolfFormatException("Page unknown3 must be 3")
+            val commands = EventCommand.parseList(reader, v3, revision >= 0x67)
+            // Feature flags word; values > 3 add a page-transfer byte.
+            val features = reader.readU4().toInt()
             val shadowGraphicId = reader.readU1()
             val rangeX = reader.readU1()
             val rangeY = reader.readU1()
+            if (features > 3) reader.readU1() // page transfer
             if (reader.readU1() != PAGE_FOOTER) throw WolfFormatException("Page missing footer")
             return Page(
                 graphicChipId = chipId,

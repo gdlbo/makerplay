@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import android.util.Log
 import io.github.gdlbo.makerplay.wolfformat.GameDataSource
 import io.github.gdlbo.makerplay.wolfformat.GameDat
 import io.github.gdlbo.makerplay.wolfformat.MapFile
@@ -40,13 +41,20 @@ object WolfSceneLoader {
         map: MapFile,
         tilesets: TileSetData,
         heroTile: WolfGameEngine.Position? = null,
+        pictures: List<WolfPictureState.Picture> = emptyList(),
+        messageText: String? = null,
+        choiceOptions: List<String> = emptyList(),
     ): StaticFrame {
         val tileset = tilesets.tilesets.getOrNull(map.tilesetId)
             ?: throw WolfFormatException("Map references unknown tileset ${map.tilesetId}")
 
         val tileSize = project.tileSize
-        val width = map.width * tileSize
-        val height = map.height * tileSize
+        // The WOLF drawing area is the game window (Game.dat resolution), not
+        // the map size: pictures/messages use window coordinates and large
+        // maps scroll inside it. The title map (800x600) sits at the top-left
+        // of the 1280x960 window, so a 1280x960 title image is not clipped.
+        val width = project.screenWidth.takeIf { it > 0 } ?: map.width * tileSize
+        val height = project.screenHeight.takeIf { it > 0 } ?: map.height * tileSize
         if (width.toLong() * height > MAX_FRAME_PIXELS) {
             throw WolfFormatException("Map frame $width x $height exceeds limit")
         }
@@ -135,6 +143,52 @@ object WolfSceneLoader {
                     )
                 }
             }
+            // Picture layer: event-driven overlays draw above map and hero.
+            val pictureState = WolfPictureState()
+            for (picture in pictures) {
+                val path = pictureState.resolvePath(source, picture.fileName)
+                Log.i("WolfScene", "pic slot=${picture.slot} file=${picture.fileName} path=$path")
+                val decoded = path?.let { runCatching { cachedDecode(source, it) }.getOrNull() } ?: continue
+                val px = picture.x.coerceIn(-decoded.width, width)
+                val py = picture.y.coerceIn(-decoded.height, height)
+                Log.i("WolfScene", "pic drew ${decoded.width}x${decoded.height} at $px,$py")
+                canvas.drawBitmap(decoded, px.toFloat(), py.toFloat(), paint)
+            }
+            // Message window + choices draw into the frame: the GL surface
+            // renders above the Compose window, so in-frame is the only
+            // reliable presentation layer.
+            if (choiceOptions.isNotEmpty()) {
+                val boxPaint = Paint().apply { color = 0xB4000000.toInt() }
+                val optPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0xFFFFFFFF.toInt()
+                    textSize = 26f
+                }
+                val lineH = 34f
+                val boxW = 320f
+                val boxH = choiceOptions.size * lineH + 20f
+                canvas.drawRect(0f, 0f, boxW, boxH, boxPaint)
+                choiceOptions.forEachIndexed { idx, option ->
+                    canvas.drawText(option, 14f, 26f + idx * lineH, optPaint)
+                }
+            }
+            if (!messageText.isNullOrEmpty()) {
+                val boxPaint = Paint().apply { color = 0xB4000000.toInt() }
+                val msgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0xFFFFFFFF.toInt()
+                    textSize = 26f
+                }
+                val lines = messageText.split("\n")
+                val lineH = 34f
+                val boxH = lines.size * lineH + 24f
+                canvas.drawRect(
+                    0f, height - boxH,
+                    width.toFloat(), height.toFloat(),
+                    boxPaint,
+                )
+                lines.forEachIndexed { idx, line ->
+                    canvas.drawText(line, 16f, height - boxH + 28f + idx * lineH, msgPaint)
+                }
+            }
         } finally {
             // Cached bitmaps are intentionally kept alive for later frames.
         }
@@ -145,7 +199,15 @@ object WolfSceneLoader {
         return StaticFrame(rgbaFromArgb(pixels), width, height)
     }
 
-    private val bitmapCache = HashMap<String, Bitmap>()
+    /** LRU-bounded decode cache: full maps reference hundreds of images. */
+    private const val MAX_CACHED_BITMAPS = 64
+    private val bitmapCache = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>): Boolean {
+            val evict = size > MAX_CACHED_BITMAPS
+            if (evict) eldest.value.recycle()
+            return evict
+        }
+    }
 
     private fun cachedDecode(source: GameDataSource, path: String): Bitmap =
         synchronized(bitmapCache) { bitmapCache[path] } ?: run {

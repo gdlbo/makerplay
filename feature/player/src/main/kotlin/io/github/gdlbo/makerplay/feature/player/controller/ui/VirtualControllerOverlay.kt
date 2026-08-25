@@ -93,7 +93,18 @@ internal fun VirtualControllerOverlay(
     BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
-            .onSizeChanged { canvasSize = it },
+            .onSizeChanged { canvasSize = it }
+            .pointerInput(Unit) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.type == androidx.compose.ui.input.pointer.PointerEventType.Press) {
+                            val p = event.changes.firstOrNull()?.position ?: androidx.compose.ui.geometry.Offset.Zero
+                            android.util.Log.i("OverlayTouch", "press x=${p.x.toInt()} y=${p.y.toInt()} size=$canvasSize")
+                        }
+                    }
+                }
+            },
     ) {
         keyboardFrame(profile)?.let { frame ->
             Surface(

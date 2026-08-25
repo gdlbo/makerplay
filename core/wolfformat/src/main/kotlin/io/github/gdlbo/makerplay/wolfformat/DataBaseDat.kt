@@ -37,7 +37,21 @@ data class DataBaseDat(
         private const val TYPE_HEADER = 0xFFFFFFFEL
 
         fun parse(data: ByteArray): DataBaseDat {
-            val reader = BoundedReader(data)
+            // v3.5 databases (revision 0xC4 at offset 10) LZ4-pack the body
+            // from offset 11 onward, keeping the standard header prefix.
+            val working = if (data.size > 10 && (data[10].toInt() and 0xFF) == 0xC4) {
+                val head = BoundedReader(data, offset = 11)
+                val decompressedSize = head.readU4().toInt()
+                val compressedSize = head.readU4().toInt()
+                if (decompressedSize < 0 || compressedSize < 0 || compressedSize > head.remaining) {
+                    throw WolfFormatException("Invalid v3.5 database compression header")
+                }
+                val compressed = head.readBytes(compressedSize, "v3.5 database payload")
+                data.copyOfRange(0, 11) + WolfLz4.decompress(compressed, decompressedSize)
+            } else {
+                data
+            }
+            val reader = BoundedReader(working)
             val v3 = WolfContainer.readStandardDatHeader(reader)
             val count = reader.readCount("database type")
             val types = ArrayList<DbType>(count)

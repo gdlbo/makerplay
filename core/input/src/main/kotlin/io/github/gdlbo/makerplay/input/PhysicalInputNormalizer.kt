@@ -116,7 +116,7 @@ class PhysicalInputNormalizer(
     private fun axisSource(sourceId: String, axis: Int): String =
         "physical:${sourceId.length}:$sourceId:axis:$axis"
 
-    private companion object {
+    companion object {
         const val AXIS_X = 0
         const val AXIS_Y = 1
         const val AXIS_HAT_X = 15

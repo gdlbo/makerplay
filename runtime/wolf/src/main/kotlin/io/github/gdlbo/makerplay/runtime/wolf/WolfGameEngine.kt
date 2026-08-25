@@ -20,7 +20,7 @@ import java.util.Deque
  */
 class WolfGameEngine(
     private val project: GameDat,
-    private val map: MapFile,
+    private var map: MapFile,
     private val tilesets: TileSetData = TileSetData(v3 = true, tilesets = emptyList()),
     initialX: Int = 0,
     initialY: Int = 0,
@@ -66,8 +66,19 @@ class WolfGameEngine(
     private var confirmPressedThisTick = false
 
     /** Tile passability cache for the current map's tileset. */
-    private val passability: List<TileSetData.Passability>? =
+    private var passability: List<TileSetData.Passability>? =
         tilesets.tilesets.getOrNull(map.tilesetId)?.tilePassability
+
+    /** Applies a successful map transfer and discards triggers from the prior map. */
+    fun replaceMap(nextMap: MapFile, tileX: Int, tileY: Int) {
+        map = nextMap
+        passability = tilesets.tilesets.getOrNull(nextMap.tilesetId)?.tilePassability
+        playerPixelX = tileX.coerceAtLeast(0) * project.tileSize.toDouble()
+        playerPixelY = tileY.coerceAtLeast(0) * project.tileSize.toDouble()
+        pendingTransfer = null
+        firedTriggers.clear()
+        heldDirections.clear()
+    }
 
     fun position(): Position {
         val ts = project.tileSize.toDouble()
@@ -171,11 +182,12 @@ class WolfGameEngine(
 
     /**
      * Page availability requires all four packed switch conditions to hold.
-     * Switch/variable state arrives with the milestone-6 interpreter; until
-     * then pages whose switch bytes are all zero (unconditional) are active.
+     * Condition bytes with only high bits set (e.g. 0x20, the engine's default
+     * "no condition" marker observed in shipped titles) are satisfied by
+     * default; pages whose switch bytes are all zero are unconditional.
      */
     internal fun pageConditionsMet(page: MapFile.Page): Boolean =
-        page.triggerSwitchesRaw.all { it == 0 }
+        page.triggerSwitchesRaw.all { it == 0 || (it and 0x1F) == 0 }
 
     private fun checkActionTrigger() {
         if (!confirmPressedThisTick) return
