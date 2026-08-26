@@ -34,6 +34,7 @@ class WebViewRuntimeBackend(
     private val commonJsDataDirectory: (String) -> File? = { null },
     private val gameDirectory: (String) -> File? = { null },
 ) : GameRuntimeBackend {
+    private val deploymentInspector = DeploymentInspector()
     private val sessions = ConcurrentHashMap<String, RuntimeSession>()
     private val mvSaveStores = ConcurrentHashMap<String, WriteBehindGameSaveStore>()
     override val descriptor = RuntimeBackendDescriptor(
@@ -53,15 +54,17 @@ class WebViewRuntimeBackend(
                 startUrl = SMOKE_URL,
                 allowedOrigin = ASSET_ORIGIN,
                 settings = request.settings,
+                runtimeProfile = io.github.gdlbo.makerplay.runtime.api.unavailableRuntimeProfile(request.settings),
             )
         }
-        val root = gameDirectory(request.gameId)
+        val importedRoot = gameDirectory(request.gameId)
             ?: throw IllegalArgumentException("The imported game is unavailable.")
-        if (looksLikeWolfDeployment(root)) {
+        if (looksLikeWolfDeployment(importedRoot)) {
             throw IllegalArgumentException(
                 "WOLF RPG games require the native WOLF runtime; Chromium WebView cannot execute Game.exe.",
             )
         }
+        val root = File(importedRoot, "www").takeIf { File(it, "index.html").isFile } ?: importedRoot
         val gameLogger = if (request.settings.recordLogs) {
             gameLoggerFactory?.invoke(root) ?: logger
         } else {
@@ -77,12 +80,24 @@ class WebViewRuntimeBackend(
             val gameOrigin = gameOrigin(request.gameId)
             val fileSystem =
                 RpgMakerGameMount.open(root, gameIndexDirectory?.invoke(request.gameId) ?: root)
-            val hasMzEngine = supportsMzNativeSaves(fileSystem)
-            val hasMvEngine = supportsMvNativeSaves(fileSystem)
+            val fingerprint = deploymentInspector.inspect(fileSystem).copy(
+                deploymentLayout = if (root != importedRoot) io.github.gdlbo.makerplay.runtime.api.DeploymentLayout.WWW
+                else io.github.gdlbo.makerplay.runtime.api.DeploymentLayout.ROOT,
+            )
+            val runtimeProfile = RuntimeProfileResolver.resolve(
+                fingerprint = fingerprint,
+                settings = request.settings,
+            )
+            gameLogger.info("runtime.profile", mapOf(
+                "engine" to runtimeProfile.fingerprint.engine.name,
+                "layout" to runtimeProfile.fingerprint.deploymentLayout.name,
+                "selectedEngine" to runtimeProfile.selectedEngine.name,
+                "modules" to runtimeProfile.moduleDecisions.entries.joinToString(",") { "${it.key}:${it.value}" },
+            ))
             val forcedEngineAvailable = when (request.settings.engineMode) {
                 RuntimeEngineMode.AUTO -> true
-                RuntimeEngineMode.MV -> hasMvEngine
-                RuntimeEngineMode.MZ -> hasMzEngine
+                RuntimeEngineMode.MV -> runtimeProfile.useMvNativeSaves
+                RuntimeEngineMode.MZ -> runtimeProfile.useMzNativeSaves
             }
             if (!forcedEngineAvailable) {
                 throw IllegalArgumentException(
@@ -103,8 +118,7 @@ class WebViewRuntimeBackend(
             }
             val saveBridge = if (saveStore != null) {
                 when {
-                    (request.settings.engineMode == RuntimeEngineMode.MZ ||
-                            (request.settings.engineMode == RuntimeEngineMode.AUTO && hasMzEngine)) && hasMzEngine -> {
+                    runtimeProfile.useMzNativeSaves -> {
                         val folderStore = GameFolderSaveStore(root, ".rmmzsave")
                         RuntimeSaveBridgeSession(
                             gameOrigin,
@@ -112,8 +126,7 @@ class WebViewRuntimeBackend(
                         )
                     }
 
-                    (request.settings.engineMode == RuntimeEngineMode.MV ||
-                            (request.settings.engineMode == RuntimeEngineMode.AUTO && hasMvEngine)) && hasMvEngine -> {
+                    runtimeProfile.useMvNativeSaves -> {
                         val folderStore = GameFolderSaveStore(root, ".rpgsave")
                         val bufferedStore = mvSaveStores.computeIfAbsent(request.gameId) {
                             WriteBehindGameSaveStore(
@@ -194,6 +207,7 @@ class WebViewRuntimeBackend(
                 startUrl = "$gameOrigin/session/$sessionId/asset/index.html",
                 allowedOrigin = gameOrigin,
                 settings = request.settings,
+                runtimeProfile = runtimeProfile,
             )
         } finally {
             if (!sessionRegistered && gameLogger !== logger) {
@@ -259,6 +273,7 @@ class WebViewRuntimeBackend(
             onCheatCatalogChanged = onCheatCatalogChanged,
             onReadyChanged = onReadyChanged,
             runtimeSettings = session.settings,
+            runtimeProfile = session.runtimeProfile,
             modifier = modifier,
         )
     }

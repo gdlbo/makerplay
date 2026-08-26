@@ -56,8 +56,12 @@ class DirectoryGameDataSource(private val gameRoot: File) : GameDataSource {
     override fun list(relativeDir: String): List<String> {
         val dir = runCatching { resolveWithinRoot(relativeDir) }.getOrNull() ?: return emptyList()
         if (!dir.isDirectory) return emptyList()
-        return dir.listFiles { f -> f.isFile }?.map { it.name }.orEmpty()
+        // Include directories so callers can resolve case-insensitive folder names.
+        return dir.listFiles()?.map { it.name }.orEmpty()
     }
+
+    override fun has(relativePath: String): Boolean =
+        runCatching { resolveWithinRoot(relativePath).isFile }.getOrDefault(false)
 
     override fun close() = Unit
 }

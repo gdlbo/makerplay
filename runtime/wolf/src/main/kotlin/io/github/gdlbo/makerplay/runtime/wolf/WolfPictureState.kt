@@ -19,6 +19,13 @@ class WolfPictureState {
         val fileName: String,
         val x: Int,
         val y: Int,
+        val centerOrigin: Boolean = false,
+        val opacity: Int = 255,
+        val divisionWidth: Int = 1,
+        val divisionHeight: Int = 1,
+        val pattern: Int = 0,
+        /** When true, [fileName] is display text rather than an image path. */
+        val isText: Boolean = false,
     )
 
     private val slots = LinkedHashMap<Int, Picture>()
@@ -34,6 +41,29 @@ class WolfPictureState {
         slots.clear()
     }
 
+    /**
+     * Applies a picture effect (opcode 290). Full tweening is not modeled yet;
+     * when a slot range is present, those pictures are snapped visible so
+     * opening fades that start at opacity 0 still reveal their layers.
+     */
+    fun applyEffect(command: EventCommand): Boolean {
+        val a = command.params.getOrNull(2) ?: return false
+        val b = command.params.getOrNull(3) ?: a
+        val from = minOf(a, b)
+        val to = maxOf(a, b)
+        if (to < from || to - from > 1_000) return false
+        var changed = false
+        for (slot in from..to) {
+            val existing = slots[slot] ?: continue
+            if (existing.opacity != 255) {
+                slots[slot] = existing.copy(opacity = 255)
+                changed = true
+            }
+        }
+        if (changed) revision++
+        return changed
+    }
+
     /** Applies a picture command; returns true when visible state changed. */
     fun apply(command: EventCommand): Boolean {
         // WolfTL Command.hpp: type = (args[0] >> 4) & 0x07 (0 file, 1 fileString,
@@ -43,9 +73,15 @@ class WolfPictureState {
         val packed = command.params.getOrNull(0) ?: 0
         val type = (packed ushr 4) and 0x7
         val process = packed and 0xF
-        val slot = command.params.getOrNull(1)?.coerceIn(0, 999_999) ?: return false
-        val isText = type == 2 || type == 4
+        // Negative ids are background picture layers (behind the map).
+        val slot = command.params.getOrNull(1)?.coerceIn(-99_999, 999_999) ?: return false
         val fileName = command.strings.firstOrNull()?.takeIf { it.isNotBlank() }
+        // Type 2/4 are explicit text; also treat non-path labels (New Game) as text.
+        val looksLikePath = fileName != null && (
+            fileName.contains('/') || fileName.contains('\\') ||
+                fileName.substringAfterLast('.').lowercase() in IMAGE_EXTS
+            )
+        val isText = type == 2 || type == 4 || (fileName != null && !looksLikePath)
         return when {
             process == 2 || (process == 0 && fileName == null && !isText) -> {
                 if (slots.remove(slot) != null) {
@@ -58,21 +94,49 @@ class WolfPictureState {
             process == 1 -> {
                 // Move: reposition the existing picture.
                 val existing = slots[slot] ?: return false
-                val x = command.params.getOrNull(2) ?: existing.x
-                val y = command.params.getOrNull(3) ?: existing.y
-                slots[slot] = existing.copy(x = x, y = y)
+                val x = command.params.getOrNull(7) ?: command.params.getOrNull(2) ?: existing.x
+                val y = command.params.getOrNull(8) ?: command.params.getOrNull(3) ?: existing.y
+                val opacity = normalizeOpacity(command.params.getOrNull(6), existing.opacity)
+                slots[slot] = existing.copy(
+                    x = x,
+                    y = y,
+                    centerOrigin = isCenterOrigin(command.params),
+                    opacity = opacity,
+                )
                 revision++
                 true
             }
-            isText -> {
-                // Text pictures render via the message layer, not the image stack.
+            isText && fileName != null -> {
+                val x = command.params.getOrNull(7) ?: command.params.getOrNull(2) ?: 0
+                val y = command.params.getOrNull(8) ?: command.params.getOrNull(3) ?: 0
+                val opacity = normalizeOpacity(command.params.getOrNull(6), 255)
+                slots[slot] = Picture(
+                    slot = slot,
+                    fileName = fileName,
+                    x = x,
+                    y = y,
+                    centerOrigin = isCenterOrigin(command.params),
+                    opacity = opacity,
+                    isText = true,
+                )
                 revision++
                 true
             }
             fileName != null -> {
-                val x = command.params.getOrNull(2) ?: 0
-                val y = command.params.getOrNull(3) ?: 0
-                slots[slot] = Picture(slot = slot, fileName = fileName, x = x, y = y)
+                val x = command.params.getOrNull(7) ?: command.params.getOrNull(2) ?: 0
+                val y = command.params.getOrNull(8) ?: command.params.getOrNull(3) ?: 0
+                val opacity = normalizeOpacity(command.params.getOrNull(6), 255)
+                slots[slot] = Picture(
+                    slot = slot,
+                    fileName = fileName,
+                    x = x,
+                    y = y,
+                    centerOrigin = isCenterOrigin(command.params),
+                    opacity = opacity,
+                    divisionWidth = command.params.getOrNull(3)?.coerceIn(1, 64) ?: 1,
+                    divisionHeight = command.params.getOrNull(4)?.coerceIn(1, 64) ?: 1,
+                    pattern = command.params.getOrNull(5)?.coerceAtLeast(0) ?: 0,
+                )
                 revision++
                 true
             }
@@ -86,8 +150,9 @@ class WolfPictureState {
      */
     fun resolvePath(source: GameDataSource, fileName: String): String? {
         val cleaned = fileName.removePrefix("/").replace("\\", "/")
-        if (cleaned.contains("\\\\") || cleaned.contains("\\f") || cleaned.contains("\\c")) {
-            return null // unresolved escape tags; skip until interpolation lands
+            .removePrefix("/")
+        if (cleaned.contains('\\') || cleaned.isEmpty()) {
+            return null
         }
         val candidates = listOf(
             "Data/Picture/$cleaned",
@@ -95,6 +160,47 @@ class WolfPictureState {
             "Data/CG/$cleaned",
             "Data/$cleaned",
         )
-        return candidates.firstOrNull { runCatching { source.has(it) }.getOrDefault(false) }
+        candidates.firstOrNull { runCatching { source.has(it) }.getOrDefault(false) }?.let { return it }
+        // Android deployments are case-sensitive; editor paths often disagree
+        // with on-disk folder casing (picture_tachi vs Picture_tachi).
+        return candidates.firstNotNullOfOrNull { caseInsensitivePath(source, it) }
+    }
+
+    private fun caseInsensitivePath(source: GameDataSource, relative: String): String? {
+        val parts = relative.split('/').filter { it.isNotEmpty() }
+        if (parts.isEmpty()) return null
+        var dir = ""
+        val resolved = ArrayList<String>(parts.size)
+        for (index in parts.indices) {
+            val want = parts[index]
+            val entries = runCatching { source.list(if (dir.isEmpty()) "" else dir) }.getOrDefault(emptyList())
+            val match = entries.firstOrNull { it.equals(want, ignoreCase = true) } ?: return null
+            resolved.add(match)
+            dir = resolved.joinToString("/")
+            if (index == parts.lastIndex) {
+                return dir.takeIf { runCatching { source.has(it) }.getOrDefault(false) }
+            }
+        }
+        return null
+    }
+
+    companion object {
+        private val IMAGE_EXTS = setOf("png", "jpg", "jpeg", "bmp", "gif", "webp")
+
+        /**
+         * wolfrpg-map-parser Options::anchor — bits 12..15 of params[0]
+         * (0 top-left, 1 center, 2 bottom-left, 3 top-right, 4 bottom-right).
+         * params[5] is the animation pattern, not the anchor.
+         */
+        internal fun isCenterOrigin(params: IntArray): Boolean {
+            val packed = params.getOrNull(0) ?: 0
+            return ((packed ushr 12) and 0xF) == 1
+        }
+
+        /** Out-of-range opacity (e.g. -1000000 sentinels) means "use default". */
+        internal fun normalizeOpacity(raw: Int?, fallback: Int): Int {
+            val value = raw ?: return fallback.coerceIn(0, 255)
+            return if (value in 0..255) value else fallback.coerceIn(0, 255)
+        }
     }
 }

@@ -2,6 +2,7 @@ package io.github.gdlbo.makerplay.runtime.wolf
 
 import android.content.Context
 import android.opengl.GLSurfaceView
+import android.view.KeyEvent
 import io.github.gdlbo.makerplay.runtime.api.WolfNativeBridge
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
@@ -9,6 +10,22 @@ import javax.microedition.khronos.opengles.GL10
 /** GLSurfaceView host that drives the native WOLF renderer on the GL thread. */
 class WolfRenderSurface(context: Context) : GLSurfaceView(context) {
     private var rendererRef: WolfFrameRenderer? = null
+    var onKeyAction: ((keyCode: Int, down: Boolean) -> Boolean)? = null
+
+    init {
+        isFocusable = true
+        isFocusableInTouchMode = true
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        post { requestFocus() }
+    }
+
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (hasWindowFocus) requestFocus()
+    }
 
     fun setRenderer(bridge: WolfNativeBridge, handle: Long) {
         // Render above the Compose window; the default punched-through layer
@@ -22,6 +39,16 @@ class WolfRenderSurface(context: Context) : GLSurfaceView(context) {
 
     fun setHandle(handle: Long) {
         rendererRef?.handle = handle
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
+        if (onKeyAction?.invoke(keyCode, true) == true) return true
+        return super.onKeyDown(keyCode, event)
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        if (onKeyAction?.invoke(keyCode, false) == true) return true
+        return super.onKeyUp(keyCode, event)
     }
 }
 

@@ -24,6 +24,8 @@ class WolfGameEngine(
     private val tilesets: TileSetData = TileSetData(v3 = true, tilesets = emptyList()),
     initialX: Int = 0,
     initialY: Int = 0,
+    /** Optional shared variable lookup for page appearance conditions. */
+    private val readVariable: (Int) -> Int = { 0 },
 ) {
     companion object {
         /**
@@ -62,6 +64,8 @@ class WolfGameEngine(
         private set
 
     private val firedTriggers: Deque<FiredTrigger> = ArrayDeque()
+    /** Autorun pages fire once per activation; cleared on map replace. */
+    private val completedAutoruns = HashSet<Int>()
     private val heldDirections = mutableSetOf<Direction>()
     private var confirmPressedThisTick = false
 
@@ -73,10 +77,14 @@ class WolfGameEngine(
     fun replaceMap(nextMap: MapFile, tileX: Int, tileY: Int) {
         map = nextMap
         passability = tilesets.tilesets.getOrNull(nextMap.tilesetId)?.tilePassability
-        playerPixelX = tileX.coerceAtLeast(0) * project.tileSize.toDouble()
-        playerPixelY = tileY.coerceAtLeast(0) * project.tileSize.toDouble()
+        val ts = project.tileSize.toDouble()
+        val clampedX = tileX.coerceIn(0, (nextMap.width - 1).coerceAtLeast(0))
+        val clampedY = tileY.coerceIn(0, (nextMap.height - 1).coerceAtLeast(0))
+        playerPixelX = clampedX * ts
+        playerPixelY = clampedY * ts
         pendingTransfer = null
         firedTriggers.clear()
+        completedAutoruns.clear()
         heldDirections.clear()
     }
 
@@ -181,28 +189,61 @@ class WolfGameEngine(
         event.pages.lastOrNull { page -> pageConditionsMet(page) }
 
     /**
-     * Page availability requires all four packed switch conditions to hold.
-     * Condition bytes with only high bits set (e.g. 0x20, the engine's default
-     * "no condition" marker observed in shipped titles) are satisfied by
-     * default; pages whose switch bytes are all zero are unconditional.
+     * Page availability: slots with clear low flags (including the 0x20 "none"
+     * marker) always pass. Enabled slots compare [triggerVariables] against
+     * [triggerValues] using the shared variable store when present.
      */
-    internal fun pageConditionsMet(page: MapFile.Page): Boolean =
-        page.triggerSwitchesRaw.all { it == 0 || (it and 0x1F) == 0 }
+    internal fun pageConditionsMet(page: MapFile.Page): Boolean {
+        for (i in page.triggerSwitchesRaw.indices) {
+            val sw = page.triggerSwitchesRaw[i]
+            // wolfrpg-map-parser: low nibble enables the slot (0 = unused,
+            // including the common 0x20 filler); high nibble is CompareOperator.
+            if ((sw and 0x0F) == 0) continue
+            val rawVar = page.triggerVariables.getOrNull(i) ?: continue
+            val expected = page.triggerValues.getOrNull(i) ?: 0
+            val actual = readVariable(decodePageVarRef(rawVar))
+            val ok = when ((sw ushr 4) and 0x0F) {
+                0 -> actual > expected
+                1 -> actual >= expected
+                2 -> actual == expected
+                3 -> actual <= expected
+                4 -> actual < expected
+                5 -> actual != expected
+                6 -> (actual and expected) != 0
+                else -> true
+            }
+            if (!ok) return false
+        }
+        return true
+    }
+
+    private fun decodePageVarRef(raw: Int): Int = when (raw) {
+        in 2_000_000..2_999_999 -> raw - 2_000_000
+        in 1_000_000..1_999_999 -> raw // system/self ids used as-is
+        else -> raw
+    }
 
     private fun checkActionTrigger() {
         if (!confirmPressedThisTick) return
         val ts = project.tileSize.toDouble()
-        val tx = (playerPixelX / ts).toInt() + when (facing) {
+        val standX = (playerPixelX / ts).toInt()
+        val standY = (playerPixelY / ts).toInt()
+        // Title menus place options under the cursor/hero; field events are
+        // usually faced. Try standing tile first, then the faced neighbor.
+        fireTriggerAt(standX, standY, Trigger.CONFIRM_KEY)
+        val tx = standX + when (facing) {
             Direction.LEFT -> -1
             Direction.RIGHT -> 1
             else -> 0
         }
-        val ty = (playerPixelY / ts).toInt() + when (facing) {
+        val ty = standY + when (facing) {
             Direction.UP -> -1
             Direction.DOWN -> 1
             else -> 0
         }
-        fireTriggerAt(tx, ty, Trigger.CONFIRM_KEY)
+        if (tx != standX || ty != standY) {
+            fireTriggerAt(tx, ty, Trigger.CONFIRM_KEY)
+        }
     }
 
     private fun detectTouchTriggersOnAdjacentTiles() {
@@ -221,19 +262,27 @@ class WolfGameEngine(
     }
 
     private fun detectStandingTriggers(@Suppress("UNUSED_PARAMETER") ignored: Trigger) {
-        // Autorun/parallel pages fire every tick while their conditions hold.
+        // Parallel pages may re-fire while active. Autorun pages run one at a
+        // time and only once; marking happens when the host starts them so a
+        // later autorun is not discarded by draining siblings early.
+        var autorunQueued = firedTriggers.any { it.trigger == Trigger.AUTORUN }
         for (event in map.events) {
             val page = activePage(event) ?: continue
-            val condition = page.triggerCondition
-            if (condition == 1 || condition == 2) {
-                firedTriggers.add(
-                    FiredTrigger(
-                        event.eventId, page,
-                        if (condition == 1) Trigger.AUTORUN else Trigger.PARALLEL,
-                    ),
-                )
+            when (page.triggerCondition) {
+                1 -> {
+                    if (!autorunQueued && event.eventId !in completedAutoruns) {
+                        firedTriggers.add(FiredTrigger(event.eventId, page, Trigger.AUTORUN))
+                        autorunQueued = true
+                    }
+                }
+                2 -> firedTriggers.add(FiredTrigger(event.eventId, page, Trigger.PARALLEL))
             }
         }
+    }
+
+    /** Records that an autorun event has been started by the host. */
+    fun markAutorunStarted(eventId: Int) {
+        completedAutoruns.add(eventId)
     }
 
     private fun fireTriggerAt(tileX: Int, tileY: Int, trigger: Trigger) {
@@ -252,5 +301,10 @@ class WolfGameEngine(
     /** Applies a queued transfer result; used by tests and the future interpreter. */
     internal fun queueTransfer(mapId: Int, tileX: Int, tileY: Int) {
         pendingTransfer = mapId to (tileX to tileY)
+    }
+
+    /** Drops a transfer whose destination map could not be resolved. */
+    internal fun clearPendingTransfer() {
+        pendingTransfer = null
     }
 }

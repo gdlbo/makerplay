@@ -69,6 +69,9 @@ bool ensureInitialized() {
     const GLuint program = glCreateProgram();
     glAttachShader(program, vs);
     glAttachShader(program, fs);
+    // GLES does not guarantee a user attribute's location before linking.
+    // The draw path uses location zero for the fullscreen quad.
+    glBindAttribLocation(program, 0, "aPos");
     glLinkProgram(program);
     glDeleteShader(vs);
     glDeleteShader(fs);

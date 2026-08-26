@@ -24,7 +24,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -47,6 +53,7 @@ import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeOverla
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimePreparing
 import io.github.gdlbo.makerplay.feature.player.runtime.components.buildRuntimeFailureReport
 import io.github.gdlbo.makerplay.input.LogicalInputSnapshot
+import io.github.gdlbo.makerplay.input.PhysicalInputNormalizer
 import io.github.gdlbo.makerplay.runtime.api.CheatCatalog
 import io.github.gdlbo.makerplay.runtime.api.CheatCommand
 import io.github.gdlbo.makerplay.runtime.api.CheatFlags
@@ -217,9 +224,40 @@ fun RuntimeHostScreen(
         }
     }
 
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(gameReady, session?.sessionId) {
+        if (gameReady && session != null) {
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
     val runtimeModifier = Modifier
         .fillMaxSize()
         .background(Color.Black)
+        .focusRequester(focusRequester)
+        .focusTarget()
+        .onKeyEvent { event ->
+            val keyCode = event.nativeKeyEvent.keyCode
+            val action = PhysicalInputNormalizer.keyMap[keyCode]
+            when (event.type) {
+                KeyEventType.KeyDown -> {
+                    val actions = virtualInput.pressedActions.toMutableSet()
+                    val keys = virtualInput.pressedKeyCodes.toMutableSet()
+                    if (action != null) actions.add(action)
+                    keys.add(keyCode)
+                    virtualInput = LogicalInputSnapshot(actions, virtualInput.pointers, keys)
+                    true
+                }
+                KeyEventType.KeyUp -> {
+                    val actions = virtualInput.pressedActions.toMutableSet()
+                    val keys = virtualInput.pressedKeyCodes.toMutableSet()
+                    if (action != null) actions.remove(action)
+                    keys.remove(keyCode)
+                    virtualInput = LogicalInputSnapshot(actions, virtualInput.pointers, keys)
+                    true
+                }
+                else -> false
+            }
+        }
     BoxWithConstraints(modifier = runtimeModifier) {
         val compactHeight = maxHeight < 480.dp
         // Overlay Popup is anchored at the window origin and must share the same
@@ -229,10 +267,17 @@ fun RuntimeHostScreen(
                 session = session!!,
                 modifier = Modifier.fillMaxSize(),
                 inputEnabled = gameReady && !showCheats && !editControls,
-                virtualInput = if (showControls && !editControls) virtualInput else LogicalInputSnapshot(
-                    emptySet(),
-                    emptySet()
-                ),
+                // Always forward keyboard/gamepad keys. When the on-screen
+                // pad is hidden, drop only pointer hits — not key state.
+                virtualInput = when {
+                    editControls -> LogicalInputSnapshot(emptySet(), emptySet())
+                    showControls -> virtualInput
+                    else -> LogicalInputSnapshot(
+                        pressedActions = virtualInput.pressedActions,
+                        pointers = emptySet(),
+                        pressedKeyCodes = virtualInput.pressedKeyCodes,
+                    )
+                },
                 cheatFlags = cheatFlags,
                 cheatCommand = cheatCommand,
                 onCheatCommandConsumed = { sequence ->

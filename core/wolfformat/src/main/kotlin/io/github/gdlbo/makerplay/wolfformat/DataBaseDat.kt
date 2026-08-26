@@ -13,12 +13,15 @@ data class DataBaseDat(
 ) {
     data class DbType(
         val dataIdMethod: Int,
-        /** Per-property encoding: value / 1000 selects the block, % 1000 the slot. */
+        /** Optional type-level string present when [dataIdMethod] is [STRING_INDICATOR]. */
+        val dataIdString: String?,
+        /** Per-property encoding: 1000+ = number slot, 2000+ = string slot. */
         val propertyPositions: IntArray,
         val entries: List<Entry>,
     ) {
         override fun equals(other: Any?): Boolean = other is DbType &&
             dataIdMethod == other.dataIdMethod &&
+            dataIdString == other.dataIdString &&
             propertyPositions.contentEquals(other.propertyPositions) &&
             entries == other.entries
 
@@ -35,6 +38,12 @@ data class DataBaseDat(
     companion object {
         /** Little-endian `FE FF FF FF` read unsigned. */
         private const val TYPE_HEADER = 0xFFFFFFFEL
+
+        /** When [DbType.dataIdMethod] equals this, a type string follows. */
+        const val STRING_INDICATOR = 0x0001D4C0
+
+        const val INT_START = 1_000
+        const val STRING_START = 2_000
 
         fun parse(data: ByteArray): DataBaseDat {
             // v3.5 databases (revision 0xC4 at offset 10) LZ4-pack the body
@@ -64,7 +73,12 @@ data class DataBaseDat(
             if (reader.readU4() != TYPE_HEADER) {
                 throw WolfFormatException("Database type missing sub-header")
             }
-            reader.readU4() // data id method
+            val dataIdMethod = reader.readU4().toInt()
+            val dataIdString = if (dataIdMethod == STRING_INDICATOR) {
+                reader.readString(v3)
+            } else {
+                null
+            }
             val propertyCount = reader.readCount("property position")
             if (propertyCount > BoundedReader.Limits.DEFAULT.maxStringBytes / 4) {
                 throw WolfFormatException("Property count too large")
@@ -72,20 +86,24 @@ data class DataBaseDat(
             val positions = IntArray(propertyCount) { reader.readU4().toInt() }
             val entryCount = reader.readCount("database entry")
 
-            // Property pools: block 1 (raw >= 1000) entries are numbers, the
-            // rest strings. Entries carry no length prefixes of their own:
-            // each holds exactly block1-count numbers then block2-count strings.
-            val numbersEnd = positions.count { it / 1000 == 1 }
-            val stringsCount = propertyCount - numbersEnd
+            // Number pool = positions in [1000, 2000); string pool = >= 2000.
+            // Invalid slots (< 1000) contribute to neither pool.
+            val numberCount = positions.count { it in INT_START until STRING_START }
+            val stringCount = positions.count { it >= STRING_START }
 
             val entries = ArrayList<Entry>(entryCount)
             repeat(entryCount) {
-                val numbers = IntArray(numbersEnd) { reader.readS4() }
-                val strings = ArrayList<String>(stringsCount)
-                repeat(stringsCount) { strings.add(reader.readString(v3)) }
+                val numbers = IntArray(numberCount) { reader.readS4() }
+                val strings = ArrayList<String>(stringCount)
+                repeat(stringCount) { strings.add(reader.readString(v3)) }
                 entries.add(Entry(numbers, strings))
             }
-            return DbType(dataIdMethod = 0, propertyPositions = positions, entries = entries)
+            return DbType(
+                dataIdMethod = dataIdMethod,
+                dataIdString = dataIdString,
+                propertyPositions = positions,
+                entries = entries,
+            )
         }
     }
 }

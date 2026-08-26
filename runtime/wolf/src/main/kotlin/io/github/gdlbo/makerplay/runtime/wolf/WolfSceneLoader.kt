@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
-import android.util.Log
 import io.github.gdlbo.makerplay.wolfformat.GameDataSource
 import io.github.gdlbo.makerplay.wolfformat.GameDat
 import io.github.gdlbo.makerplay.wolfformat.MapFile
@@ -64,6 +63,20 @@ object WolfSceneLoader {
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
+        // Camera follows the hero on maps larger than the game window.
+        val mapPixelW = map.width * tileSize
+        val mapPixelH = map.height * tileSize
+        val heroPx = heroTile?.let {
+            (it.tileX * tileSize) + (it.offsetX * tileSize).toInt()
+        } ?: 0
+        val heroPy = heroTile?.let {
+            (it.tileY * tileSize) + (it.offsetY * tileSize).toInt()
+        } ?: 0
+        val camX = (heroPx + tileSize / 2 - width / 2)
+            .coerceIn(0, (mapPixelW - width).coerceAtLeast(0))
+        val camY = (heroPy + tileSize / 2 - height / 2)
+            .coerceIn(0, (mapPixelH - height).coerceAtLeast(0))
+
         try {
             val columns = baseTileset.width / tileSize
             for (layerIndex in 0 until 3) {
@@ -71,34 +84,41 @@ object WolfSceneLoader {
                 for (i in layer.indices) {
                     val raw = layer[i]
                     if (raw == 0) continue // transparent
+                    val tileMapX = (i % map.width) * tileSize - camX
+                    val tileMapY = (i / map.width) * tileSize - camY
+                    // Skip tiles fully outside the window.
+                    if (tileMapX + tileSize < 0 || tileMapY + tileSize < 0 ||
+                        tileMapX >= width || tileMapY >= height
+                    ) {
+                        continue
+                    }
                     val chipX: Int
                     val chipY: Int
                     if (raw >= 100000) {
-                        // Autotile: raw / 100000 selects the [A] slot; render its
-                        // first cell. Corner-mode quadrants (raw % 10000) are
-                        // refined alongside the full autotile pass in a later
-                        // milestone; deployments with blank slot entries fall
-                        // back to the base tileset's first chip so the boot
-                        // frame still shows map geometry.
+                        // A packed autotile stores one 0..9 source-cell index for
+                        // each 8px quadrant. Its sheet has left/right cells in
+                        // columns and the selected mode in rows.
                         val autoIndex = raw / 100000 - 1
                         val fileName = tileset.autoTileFiles.getOrNull(autoIndex)?.takeIf { it.isNotBlank() }
-                        val dst = Rect((i % map.width) * tileSize, (i / map.width) * tileSize,
-                            ((i % map.width) + 1) * tileSize, ((i / map.width) + 1) * tileSize)
                         if (fileName == null) {
                             canvas.drawBitmap(
                                 baseTileset,
                                 Rect(0, 0, tileSize.coerceAtMost(baseTileset.width),
                                     tileSize.coerceAtMost(baseTileset.height)),
-                                dst, paint,
+                                Rect(tileMapX, tileMapY, tileMapX + tileSize, tileMapY + tileSize),
+                                paint,
                             )
                             continue
                         }
                         val decoded = cachedDecode(source, "Data/$fileName")
-                        canvas.drawBitmap(
-                            decoded,
-                            Rect(0, 0, decoded.width.coerceAtMost(tileSize), decoded.height.coerceAtMost(tileSize)),
-                            dst,
-                            paint,
+                        drawAutotile(
+                            canvas = canvas,
+                            bitmap = decoded,
+                            packedModes = raw % 10_000,
+                            dstX = tileMapX,
+                            dstY = tileMapY,
+                            tileSize = tileSize,
+                            paint = paint,
                         )
                         continue
                     } else {
@@ -108,20 +128,58 @@ object WolfSceneLoader {
                     canvas.drawBitmap(
                         baseTileset,
                         Rect(chipX, chipY, chipX + tileSize, chipY + tileSize),
-                        Rect((i % map.width) * tileSize, (i / map.width) * tileSize,
-                            ((i % map.width) + 1) * tileSize, ((i / map.width) + 1) * tileSize),
+                        Rect(tileMapX, tileMapY, tileMapX + tileSize, tileMapY + tileSize),
                         paint,
                     )
                 }
             }
+            // Picture layer: event-driven overlays draw above the map.
+            val pictureState = WolfPictureState()
+            for (picture in pictures) {
+                if (picture.isText) {
+                    drawTextPicture(canvas, picture, width, height)
+                    continue
+                }
+                val path = pictureState.resolvePath(source, picture.fileName)
+                val decoded = path?.let { runCatching { cachedDecode(source, it) }.getOrNull() }
+                    ?: continue
+                val cols = picture.divisionWidth.coerceAtLeast(1)
+                val rows = picture.divisionHeight.coerceAtLeast(1)
+                val cellW = (decoded.width / cols).coerceAtLeast(1)
+                val cellH = (decoded.height / rows).coerceAtLeast(1)
+                val cells = cols * rows
+                val pattern = picture.pattern.coerceIn(0, cells - 1)
+                val srcX = (pattern % cols) * cellW
+                val srcY = (pattern / cols) * cellH
+                val originX = if (picture.centerOrigin) picture.x - cellW / 2 else picture.x
+                val originY = if (picture.centerOrigin) picture.y - cellH / 2 else picture.y
+                val picX = originX.coerceIn(-cellW, width)
+                val picY = originY.coerceIn(-cellH, height)
+                paint.alpha = picture.opacity.coerceIn(0, 255)
+                canvas.drawBitmap(
+                    decoded,
+                    Rect(srcX, srcY, srcX + cellW, srcY + cellH),
+                    Rect(picX, picY, picX + cellW, picY + cellH),
+                    paint,
+                )
+                paint.alpha = 255
+            }
+            // Hero/cursor above pictures so title-map selection stays visible
+            // under fullscreen fog/title layers.
             if (heroTile != null) {
                 val heroFile = startingHeroGraphic(project)
-                if (heroFile == null) {
-                    // Deployments without a hero chip get a position cursor so
-                    // the player remains trackable on screen.
-                    val px = (heroTile.tileX * tileSize) + (heroTile.offsetX * tileSize).toInt()
-                    val py = ((heroTile.tileY + 1) * tileSize) - tileSize +
-                        (heroTile.offsetY * tileSize).toInt()
+                val px = heroPx - camX
+                val py = heroPy - camY
+                val drewChip = heroFile != null && runCatching {
+                    drawHeroChip(
+                        source, "Data/CharaChip/$heroFile", canvas,
+                        anchorX = px,
+                        anchorY = py + tileSize,
+                        tileSize = tileSize,
+                    )
+                    true
+                }.getOrDefault(false)
+                if (!drewChip) {
                     val marker = Paint().apply {
                         style = Paint.Style.STROKE
                         strokeWidth = 3f
@@ -134,23 +192,7 @@ object WolfSceneLoader {
                         (py + tileSize).toFloat() - 2f,
                         marker,
                     )
-                } else {
-                    drawHeroChip(
-                        source, "Data/CharaChip/$heroFile", canvas,
-                        anchorX = (heroTile.tileX * tileSize) + (heroTile.offsetX * tileSize).toInt(),
-                        anchorY = (heroTile.tileY * tileSize) + ((heroTile.offsetY + 1.0) * tileSize).toInt(),
-                        tileSize = tileSize,
-                    )
                 }
-            }
-            // Picture layer: event-driven overlays draw above map and hero.
-            val pictureState = WolfPictureState()
-            for (picture in pictures) {
-                val path = pictureState.resolvePath(source, picture.fileName)
-                val decoded = path?.let { runCatching { cachedDecode(source, it) }.getOrNull() } ?: continue
-                val px = picture.x.coerceIn(-decoded.width, width)
-                val py = picture.y.coerceIn(-decoded.height, height)
-                canvas.drawBitmap(decoded, px.toFloat(), py.toFloat(), paint)
             }
             // Message window + choices draw into the frame: the GL surface
             // renders above the Compose window, so in-frame is the only
@@ -164,9 +206,13 @@ object WolfSceneLoader {
                 val lineH = 34f
                 val boxW = 320f
                 val boxH = choiceOptions.size * lineH + 20f
-                canvas.drawRect(0f, 0f, boxW, boxH, boxPaint)
+                // Anchor near lower-center so letterboxed title frames keep the
+                // window inside the visible game rect.
+                val boxX = ((width - boxW) / 2f).coerceAtLeast(0f)
+                val boxY = (height - boxH - 48f).coerceAtLeast(0f)
+                canvas.drawRect(boxX, boxY, boxX + boxW, boxY + boxH, boxPaint)
                 choiceOptions.forEachIndexed { idx, option ->
-                    canvas.drawText(option, 14f, 26f + idx * lineH, optPaint)
+                    canvas.drawText(option, boxX + 14f, boxY + 26f + idx * lineH, optPaint)
                 }
             }
             if (!messageText.isNullOrEmpty()) {
@@ -195,6 +241,80 @@ object WolfSceneLoader {
         bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
         bitmap.recycle()
         return StaticFrame(rgbaFromArgb(pixels), width, height)
+    }
+
+    /** Renders a string-as-picture slot (display type text / window). */
+    private fun drawAutotile(
+        canvas: Canvas,
+        bitmap: Bitmap,
+        packedModes: Int,
+        dstX: Int,
+        dstY: Int,
+        tileSize: Int,
+        paint: Paint,
+    ) {
+        val half = tileSize / 2
+        if (half <= 0 || bitmap.width < tileSize || bitmap.height < half) return
+        val modes = intArrayOf(
+            packedModes / 1_000,
+            (packedModes / 100) % 10,
+            (packedModes / 10) % 10,
+            packedModes % 10,
+        )
+        for (index in modes.indices) {
+            val mode = modes[index]
+            val srcY = mode * half
+            if (srcY + half > bitmap.height) continue
+            val isRight = index == 1 || index == 3
+            val isBottom = index >= 2
+            val srcX = if (isRight) half else 0
+            val x = dstX + if (isRight) half else 0
+            val y = dstY + if (isBottom) half else 0
+            canvas.drawBitmap(
+                bitmap,
+                Rect(srcX, srcY, srcX + half, srcY + half),
+                Rect(x, y, x + half, y + half),
+                paint,
+            )
+        }
+    }
+
+    private fun drawTextPicture(
+        canvas: Canvas,
+        picture: WolfPictureState.Picture,
+        width: Int,
+        height: Int,
+    ) {
+        val cleaned = picture.fileName
+            .replace(Regex("""\\f\[\d+]"""), "")
+            .replace(Regex("""</?C>""", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("""\\[A-Za-z]+\[[^]]*|]"""), "")
+            .trim()
+        if (cleaned.isEmpty()) return
+        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = 0xFFFFFFFF.toInt()
+            textSize = 28f
+            alpha = picture.opacity.coerceIn(0, 255)
+        }
+        val lines = cleaned.split('\n', '\r').map { it.trim() }.filter { it.isNotEmpty() }
+        val lineH = textPaint.textSize + 8f
+        val blockH = lines.size * lineH
+        var y = if (picture.centerOrigin) {
+            picture.y - blockH / 2f + textPaint.textSize
+        } else {
+            picture.y.toFloat() + textPaint.textSize
+        }
+        for (line in lines) {
+            val tw = textPaint.measureText(line)
+            val x = if (picture.centerOrigin) picture.x - tw / 2f else picture.x.toFloat()
+            canvas.drawText(
+                line,
+                x.coerceIn(0f, width.toFloat()),
+                y.coerceIn(0f, height.toFloat()),
+                textPaint,
+            )
+            y += lineH
+        }
     }
 
     /** LRU-bounded decode cache: full maps reference hundreds of images. */
@@ -264,9 +384,28 @@ object WolfSceneLoader {
 
     private fun decodeBitmap(source: GameDataSource, path: String): Bitmap {
         val bytes = source.read(path)
-        return requireNotNull(android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)) {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        // Full CGs are often 4k–6k; decode at a screen-friendly size to avoid OOM.
+        val maxDim = 2048
+        var sample = 1
+        val bw = bounds.outWidth.coerceAtLeast(1)
+        val bh = bounds.outHeight.coerceAtLeast(1)
+        while (bw / sample > maxDim || bh / sample > maxDim) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply {
+            inSampleSize = sample
+            // Force ARGB so palette+alpha PNGs (common for CGs) decode with color.
+            inPreferredConfig = Bitmap.Config.ARGB_8888
+        }
+        val decoded = requireNotNull(
+            android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts),
+        ) {
             "Undecodable image: $path"
         }
+        if (decoded.config == Bitmap.Config.ARGB_8888) return decoded
+        val copy = decoded.copy(Bitmap.Config.ARGB_8888, false) ?: return decoded
+        if (copy !== decoded) decoded.recycle()
+        return copy
     }
 
     /** ARGB ints from getPixels() to RGBA byte order for GLES. */

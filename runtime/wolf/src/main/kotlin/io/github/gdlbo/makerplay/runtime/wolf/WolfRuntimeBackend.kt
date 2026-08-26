@@ -93,11 +93,23 @@ class WolfRuntimeBackend(
     private val gameLoopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val currentDirections =
         AtomicReference<Set<WolfGameEngine.Direction>>(emptySet())
+    /** Directions held via GL-surface key events (adb / hardware). */
+    private val keyDirections =
+        AtomicReference<Set<WolfGameEngine.Direction>>(emptySet())
+    /** Frames to keep a released direction pressed so short keyevents register. */
+    private val keyDirectionHoldTtl =
+        AtomicReference<Map<WolfGameEngine.Direction, Int>>(emptyMap())
     private val currentConfirm = AtomicBoolean(false)
+    /** Latched confirm presses so short taps cannot be missed between loop samples. */
+    private val pendingConfirmEdges = AtomicInteger(0)
 
     /** Latest pressed WOLF key id (0 none; 1-4 dirs, 5 decide, 6 cancel, 7 shift),
      *  published by the input LaunchedEffect for the interpreter's InputKey poll. */
     private val currentWolfKey = AtomicInteger(0)
+    /** Latched key id held across short taps / paired 123 polls. */
+    private val latchedWolfKey = AtomicInteger(0)
+    /** Frames remaining before [latchedWolfKey] expires. */
+    private val latchedWolfKeyTtl = AtomicInteger(0)
 
     override suspend fun prepare(request: LaunchRequest): PreparedSession {
         logger.info(
@@ -110,6 +122,7 @@ class WolfRuntimeBackend(
                 startUrl = NATIVE_SMOKE_URL,
                 allowedOrigin = NATIVE_ORIGIN,
                 settings = request.settings,
+                runtimeProfile = io.github.gdlbo.makerplay.runtime.api.unavailableRuntimeProfile(request.settings),
             )
         }
         val root = gameDirectory(request.gameId)
@@ -133,6 +146,7 @@ class WolfRuntimeBackend(
             startUrl = NATIVE_SESSION_URL,
             allowedOrigin = NATIVE_ORIGIN,
             settings = request.settings,
+            runtimeProfile = io.github.gdlbo.makerplay.runtime.api.unavailableRuntimeProfile(request.settings),
         )
     }
 
@@ -157,15 +171,6 @@ class WolfRuntimeBackend(
         var ready by remember(session.sessionId) { mutableStateOf(false) }
         var loadError by remember(session.sessionId) { mutableStateOf<String?>(null) }
         val uiState = remember(session.sessionId) { WolfUiState() }
-        var confirmWasDown by remember(session.sessionId) { mutableStateOf(false) }
-
-        // Rising-edge detection for the OK action drives message advancement.
-        fun consumeConfirmEdge(): Boolean {
-            val down = currentConfirm.get()
-            val edge = down && !confirmWasDown
-            confirmWasDown = down
-            return edge
-        }
 
         // Map logical/virtual controller actions onto engine directions.
         LaunchedEffect(virtualInput) {
@@ -180,19 +185,27 @@ class WolfRuntimeBackend(
                 if (GameAction.RIGHT in pressed) add(WolfGameEngine.Direction.RIGHT)
             }
             currentDirections.set(dirs)
-            currentConfirm.set(GameAction.OK in pressed)
-            currentWolfKey.set(
-                when {
-                    GameAction.OK in pressed -> 10 // 決定
-                    GameAction.CANCEL in pressed || GameAction.ESCAPE in pressed -> 11 // キャンセル
-                    GameAction.UP in pressed -> 8
-                    GameAction.DOWN in pressed -> 2
-                    GameAction.LEFT in pressed -> 4
-                    GameAction.RIGHT in pressed -> 6
-                    GameAction.SHIFT in pressed -> 7
-                    else -> 0
-                },
-            )
+            val confirmDown = GameAction.OK in pressed
+            if (confirmDown && !currentConfirm.getAndSet(true)) {
+                pendingConfirmEdges.incrementAndGet()
+            } else if (!confirmDown) {
+                currentConfirm.set(false)
+            }
+            val wolfKey = when {
+                GameAction.OK in pressed -> 10 // 決定
+                GameAction.CANCEL in pressed || GameAction.ESCAPE in pressed -> 11 // キャンセル
+                GameAction.UP in pressed -> 8
+                GameAction.DOWN in pressed -> 2
+                GameAction.LEFT in pressed -> 4
+                GameAction.RIGHT in pressed -> 6
+                GameAction.SHIFT in pressed -> 7
+                else -> 0
+            }
+            currentWolfKey.set(wolfKey)
+            if (wolfKey != 0) {
+                latchedWolfKey.set(wolfKey)
+                latchedWolfKeyTtl.set(30)
+            }
         }
         LaunchedEffect(session.sessionId, nativeBridge) {
             onReadyChanged(false)
@@ -232,7 +245,9 @@ class WolfRuntimeBackend(
                 nativeBridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
                 ready = true
                 onReadyChanged(true)
-                runGameLoop(nativeBridge, handle, stored, uiState) { consumeConfirmEdge() }
+                runGameLoop(nativeBridge, handle, stored, uiState) {
+                    pendingConfirmEdges.getAndUpdate { count -> if (count > 0) count - 1 else 0 } > 0
+                }
             }
         }
 
@@ -251,6 +266,58 @@ class WolfRuntimeBackend(
                         holder.setFormat(android.graphics.PixelFormat.OPAQUE)
                         setRenderer(WolfFrameRenderer(nativeBridge, handle))
                         renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
+                        onKeyAction = onKeyAction@{ keyCode, down ->
+                            val action = PhysicalInputNormalizer.keyMap[keyCode] ?: return@onKeyAction false
+                            val dir = when (action) {
+                                GameAction.UP -> WolfGameEngine.Direction.UP
+                                GameAction.DOWN -> WolfGameEngine.Direction.DOWN
+                                GameAction.LEFT -> WolfGameEngine.Direction.LEFT
+                                GameAction.RIGHT -> WolfGameEngine.Direction.RIGHT
+                                else -> null
+                            }
+                            if (dir != null) {
+                                val next = keyDirections.get().toMutableSet()
+                                val hold = keyDirectionHoldTtl.get().toMutableMap()
+                                if (down) {
+                                    next.add(dir)
+                                    hold.remove(dir)
+                                } else {
+                                    // Keep the direction briefly so tap keyevents
+                                    // still produce movement samples.
+                                    hold[dir] = 16
+                                }
+                                keyDirections.set(next)
+                                keyDirectionHoldTtl.set(hold)
+                            }
+                            val wolfKey = when (action) {
+                                GameAction.OK -> 10
+                                GameAction.CANCEL, GameAction.ESCAPE -> 11
+                                GameAction.UP -> 8
+                                GameAction.DOWN -> 2
+                                GameAction.LEFT -> 4
+                                GameAction.RIGHT -> 6
+                                GameAction.SHIFT -> 7
+                                else -> 0
+                            }
+                            if (action == GameAction.OK) {
+                                if (down && !currentConfirm.getAndSet(true)) {
+                                    pendingConfirmEdges.incrementAndGet()
+                                } else if (!down) {
+                                    currentConfirm.set(false)
+                                }
+                            }
+                            if (down) {
+                                if (wolfKey != 0) {
+                                    currentWolfKey.set(wolfKey)
+                                    latchedWolfKey.set(wolfKey)
+                                    latchedWolfKeyTtl.set(30)
+                                }
+                            } else if (currentWolfKey.get() == wolfKey) {
+                                currentWolfKey.set(0)
+                            }
+                            true
+                        }
+                        post { requestFocus() }
                     }
                 },
                 update = { surface -> surface.setHandle(ensureNativeSession(session, nativeBridge)) },
@@ -293,6 +360,15 @@ class WolfRuntimeBackend(
         val project = stored.project ?: return null
         val job = gameLoopScope.launch {
             try {
+            // Clear host input latches left over from a prior session.
+            currentDirections.set(emptySet())
+            keyDirections.set(emptySet())
+            keyDirectionHoldTtl.set(emptyMap())
+            currentConfirm.set(false)
+            pendingConfirmEdges.set(0)
+            latchedWolfKey.set(0)
+            latchedWolfKeyTtl.set(0)
+            currentWolfKey.set(0)
             openDataSource(stored).use { source ->
                 val (initialPath, initialMap) = initialMapPath(source)
                 var mapPath = initialPath
@@ -303,7 +379,9 @@ class WolfRuntimeBackend(
                         source.read("Data/BasicData/CommonEvent.dat"),
                     ).events.forEach {
                         commonEvents[it.id] = it.commands
-                        commonEventsByName[it.title] = it.commands
+                        if (it.title.isNotEmpty()) {
+                            commonEventsByName[it.title] = it.commands
+                        }
                     }
                 }.onFailure {
                     logger.error("runtime.commont_events_failed", mapOf("error" to (it.message ?: "unknown")))
@@ -312,34 +390,135 @@ class WolfRuntimeBackend(
                 val tilesets = io.github.gdlbo.makerplay.wolfformat.TileSetData.parse(
                     source.read("Data/BasicData/TileSetData.dat"),
                 )
-                val engine = WolfGameEngine(project, map, tilesets)
-
                 var interpreter: WolfInterpreter? = null
-                val pictures = WolfPictureState()
-                val savesRoot = File(stored.gameRoot, "MakerPlaySaves")
-                val saveManager = WolfGameSaveManager(savesRoot)
-                val audio = WolfAudioPlayer()
+                // Which trigger owns [interpreter]; parallel pages must not hide the hero.
+                var activeTrigger: WolfGameEngine.Trigger? = null
                 // Persisted machine state: saves snapshot the live interpreter,
                 // loads seed every subsequently created interpreter.
                 val machineVariables = HashMap<Int, Int>()
                 val machineStrings = HashMap<Int, String>()
+                val startTile = titleMenuStartTile(initialMap)
+                val engine = WolfGameEngine(
+                    project, map, tilesets,
+                    initialX = startTile?.first ?: 0,
+                    initialY = startTile?.second ?: 0,
+                    readVariable = { key ->
+                        interpreter?.variables?.get(key) ?: machineVariables[key] ?: 0
+                    },
+                )
+                val pictures = WolfPictureState()
+                val savesRoot = File(stored.gameRoot, "MakerPlaySaves")
+                val saveManager = WolfGameSaveManager(savesRoot)
+                val audio = WolfAudioPlayer()
+                // Load databases lazily: full user DB files are multi-megabyte
+                // and must not block the first rendered frames.
+                var database: WolfDatabase? = null
+                fun ensureDatabase(): WolfDatabase {
+                    val existing = database
+                    if (existing != null) return existing
+                    val loaded = runCatching { WolfDatabase.load(source) }
+                        .onFailure {
+                            logger.error(
+                                "runtime.database_load_failed",
+                                mapOf("error" to (it.message ?: "unknown")),
+                            )
+                        }
+                        .getOrElse { WolfDatabase.empty() }
+                    database = loaded
+                    return loaded
+                }
+                fun decodeNumberRef(raw: Int): Int = when (raw) {
+                    in 2_000_000..2_999_999 -> raw - 2_000_000
+                    in 8_000_000..8_999_999 -> -(raw - 8_000_000) - 1
+                    in 1_600_000..1_699_999 -> -1_000_000 - (raw - 1_600_000)
+                    else -> raw
+                }
+                fun decodeStringRef(raw: Int): Int = when (raw) {
+                    in 3_000_000..3_999_999 -> raw - 3_000_000
+                    in 1_600_000..1_699_999 -> -1_000_000 - (raw - 1_600_000)
+                    else -> raw
+                }
+                fun readNumberRef(raw: Int): Int {
+                    val active = interpreter
+                    val key = decodeNumberRef(raw)
+                    return active?.variables?.get(key) ?: machineVariables[key] ?: 0
+                }
+                fun writeNumberRef(raw: Int, value: Int) {
+                    val key = decodeNumberRef(raw)
+                    interpreter?.variables?.set(key, value)
+                    machineVariables[key] = value
+                }
+                fun readStringRef(raw: Int): String {
+                    val key = decodeStringRef(raw)
+                    return interpreter?.strings?.get(key) ?: machineStrings[key] ?: ""
+                }
+                fun writeStringRef(raw: Int, value: String) {
+                    val key = decodeStringRef(raw)
+                    interpreter?.strings?.set(key, value)
+                    machineStrings[key] = value
+                }
+                var forceCompose = true
                 val hostCallbacks = object : WolfInterpreter.Host {
-                    override fun onMessage(text: String) { ui.message = text }
-                    override fun onChoices(options: List<String>) { ui.choices = options }
-                    override fun onKeyPoll(): Int = currentWolfKey.get()
+                    override fun onMessage(text: String) {
+                        // Drop confirms that opened this window so it is not
+                        // dismissed on the same press.
+                        pendingConfirmEdges.set(0)
+                        latchedWolfKey.set(0)
+                        latchedWolfKeyTtl.set(0)
+                        ui.message = text
+                    }
+                    override fun onChoices(options: List<String>) {
+                        pendingConfirmEdges.set(0)
+                        latchedWolfKey.set(0)
+                        latchedWolfKeyTtl.set(0)
+                        ui.choices = options
+                    }
+                    override fun expandText(text: String): String {
+                        val active = interpreter
+                        return WolfText.interpolate(
+                            text,
+                            variables = active?.variables ?: machineVariables,
+                            strings = active?.strings ?: machineStrings,
+                            database = database,
+                        )
+                    }
+                    override fun onKeyPoll(): Int {
+                        // Keep the latch across non-waiting polls; waiting
+                        // InputKey clears it via onKeyConsumed once accepted.
+                        val latched = latchedWolfKey.get()
+                        return if (latched != 0) latched else currentWolfKey.get()
+                    }
+                    override fun onKeyConsumed() {
+                        latchedWolfKey.set(0)
+                        latchedWolfKeyTtl.set(0)
+                    }
+                    override fun onDatabase(command: EventCommand) {
+                        ensureDatabase().execute(
+                            command,
+                            readNumber = ::readNumberRef,
+                            writeNumber = ::writeNumberRef,
+                            readString = ::readStringRef,
+                            writeString = ::writeStringRef,
+                        )
+                    }
                     override fun onTeleport(mapId: Int, tileX: Int, tileY: Int) {
                         // WOLF applies a move-place immediately: the map and
                         // hero change at the teleport point, and the calling
                         // event continues on the new map (fade/inits run after).
-                        val target = "Data/MapData/Map%03d.mps".format(mapId)
-                        val bytes = runCatching { source.read(target) }.getOrNull()
-                        if (bytes != null) {
+                        val target = resolveMapPath(source, mapId)
+                        val bytes = target?.let { runCatching { source.read(it) }.getOrNull() }
+                        if (target != null && bytes != null) {
                             val nextMap = MapFile.parse(bytes)
                             map = nextMap
                             mapPath = target
                             pictures.clear()
+                            forceCompose = true
                             engine.replaceMap(nextMap, tileX, tileY)
                         } else {
+                            // Missing destination (common in partial deployments):
+                            // drop overlays so the current map stays playable.
+                            pictures.clear()
+                            forceCompose = true
                             engine.queueTransfer(mapId, tileX, tileY)
                         }
                     }
@@ -377,25 +556,56 @@ class WolfRuntimeBackend(
                     }
 
                     override fun onPicture(command: EventCommand) {
-                        pictures.apply(command)
+                        // File-from-string-var forms ship an empty strings[] and
+                        // point at a CSelf/string ref in params (title_back etc).
+                        var resolved = command
+                        if (command.strings.all { it.isBlank() }) {
+                            // CSelf string slots (1.6M) or low string-vars (3.0M);
+                            // skip params[0] so packed options like 3149840 are
+                            // not treated as string ids.
+                            val strRef = command.params.drop(1).firstOrNull {
+                                it in 1_600_000..1_699_999 || it in 3_000_000..3_000_999
+                            }
+                            if (strRef != null) {
+                                val path = readStringRef(strRef).ifBlank {
+                                    interpreter?.strings?.get(strRef)
+                                        ?: machineStrings[strRef]
+                                        ?: ""
+                                }
+                                if (path.isNotBlank()) {
+                                    resolved = command.copy(strings = listOf(path))
+                                }
+                            }
+                        }
+                        val expanded = if (resolved.strings.any { it.contains('\\') }) {
+                            resolved.copy(strings = resolved.strings.map { expandText(it) })
+                        } else {
+                            resolved
+                        }
+                        pictures.apply(expanded)
                     }
 
                     override fun onScreenEffect(command: EventCommand) {
-                        // Transitions/color changes reset overlays; recompose.
-                        pictures.clear()
+                        // Color/transition commands adjust the framebuffer; they
+                        // must not wipe picture slots (title menus keep art
+                        // through tone changes and fade setup).
+                        forceCompose = true
                     }
 
                     override fun onEffect(command: EventCommand) {
-                        // Effect commands may load mask pictures; recompose.
-                        pictures.apply(command)
+                        // Opacity/position tweens are not fully modeled; avoid
+                        // snapping translucent fog layers to opaque (washes out
+                        // title starfields). Recompose so later moves apply.
+                        forceCompose = true
                     }
 
                     override fun onSound(command: EventCommand) {
                         // Sound command layout varies by editor revision; the
                         // first string, when present, names the media file.
                         val raw = command.strings.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
-                        if (raw.contains('\\')) return // unresolved escape tag
-                        val name = raw.substringAfterLast('/').removePrefix("/")
+                        val mediaName = if (raw.contains('\\')) expandText(raw) else raw
+                        if (mediaName.contains('\\')) return
+                        val name = mediaName.substringAfterLast('/').removePrefix("/")
                         val bgmPath = resolveMedia(source, "Data/BGM", name)
                         val sePath = resolveMedia(source, "Data/SE", name)
                         when {
@@ -408,39 +618,91 @@ class WolfRuntimeBackend(
                 val tickMillis = 1000L / project.fps.coerceAtLeast(1)
                 var lastFrameKey: Any? = null
                 var lastFrame: WolfSceneLoader.StaticFrame? = null
-                var forceCompose = true
                 while (isActive) {
                     val active = interpreter
                     if (active != null && !active.finished) {
                         when (val blocking = active.currentBlocking()) {
                             is WolfInterpreter.Blocking.Message -> {
-                                if (confirmEdges()) active.advance()
+                                if (confirmEdges() || latchedWolfKey.get() != 0) {
+                                    latchedWolfKey.set(0)
+                                    latchedWolfKeyTtl.set(0)
+                                    active.advance()
+                                }
                             }
                             is WolfInterpreter.Blocking.Choices -> {
-                                if (confirmEdges()) active.choose(0)
+                                if (confirmEdges() || latchedWolfKey.get() != 0) {
+                                    latchedWolfKey.set(0)
+                                    latchedWolfKeyTtl.set(0)
+                                    active.choose(0)
+                                }
                             }
                             else -> Unit
                         }
                         active.tick()
-                        if (active.finished && active.currentBlocking() == null) interpreter = null
+                        if (active.finished && active.currentBlocking() == null) {
+                            machineVariables.clear(); machineVariables.putAll(active.variables)
+                            machineStrings.clear(); machineStrings.putAll(active.strings)
+                            interpreter = null
+                            activeTrigger = null
+                        }
                     } else {
+                        if (latchedWolfKeyTtl.decrementAndGet() <= 0) {
+                            latchedWolfKeyTtl.set(0)
+                            latchedWolfKey.set(0)
+                        }
                         engine.pendingTransfer?.let { (mapId, pos) ->
-                            val target = "Data/MapData/Map%03d.mps".format(mapId)
+                            val target = resolveMapPath(source, mapId)
+                            if (target == null) {
+                                engine.clearPendingTransfer()
+                                pictures.clear()
+                                forceCompose = true
+                                return@let
+                            }
                             val bytes = runCatching { source.read(target) }.getOrNull()
-                                ?: runCatching { source.read("Data/" + mapPath.removePrefix("Data/")) }.getOrNull()
                             if (bytes != null) {
                                 val nextMap = MapFile.parse(bytes)
                                 map = nextMap
                                 mapPath = target
                                 pictures.clear()
+                                forceCompose = true
                                 engine.replaceMap(nextMap, pos.first, pos.second)
+                            } else {
+                                engine.clearPendingTransfer()
                             }
                         }
-                        engine.setInput(currentDirections.get(), currentConfirm.get())
+                        val heldDirs = keyDirections.get().toMutableSet()
+                        val hold = keyDirectionHoldTtl.get().toMutableMap()
+                        if (hold.isNotEmpty()) {
+                            val iter = hold.entries.iterator()
+                            while (iter.hasNext()) {
+                                val (dir, ttl) = iter.next()
+                                if (ttl <= 1) {
+                                    iter.remove()
+                                    heldDirs.remove(dir)
+                                } else {
+                                    hold[dir] = ttl - 1
+                                    heldDirs.add(dir)
+                                }
+                            }
+                            keyDirections.set(heldDirs)
+                            keyDirectionHoldTtl.set(hold)
+                        }
+                        val confirmForMap = currentConfirm.get() || pendingConfirmEdges.get() > 0
+                        engine.setInput(
+                            currentDirections.get() + heldDirs,
+                            confirmForMap,
+                        )
                         engine.tick()
+                        if (confirmForMap && pendingConfirmEdges.get() > 0) {
+                            // Consume one latched edge used for map confirm.
+                            pendingConfirmEdges.updateAndGet { n -> if (n > 0) n - 1 else 0 }
+                        }
                         val fired = engine.drainFiredTriggers()
                         for (trigger in fired) {
                             if (interpreter != null && !interpreter!!.finished) break
+                            if (trigger.trigger == WolfGameEngine.Trigger.AUTORUN) {
+                                engine.markAutorunStarted(trigger.eventId)
+                            }
                             val runner = WolfInterpreter(
                                 hostCallbacks, commonEvents, commonEventsByName,
                                 initialVariables = machineVariables,
@@ -448,11 +710,21 @@ class WolfRuntimeBackend(
                             )
                             runner.start(trigger.page.commands)
                             interpreter = runner
+                            activeTrigger = trigger.trigger
                         }
                     }
                     // Recompose only when something visible changed: hero moved
                     // or an event switched the presented state.
-                    val heroPos = if (interpreter?.finished != true) null else engine.position()
+                    // Hide the hero during autorun/action scripts, not parallel pages.
+                    val heroPos = if (
+                        interpreter != null &&
+                        !interpreter!!.finished &&
+                        activeTrigger != WolfGameEngine.Trigger.PARALLEL
+                    ) {
+                        null
+                    } else {
+                        engine.position()
+                    }
                     val msgText = (interpreter?.currentBlocking() as? WolfInterpreter.Blocking.Message)?.text
                     val choiceOpts = (interpreter?.currentBlocking() as? WolfInterpreter.Blocking.Choices)?.options
                         ?: emptyList()
@@ -480,6 +752,7 @@ class WolfRuntimeBackend(
                     }
                     if (frame != null) {
                         bridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
+                        forceCompose = false
                     }
                     lastFrame = frame
                     delay(tickMillis.milliseconds)
@@ -496,6 +769,40 @@ class WolfRuntimeBackend(
         }
         stored.loopJob = job
         return job
+    }
+
+    /**
+     * Title maps often park the cursor on a dense row of confirm-key options.
+     * Start there so New Game is reachable without a long walk from (0,0).
+     */
+    private fun titleMenuStartTile(map: MapFile): Pair<Int, Int>? {
+        val options = map.events.filter { event ->
+            event.pages.any { it.triggerCondition == 0 && it.commands.isNotEmpty() }
+        }
+        if (options.size < 3) return null
+        val densestRow = options.groupBy { it.y }.maxByOrNull { it.value.size } ?: return null
+        if (densestRow.value.size < 3) return null
+        val leftmost = densestRow.value.minByOrNull { it.x } ?: return null
+        return leftmost.x to leftmost.y
+    }
+
+    /** Resolves a map id to a Data/MapData path across common filename shapes. */
+    private fun resolveMapPath(source: GameDataSource, mapId: Int): String? {
+        val candidates = listOf(
+            "Data/MapData/Map%03d.mps".format(mapId),
+            "Data/MapData/Map%04d.mps".format(mapId),
+            "Data/MapData/Map%d.mps".format(mapId),
+        )
+        candidates.firstOrNull { runCatching { source.has(it) }.getOrDefault(false) }?.let { return it }
+        // Only accept Map<number>.mps — loose digit matching wrongly binds
+        // map id 1 to names like SampleMapA_1.mps.
+        val mapName = Regex("""^Map0*(\d+)\.mps$""", RegexOption.IGNORE_CASE)
+        return source.list("Data/MapData")
+            .filter { it.endsWith(".mps", true) }
+            .firstOrNull { name ->
+                val n = mapName.find(name)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                n == mapId
+            }?.let { "Data/MapData/$it" }
     }
 
     /** Finds a media file by base name (extension- and case-insensitive). */
@@ -519,27 +826,79 @@ class WolfRuntimeBackend(
      */
     /** Picks the first map file whose bytes actually parse, returning the parsed map. */
     private fun initialMapPath(source: GameDataSource): Pair<String, MapFile> {
-        val candidates = source.list("Data/MapData")
+        val mapNames = source.list("Data/MapData")
             .filter { it.endsWith(".mps", true) }
+        // Only the conventional boot alias is forced. "TitleMap.mps" can be a
+        // field-style menu map that is not the real opening script.
+        val candidates = mapNames
+            .filter { it.equals("000title.mps", true) }
             .sorted()
+            .plus(mapNames.filterNot { it.equals("000title.mps", true) }.sorted())
         val errors = mutableListOf<String>()
         var fallback: Pair<String, MapFile>? = null
+        var bestAutorun: Pair<String, MapFile>? = null
+        var bestAutorunCommands = -1
         for (name in candidates) {
             val path = "Data/MapData/$name"
             try {
                 val parsed = MapFile.parse(source.read(path))
-                // Boot into the game's real start map: games' opening maps
-                // carry an autorun (triggerCondition 1) page, while test/sample
-                // maps (alphabetically first) may be empty of events entirely.
-                if (parsed.events.any { e -> e.pages.any { it.triggerCondition == 1 } }) {
+                if (name.equals("000title.mps", true)) {
                     return path to parsed
+                }
+                // Prefer early non-stub autorun maps. Alphabetical order alone
+                // picks redirect stubs; global max-command picks mid-game maps.
+                val autoPages = parsed.events.flatMap { it.pages }.filter { it.triggerCondition == 1 }
+                if (autoPages.isEmpty()) {
+                    if (fallback == null) fallback = path to parsed
+                    continue
+                }
+                val autoCommands = autoPages.maxOf { it.commands.size }
+                val mapNum = Regex("""^Map0*(\d+)\.mps$""", RegexOption.IGNORE_CASE)
+                    .find(name)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val callsTitleCe = autoPages.any { page ->
+                    page.commands.any { it.commandType == 300 || it.commandType == 210 }
+                }
+                val stub = autoPages.all { page ->
+                    val meaningful = page.commands.count { it.commandType != 0 && it.commandType != 103 }
+                    meaningful <= 3 && page.commands.any { it.commandType == 300 }
+                }
+                // Map001-style boots are often only "call title CE + erase".
+                if (stub && mapNum == 1 && callsTitleCe) {
+                    return path to parsed
+                }
+                if (stub) {
+                    if (fallback == null) fallback = path to parsed
+                    continue
+                }
+                // Compact "title" maps that only autorun a common-event menu
+                // (few events, moderate script) beat early numbered field maps.
+                // Large multi-event title maps are field menus — skip the boost.
+                val titleScript = name.contains("title", ignoreCase = true) &&
+                    parsed.events.size <= 3 &&
+                    autoCommands in 10..200 &&
+                    callsTitleCe
+                if (titleScript) {
+                    return path to parsed
+                }
+                // Prefer the earliest small-id opening map with real content over
+                // later maps that merely have longer autorun scripts.
+                val earlyOpening = mapNum != null && mapNum in 1..15 && autoCommands >= 10
+                if (earlyOpening) {
+                    val score = 10_000 - mapNum!! + autoCommands
+                    if (score > bestAutorunCommands) {
+                        bestAutorunCommands = score
+                        bestAutorun = path to parsed
+                    }
+                } else if (bestAutorun == null && autoCommands >= 10) {
+                    bestAutorunCommands = autoCommands
+                    bestAutorun = path to parsed
                 }
                 if (fallback == null) fallback = path to parsed
             } catch (e: WolfFormatException) {
                 errors += "$name: ${e.message?.take(60)}"
             }
         }
-        return fallback ?: throw WolfFormatException(
+        return bestAutorun ?: fallback ?: throw WolfFormatException(
             "No parseable map found under Data/MapData (${errors.size} tried)" +
                 if (errors.isNotEmpty()) ": ${errors.first()}" else "",
         )

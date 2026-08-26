@@ -18,6 +18,50 @@ enum class RuntimeScaleMode { FIT, INTEGER, STRETCH }
 
 enum class RuntimeEngineMode { AUTO, MV, MZ }
 
+enum class FingerprintEngine { MV, MZ, UNKNOWN }
+
+enum class DeploymentLayout { ROOT, WWW, UNKNOWN }
+
+enum class RequirementStatus { REQUIRED, NOT_DETECTED, UNKNOWN }
+
+sealed interface FingerprintValue<out T> {
+    data class Known<T>(val value: T) : FingerprintValue<T>
+    data object UNKNOWN : FingerprintValue<Nothing>
+}
+
+data class PackageMetadata(
+    val main: FingerprintValue<String> = FingerprintValue.UNKNOWN,
+    val nodeMain: FingerprintValue<String> = FingerprintValue.UNKNOWN,
+    val requestedNwVersion: FingerprintValue<String> = FingerprintValue.UNKNOWN,
+    val requestedChromiumVersion: FingerprintValue<String> = FingerprintValue.UNKNOWN,
+)
+
+data class EngineFingerprint(
+    val engine: FingerprintEngine = FingerprintEngine.UNKNOWN,
+    val deploymentLayout: DeploymentLayout = DeploymentLayout.UNKNOWN,
+    val coreVersion: FingerprintValue<String> = FingerprintValue.UNKNOWN,
+    val pixiMajor: FingerprintValue<Int> = FingerprintValue.UNKNOWN,
+    val plugins: ImmutableList<String> = ImmutableList.empty(),
+    val requiredGlobals: ImmutableSet<String> = ImmutableSet.empty(),
+    val storageStyle: RequirementStatus = RequirementStatus.UNKNOWN,
+    val mzNativeSaves: RequirementStatus = RequirementStatus.UNKNOWN,
+    val mvNativeSaves: RequirementStatus = RequirementStatus.UNKNOWN,
+    val packageMetadata: PackageMetadata? = null,
+    val commonJs: RequirementStatus = RequirementStatus.UNKNOWN,
+    val nwJs: RequirementStatus = RequirementStatus.UNKNOWN,
+    val nativeAddons: RequirementStatus = RequirementStatus.UNKNOWN,
+    val unsupportedProcessApis: RequirementStatus = RequirementStatus.UNKNOWN,
+)
+
+data class RuntimeProfile(
+    val fingerprint: EngineFingerprint,
+    val settings: RuntimeSettings,
+    val selectedEngine: RuntimeEngineMode,
+    val useMzNativeSaves: Boolean,
+    val useMvNativeSaves: Boolean,
+    val moduleDecisions: ImmutableMap<String, String> = ImmutableMap.empty(),
+)
+
 val SUPPORTED_FPS_LIMITS = listOf(30, 60, 90, 120, 144)
 
 data class RuntimeModuleSettings(
@@ -60,6 +104,15 @@ data class PreparedSession(
     val startUrl: String,
     val allowedOrigin: String,
     val settings: RuntimeSettings = RuntimeSettings(),
+    val runtimeProfile: RuntimeProfile,
+)
+
+fun unavailableRuntimeProfile(settings: RuntimeSettings): RuntimeProfile = RuntimeProfile(
+    settings = settings,
+    fingerprint = EngineFingerprint(),
+    selectedEngine = RuntimeEngineMode.AUTO,
+    useMzNativeSaves = false,
+    useMvNativeSaves = false,
 )
 
 sealed interface RuntimeEvent {

@@ -33,6 +33,9 @@ class WolfInterpreter(
         /** Shows a choice window; call [choose] with the selected option index. */
         fun onChoices(options: List<String>)
 
+        /** Expand escape tags in message / choice text before presentation. */
+        fun expandText(text: String): String = text
+
         /** Sound hook (BGM/SE); [opcode] is the raw command type (140). */
         fun onSound(command: EventCommand) {}
 
@@ -55,6 +58,9 @@ class WolfInterpreter(
         /** InputKey poll (123): currently-pressed WOLF key id, 0 = none.
          *  WOLF ids: 1 up, 2 down, 3 left, 4 right, 5 decide, 6 cancel, 7 shift. */
         fun onKeyPoll(): Int = 0
+
+        /** Clears a one-shot key latch after a waiting InputKey accepts it. */
+        fun onKeyConsumed() {}
 
         /** Input gating (125 auto input, 126 ban/unban). */
         fun onAutoInput(command: EventCommand) {}
@@ -123,6 +129,9 @@ class WolfInterpreter(
 
         /** Case headers of a condition/choice branch (401 family). */
         val CASE_HEADERS = setOf(401, 402, 420, 421)
+
+        /** Decoded keys for CSelf 1600000..1600099 (see decodeVariableRef). */
+        val SELF_VAR_KEYS = (-1_000_000 downTo -1_000_099).toSet()
     }
 
     private var pendingChoiceTargets: List<Pair<Int, Boolean>> = emptyList() // (jumpOffset, isCancel)
@@ -141,6 +150,9 @@ class WolfInterpreter(
          *  in such a frame ends the entire run; called common events (300/210)
          *  break back to their caller. */
         val root: Boolean = false,
+        /** Caller CSelf snapshots restored when a called common event returns. */
+        val savedSelf: Map<Int, Int>? = null,
+        val savedSelfStrings: Map<Int, String>? = null,
     )
 
     /** Starts executing an event's command list, resetting any prior run. */
@@ -175,6 +187,7 @@ class WolfInterpreter(
                 if (key != 0) {
                     val target = current.command.params.getOrNull(0)
                     if (target != null) variables[decodeVariableRef(target)] = key
+                    host.onKeyConsumed()
                     blocking = null
                 } else return
             }
@@ -193,15 +206,19 @@ class WolfInterpreter(
         if (blocking is Blocking.Message) blocking = null
     }
 
-    /** Selects a choice option (0-based); out-of-range selects the cancel case. */
+    /** Selects a choice option (0-based host index); out-of-range selects cancel. */
     fun choose(index: Int) {
         val choices = blocking as? Blocking.Choices ?: return
         blocking = null
-        lastChoiceIndex = index
         lastChoiceCancel = index < 0 || index >= choices.options.size
         lastBranchWasChoice = true
         val bodies = extractChoiceBodies()
-        val body = bodies.cases[index]
+        // Case headers are not always 1..N (title menus use 2/3/4); map the
+        // host's ordinal onto the sorted case ids actually present.
+        val orderedIds = bodies.cases.keys.sorted()
+        val wolfIndex = orderedIds.getOrNull(index) ?: (index + 1)
+        lastChoiceIndex = wolfIndex
+        val body = bodies.cases[wolfIndex]
             ?: bodies.cancel
             ?: emptyList()
         if (body.isNotEmpty()) frames.addLast(Frame(body))
@@ -227,15 +244,13 @@ class WolfInterpreter(
             }
             val frame = frames.last()
             if (frame.pc >= frame.commands.size) {
-                frames.removeLast()
-                loops.removeAll { it.frame === frame }
+                popFrame()
                 continue
             }
             execute(frame.commands[frame.pc++])
             if (++executed > MAX_COMMANDS_PER_TICK) {
-                frames.clear()
-                loops.clear()
-                finished = true
+                // Yield to the next tick instead of aborting the whole event
+                // (party-init loops can be large right after New Game).
                 return
             }
         }
@@ -254,15 +269,19 @@ class WolfInterpreter(
             121 -> setVariable(command)
             122 -> setString(command)
             123 -> {
-                // InputKey returns the currently pressed key, but its wait mode
-                // blocks the event when no accepted key is available. This is
-                // required by menu loops that have no explicit 180 wait.
+                // InputKey: params[0]=dest var; options carry wait_for_input in
+                // bit7 (map-parser BasicOptions/KeyOptions). Poll-only forms
+                // must not block when no key is down — title anti-repeat CEs
+                // spin on non-waiting 123 until keys clear.
                 val key = host.onKeyPoll()
                 val target = command.params.getOrNull(0)
-                if (key == 0) {
-                    blocking = Blocking.KeyWait(command)
-                } else if (target != null) {
+                val waits = inputKeyWaits(command)
+                if (target != null) {
                     variables[decodeVariableRef(target)] = key
+                }
+                when {
+                    key == 0 && waits -> blocking = Blocking.KeyWait(command)
+                    key != 0 && waits -> host.onKeyConsumed()
                 }
             }
             124 -> setVariablePlus(command)
@@ -286,8 +305,7 @@ class WolfInterpreter(
                     loops.clear()
                     finished = true
                 } else {
-                    loops.removeAll { it.frame === frame }
-                    frames.removeLast()
+                    popFrame()
                     if (frames.isEmpty()) finished = true
                 }
             }
@@ -302,7 +320,13 @@ class WolfInterpreter(
             213 -> jumpToLabel(command)
             210, 211 -> callCommonEventById(command)
             220 -> host.onSave(saveSlot(command))
-            221 -> host.onLoad(saveSlot(command))
+            221 -> {
+                // Full slot-load vs variable-from-file share this opcode.
+                // Title/system scripts use the file-field form
+                // ({destVar, stringFileRef, ...}); treating those as slot loads
+                // restores stale state and skips the title presentation branch.
+                if (isFullSlotLoad(command)) host.onLoad(saveSlot(command))
+            }
             222 -> host.onSave(saveSlot(command))
             230, 231 -> Unit // move-during-event flag: engine-level default
             240, 242 -> host.onChipChange(command)
@@ -325,11 +349,11 @@ class WolfInterpreter(
                 } else {
                     lastConditionSatisfied
                 }
-                if (enter) Unit else skipCurrentBranch()
+                if (!enter) skipOneCase(frames.last())
             }
             420, 421 -> {
                 val enter = if (lastBranchWasChoice) lastChoiceCancel else !lastConditionSatisfied
-                if (enter) Unit else skipCurrentBranch()
+                if (!enter) skipOneCase(frames.last())
             }
             498 -> loopEnd()
             499 -> Unit // branch end: natural flow
@@ -340,7 +364,15 @@ class WolfInterpreter(
     private fun loopCount(command: EventCommand): Int? {
         // LoopTimes operators may reference a variable (>=1M); resolve it.
         // 0 runs the body zero times (skip the loop entirely).
-        return operandValue(command.params.firstOrNull() ?: 0)
+        // Cap runaway counts from unread DB slots so New Game init cannot stall.
+        return operandValue(command.params.firstOrNull() ?: 0).coerceIn(0, 64)
+    }
+
+    /** True when InputKey options request blocking until a key is pressed. */
+    private fun inputKeyWaits(command: EventCommand): Boolean {
+        val options = command.params.getOrNull(1) ?: return true
+        val bits = if (options in 0..255) options else (options shr 8) and 0xFF
+        return (bits and 0x80) != 0
     }
 
     private fun beginLoop(command: EventCommand, remaining: Int?) {
@@ -419,21 +451,33 @@ class WolfInterpreter(
     }
 
     private fun jumpToLabel(command: EventCommand) {
-        val frame = frames.lastOrNull() ?: return
-        val target = command.params.firstOrNull() ?: return
-        // Scan forward from the current pc, then wrap to the frame start.
-        for (i in frame.pc until frame.commands.size) {
-            val candidate = frame.commands[i]
-            if (candidate.commandType == 212 && candidate.params.firstOrNull() == target) {
-                frame.pc = i + 1
-                return
+        val targetParam = command.params.firstOrNull()
+        val targetString = command.strings.firstOrNull()?.takeIf { it.isNotBlank() }
+        if (targetParam == null && targetString == null) return
+        fun matches(candidate: EventCommand): Boolean {
+            if (candidate.commandType != 212) return false
+            if (targetString != null) {
+                return candidate.strings.firstOrNull() == targetString
             }
+            return candidate.params.firstOrNull() == targetParam
         }
-        for (i in 0 until frame.pc) {
-            val candidate = frame.commands[i]
-            if (candidate.commandType == 212 && candidate.params.firstOrNull() == target) {
-                frame.pc = i + 1
-                return
+        // Search from the innermost frame outward: condition/choice case bodies
+        // are temporary sub-frames, while labels live on the enclosing event.
+        for (frameIndex in frames.indices.reversed()) {
+            val frame = frames[frameIndex]
+            for (i in frame.pc until frame.commands.size) {
+                if (matches(frame.commands[i])) {
+                    while (frames.size - 1 > frameIndex) popFrame()
+                    frame.pc = i + 1
+                    return
+                }
+            }
+            for (i in 0 until frame.pc) {
+                if (matches(frame.commands[i])) {
+                    while (frames.size - 1 > frameIndex) popFrame()
+                    frame.pc = i + 1
+                    return
+                }
             }
         }
     }
@@ -443,13 +487,13 @@ class WolfInterpreter(
     }
 
     private fun showMessage(command: EventCommand) {
-        val text = command.strings.joinToString("\n").ifBlank { "…" }
+        val text = host.expandText(command.strings.joinToString("\n")).ifBlank { "…" }
         blocking = Blocking.Message(text)
         host.onMessage(text)
     }
 
     private fun showChoices(command: EventCommand) {
-        val options = command.strings.ifEmpty { listOf("…") }
+        val options = command.strings.ifEmpty { listOf("…") }.map(host::expandText)
         blocking = Blocking.Choices(options)
         host.onChoices(options)
     }
@@ -494,6 +538,17 @@ class WolfInterpreter(
                 frame.pc++
                 continue
             }
+            // Sibling case headers end this body; they are not nested openers.
+            if (nesting == 1 && command.commandType in CASE_HEADERS) {
+                val collected = requireNotNull(segment)
+                if (isCancel) result.cancel = collected
+                else activeIndex?.let { result.cases[it] = collected }
+                segment = null
+                activeIndex = null
+                isCancel = false
+                nesting = 0
+                continue // re-process this header in the nesting == 0 path
+            }
             // Inside a case body.
             frame.pc++
             if (command.commandType == 499) {
@@ -522,7 +577,9 @@ class WolfInterpreter(
         // the loop is bounded by the real param count. The first satisfied
         // condition enters its case; otherwise the whole branch is skipped.
         val p = command.params
-        val wantCount = p.getOrNull(0)?.coerceAtLeast(0) ?: 0
+        // Low nibble is the condition count; upper bits are mode flags
+        // (seen as 0x11/0x12/0x13 in title/menu scripts).
+        val wantCount = (p.getOrNull(0) ?: 0).and(0x0F).coerceAtLeast(0)
         var satisfied = false
         var matchedCases = 0
         var i = 1
@@ -541,8 +598,9 @@ class WolfInterpreter(
         lastConditionSatisfied = satisfied
         lastBranchWasChoice = false
         if (!satisfied) {
-            // Skip this conditional's whole case region to its branch end.
-            skipCurrentBranch()
+            // Leave 401/420 handlers to accept the else arm; do not skip the
+            // whole cluster here or else-bodies never run.
+            return
         } else {
             // Run ONLY the matched case body as a sub-frame and continue the
             // parent after the branch: sibling case bodies are demarcated by
@@ -698,9 +756,15 @@ class WolfInterpreter(
     private fun varValue(ref: Int): Int = variables[decodeVariableRef(ref)] ?: 0
 
     private fun setVariablePlus(command: EventCommand) {
-        // Advanced operations collapse to assignment of the second operand in
-        // this subset; full operator matrix arrives with compatibility work.
+        // SetVariableEx: [dest, 0x3000, keyCode] queries whether a specific
+        // WOLF key is down (title anti-repeat CEs). Other forms fall back to
+        // assigning the second operand until the full matrix is modeled.
         val p = command.params
+        if (p.size >= 3 && p[1] == 0x3000) {
+            val keyCode = operandValue(p[2])
+            variables[decodeVariableRef(p[0])] = if (host.onKeyPoll() == keyCode) 1 else 0
+            return
+        }
         if (p.size >= 2) variables[decodeVariableRef(p[0])] = operandValue(p[1])
     }
 
@@ -720,11 +784,16 @@ class WolfInterpreter(
     private fun decodeVariableRef(raw: Int): Int = when (raw) {
         in 2_000_000..2_999_999 -> raw - 2_000_000
         in 8_000_000..8_999_999 -> -(raw - 8_000_000) - 1 // system vars: negative ids
+        // Game-state/UI system variables (1.6M range) used by menu scripts;
+        // mapped below zero so they never collide with normal variables.
+        in 1_600_000..1_699_999 -> -1_000_000 - (raw - 1_600_000)
         else -> raw
     }
 
     private fun decodeStringRef(raw: Int): Int = when (raw) {
         in 3_000_000..3_999_999 -> raw - 3_000_000
+        // CSelf string slots share the 1.6M range with numeric CSelf.
+        in 1_600_000..1_699_999 -> -1_000_000 - (raw - 1_600_000)
         else -> raw
     }
 
@@ -744,7 +813,8 @@ class WolfInterpreter(
     }
 
     private fun beginWait(command: EventCommand) {
-        val frames_ = command.params.firstOrNull()?.coerceAtLeast(0) ?: 0
+        // Duration may be a CSelf/variable ref (fade CEs use 1600000).
+        val frames_ = operandValue(command.params.firstOrNull() ?: 0).coerceIn(0, 600)
         if (frames_ > 0) blocking = Blocking.Wait(frames_)
     }
 
@@ -758,18 +828,102 @@ class WolfInterpreter(
             else -> rawId
         }
         val body = commonEvents[id] ?: return
-        frames.addLast(Frame(body, root = false))
+        // 210/211: [id, argCount, arg0..]
+        pushCommonEventFrame(body, numericArgs = numericCallArgs(command.params, argCountIndex = 1))
     }
 
     private fun callCommonEventByName(command: EventCommand) {
         val name = command.strings.firstOrNull() ?: return
         val body = commonEventsByName[name] ?: return
-        frames.addLast(Frame(body, root = false))
+        // 300: [flags, argCount, arg0..] — wolfrpg-map-parser number_arguments.
+        pushCommonEventFrame(body, numericArgs = numericCallArgs(command.params, argCountIndex = 1))
+    }
+
+    /**
+     * Common-event CSelf (1.6M) vars are per-event in the editor runtime.
+     * Snapshot the caller bank, clear for the callee, apply call args into
+     * CSelf0..N, and restore the caller bank on pop.
+     */
+    private fun pushCommonEventFrame(body: List<EventCommand>, numericArgs: IntArray = IntArray(0)) {
+        val saved = snapshotSelfVars()
+        val savedStrings = snapshotSelfStrings()
+        clearSelfVars()
+        clearSelfStrings()
+        for (i in numericArgs.indices) {
+            variables[decodeVariableRef(1_600_000 + i)] = numericArgs[i]
+        }
+        frames.addLast(
+            Frame(body, root = false, savedSelf = saved, savedSelfStrings = savedStrings),
+        )
+    }
+
+    /** Reads [argCount] values after [argCountIndex] from a 210/300 param list. */
+    private fun numericCallArgs(params: IntArray, argCountIndex: Int): IntArray {
+        val count = params.getOrNull(argCountIndex)?.coerceIn(0, 20) ?: return IntArray(0)
+        if (count == 0) return IntArray(0)
+        val start = argCountIndex + 1
+        if (start >= params.size) return IntArray(0)
+        val n = minOf(count, params.size - start)
+        return IntArray(n) { i -> operandValue(params[start + i]) }
+    }
+
+    private fun popFrame() {
+        val frame = frames.removeLastOrNull() ?: return
+        loops.removeAll { it.frame === frame }
+        frame.savedSelf?.let { saved ->
+            clearSelfVars()
+            variables.putAll(saved)
+        }
+        frame.savedSelfStrings?.let { saved ->
+            clearSelfStrings()
+            strings.putAll(saved)
+        }
+    }
+
+    private fun snapshotSelfVars(): Map<Int, Int> {
+        val out = HashMap<Int, Int>()
+        for ((key, value) in variables) {
+            if (key in SELF_VAR_KEYS) out[key] = value
+        }
+        return out
+    }
+
+    private fun clearSelfVars() {
+        val keys = variables.keys.filter { it in SELF_VAR_KEYS }
+        keys.forEach { variables.remove(it) }
+    }
+
+    private fun snapshotSelfStrings(): Map<Int, String> {
+        val out = HashMap<Int, String>()
+        for ((key, value) in strings) {
+            if (key in SELF_VAR_KEYS || key in 1_600_000..1_699_999) out[key] = value
+        }
+        return out
+    }
+
+    private fun clearSelfStrings() {
+        val keys = strings.keys.filter { it in SELF_VAR_KEYS || it in 1_600_000..1_699_999 }
+        keys.forEach { strings.remove(it) }
     }
 
     private fun saveSlot(command: EventCommand): Int {
         val raw = command.params.firstOrNull() ?: 0
         return if (raw >= 1_000_000) varValue(raw) else raw
+    }
+
+    /** True when 221 should load a whole save slot rather than one file field. */
+    private fun isFullSlotLoad(command: EventCommand): Boolean {
+        val p = command.params
+        if (p.isEmpty()) return true
+        val dest = p[0]
+        val second = p.getOrNull(1) ?: return true
+        // Name-based / field loads used by title scripts: dest+filename string var,
+        // or system-var filename in the 1.6M range (Save/System.sav holders).
+        if (dest in 2_000_000..2_999_999 && second in 3_000_000..3_999_999) return false
+        if (dest in 2_000_000..2_999_999 && p.size >= 3 && p.getOrNull(2) == dest) return false
+        if (second in 1_600_000..1_699_999 || dest in 1_600_000..1_699_999) return false
+        if (p.size >= 3 && second >= 1_000_000) return false
+        return true
     }
 
     /**
@@ -780,7 +934,22 @@ class WolfInterpreter(
     private fun resolveCommandRefs(command: EventCommand): EventCommand {
         val resolved = IntArray(command.params.size) { i ->
             val raw = command.params[i]
-            if (raw >= 1_000_000 && i > 0) varValue(raw) else raw
+            if (raw >= 1_000_000 && i > 0) {
+                // Picture file-from-string-var keeps the CSelf/string id so the
+                // host can read the path; numeric CSelf still collapses.
+                if (command.commandType == 150 &&
+                    command.strings.all { it.isBlank() } &&
+                    (raw in 1_600_000..1_699_999 || raw in 3_000_000..3_000_999)
+                ) {
+                    // Only empty-string picture commands use a parameter as the
+                    // filename reference. Named pictures resolve every numeric field.
+                    raw
+                } else {
+                    varValue(raw)
+                }
+            } else {
+                raw
+            }
         }
         return EventCommand(
             paramCount = command.paramCount,

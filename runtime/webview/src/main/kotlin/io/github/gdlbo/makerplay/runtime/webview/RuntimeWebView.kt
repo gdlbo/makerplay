@@ -29,6 +29,7 @@ import io.github.gdlbo.makerplay.runtime.api.CheatCatalog
 import io.github.gdlbo.makerplay.runtime.api.CheatCommand
 import io.github.gdlbo.makerplay.runtime.api.CheatFlags
 import io.github.gdlbo.makerplay.runtime.api.CheatOperation
+import io.github.gdlbo.makerplay.runtime.api.RuntimeProfile
 import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.runtime.webview.internal.assets.RuntimeScriptAssets
 import io.github.gdlbo.makerplay.runtime.webview.internal.bridge.RuntimeCheatBridge
@@ -66,9 +67,12 @@ fun RuntimeWebView(
     onCheatCatalogChanged: (CheatCatalog) -> Unit = {},
     onReadyChanged: (Boolean) -> Unit = {},
     runtimeSettings: RuntimeSettings = RuntimeSettings(),
+    runtimeProfile: RuntimeProfile? = null,
     modifier: Modifier = Modifier,
 ) {
     val lifecycleOwner = LocalLifecycleOwner.current
+    // The resolved profile is the authoritative pre-WebView settings snapshot.
+    val profileSettings = runtimeProfile?.settings ?: runtimeSettings
     val latestRendererGone = rememberUpdatedState(onRendererGone)
     val latestCloseRequested = rememberUpdatedState(onCloseRequested)
     val latestWebGlContextChanged = rememberUpdatedState(onWebGlContextChanged)
@@ -82,13 +86,13 @@ fun RuntimeWebView(
     val latestReadyChanged = rememberUpdatedState(onReadyChanged)
     val appliedCheatSequence = remember { mutableStateOf<Long?>(null) }
     val appliedCheatFlags =
-        remember(startUrl, runtimeSettings) { mutableStateOf<CheatFlags?>(null) }
-    val pageReady = remember(startUrl, runtimeSettings) { mutableStateOf(false) }
+        remember(startUrl, profileSettings) { mutableStateOf<CheatFlags?>(null) }
+    val pageReady = remember(startUrl, profileSettings) { mutableStateOf(false) }
     val cheatSessions = remember { IdentityHashMap<WebView, RuntimeCheatBridge.Session>() }
     val inputMixers = remember { IdentityHashMap<WebView, RuntimeInputMixer>() }
     val lifecycleControllers = remember { IdentityHashMap<WebView, RuntimeWebViewLifecycle>() }
     val lifecycleObservers = remember { IdentityHashMap<WebView, LifecycleEventObserver>() }
-    DisposableEffect(lifecycleOwner, startUrl, runtimeSettings) {
+    DisposableEffect(lifecycleOwner, startUrl, profileSettings) {
         onDispose {
             lifecycleObservers.values.toList().forEach(lifecycleOwner.lifecycle::removeObserver)
             lifecycleControllers.values.toList().forEach(RuntimeWebViewLifecycle::onRelease)
@@ -96,24 +100,24 @@ fun RuntimeWebView(
             lifecycleControllers.clear()
         }
     }
-    key(startUrl, runtimeSettings) {
+    key(startUrl, profileSettings, runtimeProfile) {
         AndroidView(
             modifier = modifier,
             factory = { context ->
                 val baseScripts = RuntimeScriptAssets.load(context.assets)
                 val runtimeScripts = baseScripts.copy(
-                    layout = runtimeSettings.configScript(baseScripts.disableVibration) + baseScripts.layout,
+                    layout = profileSettings.configScript(baseScripts.disableVibration) + baseScripts.layout,
                     steamCompatibility = baseScripts.steamCompatibility.takeIf {
-                        runtimeSettings.modules.steamCompatibility
+                        profileSettings.modules.steamCompatibility
                     }.orEmpty(),
                     legacyCompatibility = baseScripts.legacyCompatibility.takeIf {
-                        runtimeSettings.legacyCompatibility
+                        profileSettings.legacyCompatibility
                     }.orEmpty(),
                     performanceOptimization = baseScripts.performanceOptimization.takeIf {
-                        runtimeSettings.modules.performanceOptimization
+                        profileSettings.modules.performanceOptimization
                     }.orEmpty(),
                     frameRate = baseScripts.frameRate.takeIf {
-                        runtimeSettings.fpsLimit != null || runtimeSettings.showFpsCounter
+                        profileSettings.fpsLimit != null || profileSettings.showFpsCounter
                     }.orEmpty(),
                 )
                 val assetLoader = WebViewAssetLoader.Builder()
@@ -124,7 +128,7 @@ fun RuntimeWebView(
                     isFocusableInTouchMode = true
                     setBackgroundColor(Color.BLACK)
                     setLayerType(
-                        if (runtimeSettings.webGlEnabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_SOFTWARE,
+                        if (profileSettings.webGlEnabled) View.LAYER_TYPE_HARDWARE else View.LAYER_TYPE_SOFTWARE,
                         null,
                     )
                     setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_IMPORTANT, true)
@@ -180,7 +184,7 @@ fun RuntimeWebView(
                             memoryClassMb = activityManager?.memoryClass ?: 512,
                             lowRamDevice = activityManager?.isLowRamDevice == true,
                         )
-                        if (runtimeSettings.modules.limitWorkerCount) {
+                        if (profileSettings.modules.limitWorkerCount) {
                             WebViewCompat.addDocumentStartJavaScript(
                                 this,
                                 RuntimeWorkerCompatibility.workerBudgetScript(
@@ -243,7 +247,7 @@ fun RuntimeWebView(
                         latestPhysicalInputChanged.value(snapshot)
                         inputMixer?.setPhysical(snapshot)
                     }
-                    if (runtimeSettings.modules.diagnosticsBridge) {
+                    if (profileSettings.modules.diagnosticsBridge) {
                         RuntimeDiagnosticsBridge.install(
                             this,
                             allowedOrigin,
@@ -252,7 +256,7 @@ fun RuntimeWebView(
                             latestWebGlContextChanged.value(event == WebGlContextEvent.RESTORED)
                         }
                     }
-                    val cheatSession = if (runtimeSettings.modules.cheatBridge) {
+                    val cheatSession = if (profileSettings.modules.cheatBridge) {
                         RuntimeCheatBridge.install(
                             this,
                             allowedOrigin,
@@ -280,13 +284,13 @@ fun RuntimeWebView(
                         pause = {
                             inputMixer?.setPlatformActive(false)
                             clearPhysicalInput()
-                            if (runtimeSettings.pauseOnBackground) onPause()
+                            if (profileSettings.pauseOnBackground) onPause()
                             audioFocus.abandon()
                         },
                         resume = {
                             inputMixer?.setPlatformActive(true)
                             audioFocus.request()
-                            if (runtimeSettings.pauseOnBackground) onResume()
+                            if (profileSettings.pauseOnBackground) onResume()
                         },
                         release = {
                             clearPhysicalInput()

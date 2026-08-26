@@ -9,6 +9,7 @@ import io.github.gdlbo.makerplay.runtime.api.RuntimeScaleMode
 import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.vfs.GameFileIndex
 import io.github.gdlbo.makerplay.vfs.GameFileSystem
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -32,6 +33,7 @@ class WebViewRuntimeBackendTest {
         assertEquals(WebViewRuntimeBackend.ASSET_ORIGIN, session.allowedOrigin)
         assertEquals(WebViewRuntimeBackend.SMOKE_URL, session.startUrl)
         assertEquals(settings, session.settings)
+        assertEquals(settings, session.runtimeProfile.settings)
     }
 
     @Test
@@ -155,6 +157,25 @@ class WebViewRuntimeBackendTest {
     }
 
     @Test
+    fun preparesUnnormalizedWwwDeploymentWithExistingMvLaunchContract() {
+        val root = fixtureRoot(
+            RpgMakerFixtureGenerator.mvInWww() + ("www/js/rpg_managers.js" to byteArrayOf(1)),
+        )
+        try {
+            val backend = WebViewRuntimeBackend(NoOpLogger) { root }
+            val session = runSuspend { backend.prepare(LaunchRequest("game-1")) }
+
+            assertTrue(session.startUrl.endsWith("/asset/index.html"))
+            assertEquals(io.github.gdlbo.makerplay.runtime.api.DeploymentLayout.WWW, session.runtimeProfile.fingerprint.deploymentLayout)
+            assertEquals(RuntimeEngineMode.MV, session.runtimeProfile.selectedEngine)
+            assertTrue(session.runtimeProfile.useMvNativeSaves)
+            runSuspend { backend.destroySession(session.sessionId) }
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun nativeSaveBridgeDetectsMzAndMvManagers() {
         val mzRoot =
             fixtureRoot(RpgMakerFixtureGenerator.mz() + ("js/rmmz_managers.js" to byteArrayOf(1)))
@@ -275,16 +296,7 @@ class WebViewRuntimeBackendTest {
         }
     }
 
-    private fun <T> runSuspend(block: suspend () -> T): T {
-        var outcome: Result<T>? = null
-        block.startCoroutine(object : Continuation<T> {
-            override val context = EmptyCoroutineContext
-            override fun resumeWith(result: Result<T>) {
-                outcome = result
-            }
-        })
-        return outcome!!.getOrThrow()
-    }
+    private fun <T> runSuspend(block: suspend () -> T): T = runBlocking { block() }
 
     private fun fixtureRoot(files: Map<String, ByteArray>): File =
         Files.createTempDirectory("makerplay-runtime-kind").toFile().also { root ->

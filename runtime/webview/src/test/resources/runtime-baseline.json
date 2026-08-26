@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "backend": "webview",
+  "prepare": {
+    "engineDetection": ["rmmz_managers.js", "rpg_managers.js", "js/game.js"],
+    "saveBridges": ["mz", "mv"],
+    "origin": "per-game https://*.game.local"
+  },
+  "documentStartOrder": [
+    "common-js",
+    "layout",
+    "steam-compatibility",
+    "legacy-compatibility",
+    "frame-rate",
+    "frame-resilience",
+    "performance-optimization",
+    "input-bridge",
+    "diagnostics-bridge",
+    "cheat-bridge",
+    "save-bridge"
+  ],
+  "settings": [
+    "engineMode", "webGlEnabled", "legacyCompatibility", "ignoreMissingFiles",
+    "fpsLimit", "showFpsCounter", "pauseOnBackground", "module settings"
+  ],
+  "fallbacks": ["case-folded VFS", "missing resource fallback", "document-start feature fallback"],
+  "defaultModules": {
+    "steamCompatibility": true,
+    "limitWorkerCount": false,
+    "performanceOptimization": true,
+    "cheatBridge": true,
+    "diagnosticsBridge": true
+  }
+}
