@@ -26,6 +26,10 @@ class WolfPictureState {
         val pattern: Int = 0,
         /** When true, [fileName] is display text rather than an image path. */
         val isText: Boolean = false,
+        /** Built-in &lt;SQUARE&gt; fill size/color; null for normal pictures. */
+        val fillWidth: Int? = null,
+        val fillHeight: Int? = null,
+        val fillColor: Int? = null,
     )
 
     private val slots = LinkedHashMap<Int, Picture>()
@@ -83,7 +87,8 @@ class WolfPictureState {
             )
         val isText = type == 2 || type == 4 || (fileName != null && !looksLikePath)
         return when {
-            process == 2 || (process == 0 && fileName == null && !isText) -> {
+            // Process 2 is the documented erase; some fade scripts also send 3.
+            process == 2 || process == 3 || (process == 0 && fileName == null && !isText) -> {
                 if (slots.remove(slot) != null) {
                     revision++
                     true
@@ -110,6 +115,17 @@ class WolfPictureState {
                 val x = command.params.getOrNull(7) ?: command.params.getOrNull(2) ?: 0
                 val y = command.params.getOrNull(8) ?: command.params.getOrNull(3) ?: 0
                 val opacity = normalizeOpacity(command.params.getOrNull(6), 255)
+                val square = isSquarePrimitive(fileName)
+                val fillW = if (square) command.params.getOrNull(3)?.takeIf { it > 0 } else null
+                val fillH = if (square) command.params.getOrNull(4)?.takeIf { it > 0 } else null
+                val fillColor = if (square) {
+                    val r = command.params.getOrNull(command.params.size - 3)?.coerceIn(0, 255) ?: 0
+                    val g = command.params.getOrNull(command.params.size - 2)?.coerceIn(0, 255) ?: 0
+                    val b = command.params.getOrNull(command.params.size - 1)?.coerceIn(0, 255) ?: 0
+                    (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+                } else {
+                    null
+                }
                 slots[slot] = Picture(
                     slot = slot,
                     fileName = fileName,
@@ -118,6 +134,9 @@ class WolfPictureState {
                     centerOrigin = isCenterOrigin(command.params),
                     opacity = opacity,
                     isText = true,
+                    fillWidth = fillW,
+                    fillHeight = fillH,
+                    fillColor = fillColor,
                 )
                 revision++
                 true
@@ -202,5 +221,9 @@ class WolfPictureState {
             val value = raw ?: return fallback.coerceIn(0, 255)
             return if (value in 0..255) value else fallback.coerceIn(0, 255)
         }
+
+        internal fun isSquarePrimitive(fileName: String): Boolean =
+            fileName.equals("<SQUARE>", ignoreCase = true) ||
+                fileName.equals("SQUARE", ignoreCase = true)
     }
 }

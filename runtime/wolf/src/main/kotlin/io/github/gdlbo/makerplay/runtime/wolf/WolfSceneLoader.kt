@@ -43,6 +43,7 @@ object WolfSceneLoader {
         pictures: List<WolfPictureState.Picture> = emptyList(),
         messageText: String? = null,
         choiceOptions: List<String> = emptyList(),
+        selectedChoice: Int = 0,
     ): StaticFrame {
         val tileset = tilesets.tilesets.getOrNull(map.tilesetId)
             ?: throw WolfFormatException("Map references unknown tileset ${map.tilesetId}")
@@ -62,6 +63,9 @@ object WolfSceneLoader {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+        // Empty boot/transition maps are all-zero; keep a dim fill so picture
+        // and choice layers remain distinguishable from a failed frame.
+        canvas.drawColor(0xFF101018.toInt())
 
         // Camera follows the hero on maps larger than the game window.
         val mapPixelW = map.width * tileSize
@@ -149,19 +153,65 @@ object WolfSceneLoader {
                 val cellH = (decoded.height / rows).coerceAtLeast(1)
                 val cells = cols * rows
                 val pattern = picture.pattern.coerceIn(0, cells - 1)
-                val srcX = (pattern % cols) * cellW
-                val srcY = (pattern / cols) * cellH
-                val originX = if (picture.centerOrigin) picture.x - cellW / 2 else picture.x
-                val originY = if (picture.centerOrigin) picture.y - cellH / 2 else picture.y
-                val picX = originX.coerceIn(-cellW, width)
-                val picY = originY.coerceIn(-cellH, height)
                 paint.alpha = picture.opacity.coerceIn(0, 255)
-                canvas.drawBitmap(
-                    decoded,
-                    Rect(srcX, srcY, srcX + cellW, srcY + cellH),
-                    Rect(picX, picY, picX + cellW, picY + cellH),
-                    paint,
-                )
+                if (cols == 2) {
+                    // Title menus often pack label|cursor into two columns and
+                    // encode selection as pattern = index*2+1, then +1 when
+                    // selected (even). Draw the label cell always; place the
+                    // cursor column to the right only for the selected row.
+                    val selected = pattern > 0 && pattern % 2 == 0
+                    val row = if (selected) {
+                        (pattern / 2 - 1).coerceIn(0, rows - 1)
+                    } else {
+                        (pattern / 2).coerceIn(0, rows - 1)
+                    }
+                    val originY = if (picture.centerOrigin) picture.y - cellH / 2 else picture.y
+                    val picY = originY.coerceIn(-cellH, height)
+                    val labelX = if (picture.centerOrigin) picture.x - cellW / 2 else picture.x
+                    canvas.drawBitmap(
+                        decoded,
+                        Rect(0, row * cellH, cellW, row * cellH + cellH),
+                        Rect(
+                            labelX.coerceIn(-cellW, width),
+                            picY,
+                            labelX.coerceIn(-cellW, width) + cellW,
+                            picY + cellH,
+                        ),
+                        paint,
+                    )
+                    if (selected) {
+                        val barX = labelX + cellW
+                        canvas.drawBitmap(
+                            decoded,
+                            Rect(cellW, row * cellH, cellW * 2, row * cellH + cellH),
+                            Rect(
+                                barX.coerceIn(-cellW, width),
+                                picY,
+                                barX.coerceIn(-cellW, width) + cellW,
+                                picY + cellH,
+                            ),
+                            paint,
+                        )
+                    }
+                    android.util.Log.d(
+                        "WolfRuntime",
+                        "pic2 slot=${picture.slot} pat=$pattern row=$row sel=$selected " +
+                            "cell=${cellW}x${cellH} at=${picture.x},${picture.y}",
+                    )
+                } else {
+                    val srcX = (pattern % cols) * cellW
+                    val srcY = (pattern / cols) * cellH
+                    val originX = if (picture.centerOrigin) picture.x - cellW / 2 else picture.x
+                    val originY = if (picture.centerOrigin) picture.y - cellH / 2 else picture.y
+                    val picX = originX.coerceIn(-cellW, width)
+                    val picY = originY.coerceIn(-cellH, height)
+                    canvas.drawBitmap(
+                        decoded,
+                        Rect(srcX, srcY, srcX + cellW, srcY + cellH),
+                        Rect(picX, picY, picX + cellW, picY + cellH),
+                        paint,
+                    )
+                }
                 paint.alpha = 255
             }
             // Hero/cursor above pictures so title-map selection stays visible
@@ -198,21 +248,31 @@ object WolfSceneLoader {
             // renders above the Compose window, so in-frame is the only
             // reliable presentation layer.
             if (choiceOptions.isNotEmpty()) {
-                val boxPaint = Paint().apply { color = 0xB4000000.toInt() }
+                val boxPaint = Paint().apply { color = 0xDD101820.toInt() }
+                val borderPaint = Paint().apply {
+                    color = 0xFFE8D080.toInt()
+                    style = Paint.Style.STROKE
+                    strokeWidth = 3f
+                }
                 val optPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = 0xFFFFFFFF.toInt()
-                    textSize = 26f
+                    textSize = 30f
                 }
-                val lineH = 34f
-                val boxW = 320f
-                val boxH = choiceOptions.size * lineH + 20f
-                // Anchor near lower-center so letterboxed title frames keep the
-                // window inside the visible game rect.
-                val boxX = ((width - boxW) / 2f).coerceAtLeast(0f)
-                val boxY = (height - boxH - 48f).coerceAtLeast(0f)
+                val selPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0xFFFFE08A.toInt()
+                    textSize = 30f
+                }
+                val lineH = 40f
+                val boxW = minOf(width * 0.72f, 560f)
+                val boxH = choiceOptions.size * lineH + 28f
+                val boxX = ((width - boxW) / 2f).coerceAtLeast(16f)
+                val boxY = (height - boxH - 64f).coerceAtLeast(16f)
                 canvas.drawRect(boxX, boxY, boxX + boxW, boxY + boxH, boxPaint)
+                canvas.drawRect(boxX, boxY, boxX + boxW, boxY + boxH, borderPaint)
                 choiceOptions.forEachIndexed { idx, option ->
-                    canvas.drawText(option, boxX + 14f, boxY + 26f + idx * lineH, optPaint)
+                    val marker = if (idx == selectedChoice) "> " else "  "
+                    val paint = if (idx == selectedChoice) selPaint else optPaint
+                    canvas.drawText(marker + option, boxX + 18f, boxY + 32f + idx * lineH, paint)
                 }
             }
             if (!messageText.isNullOrEmpty()) {
@@ -285,6 +345,23 @@ object WolfSceneLoader {
         width: Int,
         height: Int,
     ) {
+        if (WolfPictureState.isSquarePrimitive(picture.fileName)) {
+            val fillW = (picture.fillWidth ?: width).coerceIn(1, width * 2)
+            val fillH = (picture.fillHeight ?: height).coerceIn(1, height * 2)
+            val color = picture.fillColor ?: 0xFF000000.toInt()
+            val rectPaint = Paint().apply {
+                this.color = color
+                alpha = picture.opacity.coerceIn(0, 255)
+            }
+            val left = picture.x.toFloat()
+            val top = picture.y.toFloat()
+            canvas.drawRect(left, top, left + fillW, top + fillH, rectPaint)
+            return
+        }
+        android.util.Log.d(
+            "WolfRuntime",
+            "drawText raw=${picture.fileName.take(60)} at=${picture.x},${picture.y} center=${picture.centerOrigin}",
+        )
         val cleaned = picture.fileName
             .replace(Regex("""\\f\[\d+]"""), "")
             .replace(Regex("""</?C>""", RegexOption.IGNORE_CASE), "")

@@ -51,6 +51,11 @@ class WolfInterpreter(
         /** Save/load hooks; return true when the operation succeeded. */
         fun onSave(slot: Int): Boolean = true
         fun onLoad(slot: Int): Boolean = false
+        /** 220 SaveLoad: opens the host save/load selection; script continues. */
+        fun onSaveLoad(): Boolean = true
+
+        /** Probes a runtime file (Save/..) existence for 122 GET_FILE_EXIST. */
+        fun onFileExists(name: String): Boolean = false
 
         /** Key-wait poll (123); return true once the awaited key is pressed. */
         fun onKeyWait(command: EventCommand): Boolean = true
@@ -106,6 +111,8 @@ class WolfInterpreter(
 
     private val frames = ArrayDeque<Frame>()
     private var blocking: Blocking? = null
+    private var lastLoggedBlocking: String? = null
+    private var blockHoldTicks: Int = 0
     var finished: Boolean = true
         private set
 
@@ -121,6 +128,8 @@ class WolfInterpreter(
     private val loops = ArrayDeque<LoopMarker>()
 
     private companion object {
+        private const val DEBUG_TAG = "WolfRuntime"
+
         /** Generous ceiling on commands per tick; real events finish far below this. */
         const val MAX_COMMANDS_PER_TICK = 1_000_000
 
@@ -177,8 +186,10 @@ class WolfInterpreter(
                 val remaining = current.remainingTicks - 1
                 if (remaining <= 0) {
                     blocking = null
+                    lastLoggedBlocking = null
                 } else {
                     blocking = current.copy(remainingTicks = remaining)
+                    logBlocking("Wait($remaining)")
                     return
                 }
             }
@@ -189,12 +200,31 @@ class WolfInterpreter(
                     if (target != null) variables[decodeVariableRef(target)] = key
                     host.onKeyConsumed()
                     blocking = null
-                } else return
+                    lastLoggedBlocking = null
+                    debugLog("KeyWait resolved key=$key")
+                } else {
+                    logBlocking("KeyWait params=${current.command.params.toList()}")
+                    return
+                }
             }
             is Blocking.MoveWait -> {
-                if (host.onMoveFinished()) blocking = null else return
+                if (host.onMoveFinished()) {
+                    blocking = null
+                    lastLoggedBlocking = null
+                    debugLog("MoveWait resolved")
+                } else {
+                    logBlocking("MoveWait")
+                    return
+                }
             }
-            is Blocking.Message, is Blocking.Choices -> return
+            is Blocking.Message -> {
+                logBlocking("Message")
+                return
+            }
+            is Blocking.Choices -> {
+                logBlocking("Choices(${current.options.size})")
+                return
+            }
             null -> Unit
         }
         if (blocking != null) return // message/choice still unresolved
@@ -289,7 +319,29 @@ class WolfInterpreter(
             126 -> host.onBanInput(command.params.firstOrNull() != 0)
             130 -> teleport(command)
             140 -> host.onSound(command)
-            150 -> host.onPicture(resolveCommandRefs(command))
+            150 -> {
+                val resolved = resolveCommandRefs(command)
+                // File-from-string forms keep a CSelf/string id in the raw
+                // params; copy that path into strings before the host applies.
+                if (command.strings.all { it.isBlank() }) {
+                    val strRef = command.params.drop(1).firstOrNull {
+                        it in 1_600_000..1_699_999 || it in 3_000_000..3_000_999
+                    }
+                    if (strRef != null) {
+                        val key = decodeStringRef(strRef)
+                        val path = strings[key].orEmpty()
+                        if (path.isNotBlank()) {
+                            host.onPicture(resolved.copy(strings = listOf(path)))
+                        } else {
+                            host.onPicture(resolved)
+                        }
+                    } else {
+                        host.onPicture(resolved)
+                    }
+                } else {
+                    host.onPicture(resolved)
+                }
+            }
             151, 160, 161, 162 -> host.onScreenEffect(command)
             170 -> beginLoop(command, remaining = null)
             171 -> breakLoop()
@@ -319,15 +371,9 @@ class WolfInterpreter(
             212 -> Unit // label marker: resolved by 213 scans
             213 -> jumpToLabel(command)
             210, 211 -> callCommonEventById(command)
-            220 -> host.onSave(saveSlot(command))
-            221 -> {
-                // Full slot-load vs variable-from-file share this opcode.
-                // Title/system scripts use the file-field form
-                // ({destVar, stringFileRef, ...}); treating those as slot loads
-                // restores stale state and skips the title presentation branch.
-                if (isFullSlotLoad(command)) host.onLoad(saveSlot(command))
-            }
-            222 -> host.onSave(saveSlot(command))
+            220 -> host.onSaveLoad()
+            221 -> host.onLoad(saveLoadSlot(command))
+            222 -> host.onSave(saveLoadSlot(command))
             230, 231 -> Unit // move-during-event flag: engine-level default
             240, 242 -> host.onChipChange(command)
             250, 251, 252, 255 -> host.onDatabase(command)
@@ -620,7 +666,9 @@ class WolfInterpreter(
                 if (caseIndex == matchedCases) {
                     val body = frame.commands.subList(cursor, endPc).toList()
                     frame.pc = branchEndAfter(frame, endPc)
-                    if (body.isNotEmpty()) frames.addLast(Frame(body, root = true))
+                    // Case bodies are nested frames; root=true would make 172
+                    // BreakEvent wipe the whole interpreter (title/chapter CEs).
+                    if (body.isNotEmpty()) frames.addLast(Frame(body, root = false))
                     return
                 }
                 caseIndex++
@@ -771,8 +819,17 @@ class WolfInterpreter(
     private fun setString(command: EventCommand) {
         val p = command.params
         if (p.isEmpty()) return
-        val value = command.strings.firstOrNull().orEmpty()
-        strings[decodeStringRef(p[0])] = value
+        val expanded = host.expandText(command.strings.firstOrNull().orEmpty())
+        if (expanded.startsWith("<<GET_FILE_EXIST>>")) {
+            val file = expanded.removePrefix("<<GET_FILE_EXIST>>").trim()
+            strings[decodeStringRef(p[0])] = if (host.onFileExists(file)) "1" else "0"
+            return
+        }
+        if (expanded.startsWith("<<DEL_FILE>>")) {
+            strings[decodeStringRef(p[0])] = "0"
+            return
+        }
+        strings[decodeStringRef(p[0])] = expanded
     }
 
     /**
@@ -784,6 +841,7 @@ class WolfInterpreter(
     private fun decodeVariableRef(raw: Int): Int = when (raw) {
         in 2_000_000..2_999_999 -> raw - 2_000_000
         in 8_000_000..8_999_999 -> -(raw - 8_000_000) - 1 // system vars: negative ids
+        in 9_000_000..9_999_999 -> -(raw - 9_000_000) - 1_000_000 // 9M system vars
         // Game-state/UI system variables (1.6M range) used by menu scripts;
         // mapped below zero so they never collide with normal variables.
         in 1_600_000..1_699_999 -> -1_000_000 - (raw - 1_600_000)
@@ -827,16 +885,51 @@ class WolfInterpreter(
             rawId in 500_000..599_999 -> rawId - 500_000
             else -> rawId
         }
-        val body = commonEvents[id] ?: return
+        val body = commonEvents[id]
+        if (body == null) {
+            debugLog("CE id miss raw=$rawId id=$id")
+            return
+        }
+        val args = numericCallArgs(command.params, argCountIndex = 1)
+        debugLog("CE id hit id=$id args=${args.toList()} depth=${frames.size}")
         // 210/211: [id, argCount, arg0..]
-        pushCommonEventFrame(body, numericArgs = numericCallArgs(command.params, argCountIndex = 1))
+        pushCommonEventFrame(body, numericArgs = args)
     }
 
     private fun callCommonEventByName(command: EventCommand) {
         val name = command.strings.firstOrNull() ?: return
-        val body = commonEventsByName[name] ?: return
+        val body = commonEventsByName[name]
+        if (body == null) {
+            debugLog("CE name miss name=$name")
+            return
+        }
         // 300: [flags, argCount, arg0..] — wolfrpg-map-parser number_arguments.
-        pushCommonEventFrame(body, numericArgs = numericCallArgs(command.params, argCountIndex = 1))
+        val args = numericCallArgs(command.params, argCountIndex = 1)
+        // Optional return variable sits immediately after the numeric args.
+        // Title scripts test it after New Game; clear so a stale menu value
+        // cannot force an immediate return-to-title.
+        val returnRef = command.params.getOrNull(2 + args.size)
+        if (returnRef != null && returnRef >= 1_000_000) {
+            variables[decodeVariableRef(returnRef)] = 0
+        }
+        debugLog("CE name hit name=$name args=${args.toList()} ret=$returnRef depth=${frames.size}")
+        pushCommonEventFrame(body, numericArgs = args)
+    }
+
+    private fun logBlocking(label: String) {
+        // Ignore Wait countdown churn; only the blocking kind matters for stalls.
+        val kind = if (label.startsWith("Wait(")) "Wait" else label
+        if (kind != lastLoggedBlocking) {
+            lastLoggedBlocking = kind
+            blockHoldTicks = 0
+            debugLog("block $label")
+        } else if (++blockHoldTicks == 120 || blockHoldTicks == 600) {
+            debugLog("block still $label ticks=$blockHoldTicks")
+        }
+    }
+
+    private fun debugLog(message: String) {
+        android.util.Log.i(DEBUG_TAG, message)
     }
 
     /**
@@ -859,7 +952,9 @@ class WolfInterpreter(
 
     /** Reads [argCount] values after [argCountIndex] from a 210/300 param list. */
     private fun numericCallArgs(params: IntArray, argCountIndex: Int): IntArray {
-        val count = params.getOrNull(argCountIndex)?.coerceIn(0, 20) ?: return IntArray(0)
+        // wolfrpg-map-parser ArgumentCount: low nibble = number args, high = string args.
+        // Some dumps pack extra option bits into the same word (e.g. 0x01000001).
+        val count = (params.getOrNull(argCountIndex) ?: return IntArray(0)) and 0x0F
         if (count == 0) return IntArray(0)
         val start = argCountIndex + 1
         if (start >= params.size) return IntArray(0)
@@ -911,6 +1006,32 @@ class WolfInterpreter(
         return if (raw >= 1_000_000) varValue(raw) else raw
     }
 
+    /**
+     * Resolves a SaveGame/LoadGame slot. Named files (Save/AUTO{n}.sav,
+     * Save/Manual{n}.sav) store the trailing number in a string var at
+     * params[1]; System.sav maps to slot 0. Numeric slots keep their value.
+     */
+    private fun saveLoadSlot(command: EventCommand): Int {
+        val p = command.params
+        val filenameRef = p.getOrNull(1)
+        if (filenameRef != null && filenameRef >= 1_000_000) {
+            val name = strings[decodeStringRef(filenameRef)]
+                ?: strings[decodeVariableRef(filenameRef)]
+                .orEmpty()
+            if (name.isNotBlank()) {
+                val digits = Regex("""(\d+)\.sav""")
+                    .find(name)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                if (digits != null) {
+                    return digits.toIntOrNull()?.coerceIn(0, 99) ?: 0
+                }
+                if (name.contains("System")) return 0
+            }
+        }
+        return saveSlot(command)
+    }
+
     /** True when 221 should load a whole save slot rather than one file field. */
     private fun isFullSlotLoad(command: EventCommand): Boolean {
         val p = command.params
@@ -934,22 +1055,9 @@ class WolfInterpreter(
     private fun resolveCommandRefs(command: EventCommand): EventCommand {
         val resolved = IntArray(command.params.size) { i ->
             val raw = command.params[i]
-            if (raw >= 1_000_000 && i > 0) {
-                // Picture file-from-string-var keeps the CSelf/string id so the
-                // host can read the path; numeric CSelf still collapses.
-                if (command.commandType == 150 &&
-                    command.strings.all { it.isBlank() } &&
-                    (raw in 1_600_000..1_699_999 || raw in 3_000_000..3_000_999)
-                ) {
-                    // Only empty-string picture commands use a parameter as the
-                    // filename reference. Named pictures resolve every numeric field.
-                    raw
-                } else {
-                    varValue(raw)
-                }
-            } else {
-                raw
-            }
+            // Always resolve variable refs for slots/geometry. File-from-string
+            // picture paths are recovered in the host from the original params.
+            if (raw >= 1_000_000 && i > 0) varValue(raw) else raw
         }
         return EventCommand(
             paramCount = command.paramCount,

@@ -288,7 +288,9 @@ private fun VirtualButton(
     ) {
         Box(
             contentAlignment = Alignment.Center,
-            modifier = Modifier.padding(horizontal = 4.dp),
+            // Circles are already square-fitted; extra horizontal padding makes
+            // right-side face buttons look uneven on tall portrait canvases.
+            modifier = if (circular) Modifier else Modifier.padding(horizontal = 4.dp),
         ) {
             Text(
                 text = controlDisplayLabel(control),

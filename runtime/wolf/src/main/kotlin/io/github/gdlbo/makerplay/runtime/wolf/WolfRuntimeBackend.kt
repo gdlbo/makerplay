@@ -199,6 +199,7 @@ class WolfRuntimeBackend(
                 GameAction.LEFT in pressed -> 4
                 GameAction.RIGHT in pressed -> 6
                 GameAction.SHIFT in pressed -> 7
+                GameAction.MENU in pressed -> 17
                 else -> 0
             }
             currentWolfKey.set(wolfKey)
@@ -297,6 +298,7 @@ class WolfRuntimeBackend(
                                 GameAction.LEFT -> 4
                                 GameAction.RIGHT -> 6
                                 GameAction.SHIFT -> 7
+                                GameAction.MENU -> 17
                                 else -> 0
                             }
                             if (action == GameAction.OK) {
@@ -393,9 +395,14 @@ class WolfRuntimeBackend(
                 var interpreter: WolfInterpreter? = null
                 // Which trigger owns [interpreter]; parallel pages must not hide the hero.
                 var activeTrigger: WolfGameEngine.Trigger? = null
+                var choiceIndex = 0
+                var choiceArmed = false
                 // Persisted machine state: saves snapshot the live interpreter,
                 // loads seed every subsequently created interpreter.
                 val machineVariables = HashMap<Int, Int>()
+                // Common 9M system vars used by fade squares for screen size.
+                machineVariables[-1_000_116] = project.screenWidth
+                machineVariables[-1_000_117] = project.screenHeight
                 val machineStrings = HashMap<Int, String>()
                 val startTile = titleMenuStartTile(initialMap)
                 val engine = WolfGameEngine(
@@ -468,6 +475,8 @@ class WolfRuntimeBackend(
                         ui.message = text
                     }
                     override fun onChoices(options: List<String>) {
+                        choiceIndex = 0
+                        choiceArmed = false
                         pendingConfirmEdges.set(0)
                         latchedWolfKey.set(0)
                         latchedWolfKeyTtl.set(0)
@@ -493,13 +502,17 @@ class WolfRuntimeBackend(
                         latchedWolfKeyTtl.set(0)
                     }
                     override fun onDatabase(command: EventCommand) {
-                        ensureDatabase().execute(
-                            command,
-                            readNumber = ::readNumberRef,
-                            writeNumber = ::writeNumberRef,
-                            readString = ::readStringRef,
-                            writeString = ::writeStringRef,
-                        )
+                        runCatching {
+                            ensureDatabase().execute(
+                                command,
+                                readNumber = ::readNumberRef,
+                                writeNumber = ::writeNumberRef,
+                                readString = ::readStringRef,
+                                writeString = ::writeStringRef,
+                            )
+                        }.onFailure {
+                            android.util.Log.e("WolfRuntime", "database op failed code=${command.commandType}", it)
+                        }
                     }
                     override fun onTeleport(mapId: Int, tileX: Int, tileY: Int) {
                         // WOLF applies a move-place immediately: the map and
@@ -507,6 +520,10 @@ class WolfRuntimeBackend(
                         // event continues on the new map (fade/inits run after).
                         val target = resolveMapPath(source, mapId)
                         val bytes = target?.let { runCatching { source.read(it) }.getOrNull() }
+                        android.util.Log.i(
+                            "WolfRuntime",
+                            "teleport mapId=$mapId pos=$tileX,$tileY path=$target ok=${bytes != null}",
+                        )
                         if (target != null && bytes != null) {
                             val nextMap = MapFile.parse(bytes)
                             map = nextMap
@@ -522,14 +539,38 @@ class WolfRuntimeBackend(
                             engine.queueTransfer(mapId, tileX, tileY)
                         }
                     }
+                    override fun onSaveLoad(): Boolean {
+                        // 220 SaveLoad opens the save/load selection; the
+                        // consuming script then performs 221/222 itself, so no
+                        // host action is required here.
+                        return true
+                    }
+
+                    override fun onFileExists(name: String): Boolean {
+                        val cleaned = name.removePrefix("/").replace("\\", "/")
+                        if (cleaned.isEmpty()) return false
+                        // Save scripts probe Data/Save/<name> for slots; also
+                        // check the host saves root for the same-relative file.
+                        val saveRel = cleaned.removePrefix("Save/").removePrefix("Data/")
+                        val dataPath = "Data/Save/$saveRel"
+                        if (runCatching { source.has(dataPath) }.getOrDefault(false)) return true
+                        val root = stored.gameRoot
+                        val dirs = listOf(
+                            File(root, "Data/Save"),
+                            File(root, "Save"),
+                            File(root, "MakerPlaySaves"),
+                        )
+                        return dirs.any { File(it, saveRel).isFile }
+                    }
+
                     override fun onSave(slot: Int): Boolean {
                         return runCatching {
                             interpreter?.let {
                                 machineVariables.clear(); machineVariables.putAll(it.variables)
                                 machineStrings.clear(); machineStrings.putAll(it.strings)
                             }
-                            saveManager.save(
-                                "slot-$slot",
+                            val ok = saveManager.save(
+                                slotSaveName(slot),
                                 WolfSaveFormat.GameState(
                                     title = project.title,
                                     mapPath = mapPath,
@@ -539,25 +580,55 @@ class WolfRuntimeBackend(
                                     strings = HashMap(machineStrings),
                                 ),
                             )
+                            // Mirror an existence marker into the game's Data/Save
+                            // so its own load screen probes pass (AUTO{n}/Manual{n}).
+                            runCatching {
+                                val saveDir = File(stored.gameRoot, "Data/Save")
+                                saveDir.mkdirs()
+                                val name = when (slot) {
+                                    0 -> "System.sav"
+                                    else -> "AUTO$slot.sav"
+                                }
+                                File(saveDir, name).writeBytes(byteArrayOf(0))
+                            }
+                            ok
                         }.isSuccess
                     }
 
                     override fun onLoad(slot: Int): Boolean {
                         return runCatching {
-                            val state = saveManager.load("slot-$slot")
+                            android.util.Log.i("WolfRuntime", "load slot=$slot path=${stateOf(slot)?.mapPath}")
+                            val state = saveManager.load(slotSaveName(slot))
                             machineVariables.clear(); machineVariables.putAll(state.variables)
                             machineStrings.clear(); machineStrings.putAll(state.strings)
+                            // Restore the observed hero position onto the engine.
                             if (source.has(state.mapPath)) {
                                 map = MapFile.parse(source.read(state.mapPath))
                                 mapPath = state.mapPath
+                                engine.replaceMap(map, state.tileX, state.tileY)
                             }
+                            forceCompose = true
                             true
+                        }.onFailure {
+                            android.util.Log.e("WolfRuntime", "load slot=$slot failed", it)
                         }.getOrDefault(false)
                     }
+
+                    private fun stateOf(slot: Int): WolfSaveFormat.GameState? =
+                        runCatching { saveManager.load(slotSaveName(slot)) }.getOrNull()
+
+                    private fun slotSaveName(slot: Int): String =
+                        if (slot == 0) "slot-0" else "slot-$slot"
 
                     override fun onPicture(command: EventCommand) {
                         // File-from-string-var forms ship an empty strings[] and
                         // point at a CSelf/string ref in params (title_back etc).
+                        android.util.Log.d(
+                            "WolfRuntime",
+                            "onPicture slotCand=${command.params.getOrNull(1)} " +
+                                "str=${command.strings.firstOrNull()?.take(40)} " +
+                                "p0=${command.params.getOrNull(0)}",
+                        )
                         var resolved = command
                         if (command.strings.all { it.isBlank() }) {
                             // CSelf string slots (1.6M) or low string-vars (3.0M);
@@ -603,6 +674,7 @@ class WolfRuntimeBackend(
                         // Sound command layout varies by editor revision; the
                         // first string, when present, names the media file.
                         val raw = command.strings.firstOrNull()?.takeIf { it.isNotBlank() } ?: return
+                        android.util.Log.d("WolfRuntime", "sound raw=$raw")
                         val mediaName = if (raw.contains('\\')) expandText(raw) else raw
                         if (mediaName.contains('\\')) return
                         val name = mediaName.substringAfterLast('/').removePrefix("/")
@@ -630,10 +702,47 @@ class WolfRuntimeBackend(
                                 }
                             }
                             is WolfInterpreter.Blocking.Choices -> {
-                                if (confirmEdges() || latchedWolfKey.get() != 0) {
-                                    latchedWolfKey.set(0)
-                                    latchedWolfKeyTtl.set(0)
-                                    active.choose(0)
+                                // Consume a stale confirm latch from the prior
+                                // menu so New Game does not auto-pick option 0.
+                                val key = latchedWolfKey.get()
+                                when (key) {
+                                    8 -> { // up
+                                        latchedWolfKey.set(0)
+                                        latchedWolfKeyTtl.set(0)
+                                        choiceIndex = (choiceIndex - 1).coerceAtLeast(0)
+                                        forceCompose = true
+                                    }
+                                    2 -> { // down
+                                        latchedWolfKey.set(0)
+                                        latchedWolfKeyTtl.set(0)
+                                        choiceIndex =
+                                            (choiceIndex + 1).coerceAtMost(blocking.options.size - 1)
+                                        forceCompose = true
+                                    }
+                                    10 -> { // confirm
+                                        latchedWolfKey.set(0)
+                                        latchedWolfKeyTtl.set(0)
+                                        if (choiceArmed) {
+                                            active.choose(choiceIndex)
+                                            choiceIndex = 0
+                                            choiceArmed = false
+                                        } else {
+                                            choiceArmed = true
+                                        }
+                                    }
+                                    else -> {
+                                        if (key != 0) {
+                                            latchedWolfKey.set(0)
+                                            latchedWolfKeyTtl.set(0)
+                                        }
+                                        if (confirmEdges() && choiceArmed) {
+                                            active.choose(choiceIndex)
+                                            choiceIndex = 0
+                                            choiceArmed = false
+                                        } else if (confirmEdges()) {
+                                            choiceArmed = true
+                                        }
+                                    }
                                 }
                             }
                             else -> Unit
@@ -729,9 +838,18 @@ class WolfRuntimeBackend(
                     val choiceOpts = (interpreter?.currentBlocking() as? WolfInterpreter.Blocking.Choices)?.options
                         ?: emptyList()
                     val key = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, heroPos?.offsetX) to
-                        pictures.version() to (msgText to choiceOpts)
+                        pictures.version() to (msgText to (choiceOpts to choiceIndex))
                     val frame = if (key != lastFrameKey || forceCompose) {
                         lastFrameKey = key
+                        if (choiceOpts.isNotEmpty() || !msgText.isNullOrEmpty() || pictures.version() % 16L == 0L) {
+                            val summary = pictures.all().joinToString { p ->
+                                "#${p.slot}:${p.fileName.take(24)} a=${p.opacity}"
+                            }
+                            android.util.Log.i(
+                                "WolfRuntime",
+                                "compose pics=${pictures.all().size} [$summary] msg=${msgText?.take(20)} choices=${choiceOpts.size}",
+                            )
+                        }
                         runCatching {
                             withContext(Dispatchers.Default) {
                                 WolfSceneLoader.composeFrame(
@@ -739,9 +857,11 @@ class WolfRuntimeBackend(
                                     pictures = pictures.all(),
                                     messageText = msgText,
                                     choiceOptions = choiceOpts,
+                                    selectedChoice = choiceIndex,
                                 )
                             }
                         }.onFailure {
+                            android.util.Log.e("WolfRuntime", "compose failed: ${it.message}", it)
                             (stored.logger ?: logger).error(
                                 "runtime.loop_frame_failed",
                                 mapOf("error" to (it.message ?: "unknown")),
