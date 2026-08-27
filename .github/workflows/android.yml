@@ -29,7 +29,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          submodules: recursive
 
       - name: Make Gradle Wrapper executable
         run: chmod +x gradlew
@@ -56,6 +55,9 @@ jobs:
         with:
           cache-cleanup: on-success
           cache-read-only: ${{ github.event_name == 'pull_request' }}
+
+      - name: Check out submodules
+        run: git submodule update --init --recursive --depth=1
 
       - name: Build, verify, and assemble release
         run: ./gradlew --no-daemon --stacktrace initCheck :app:assembleRelease
