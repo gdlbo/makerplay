@@ -44,6 +44,10 @@ object WolfSceneLoader {
         messageText: String? = null,
         choiceOptions: List<String> = emptyList(),
         selectedChoice: Int = 0,
+        cameraExtraX: Int = 0,
+        cameraExtraY: Int = 0,
+        lockedCamX: Int? = null,
+        lockedCamY: Int? = null,
     ): StaticFrame {
         val tileset = tilesets.tilesets.getOrNull(map.tilesetId)
             ?: throw WolfFormatException("Map references unknown tileset ${map.tilesetId}")
@@ -76,10 +80,12 @@ object WolfSceneLoader {
         val heroPy = heroTile?.let {
             (it.tileY * tileSize) + (it.offsetY * tileSize).toInt()
         } ?: 0
-        val camX = (heroPx + tileSize / 2 - width / 2)
+        val followX = (heroPx + tileSize / 2 - width / 2)
             .coerceIn(0, (mapPixelW - width).coerceAtLeast(0))
-        val camY = (heroPy + tileSize / 2 - height / 2)
+        val followY = (heroPy + tileSize / 2 - height / 2)
             .coerceIn(0, (mapPixelH - height).coerceAtLeast(0))
+        val camX = (lockedCamX ?: followX) + cameraExtraX
+        val camY = (lockedCamY ?: followY) + cameraExtraY
 
         try {
             val columns = baseTileset.width / tileSize
@@ -193,22 +199,20 @@ object WolfSceneLoader {
                             paint,
                         )
                     }
-                    android.util.Log.d(
-                        "WolfRuntime",
-                        "pic2 slot=${picture.slot} pat=$pattern row=$row sel=$selected " +
-                            "cell=${cellW}x${cellH} at=${picture.x},${picture.y}",
-                    )
                 } else {
                     val srcX = (pattern % cols) * cellW
                     val srcY = (pattern / cols) * cellH
-                    val originX = if (picture.centerOrigin) picture.x - cellW / 2 else picture.x
-                    val originY = if (picture.centerOrigin) picture.y - cellH / 2 else picture.y
-                    val picX = originX.coerceIn(-cellW, width)
-                    val picY = originY.coerceIn(-cellH, height)
+                    val zoom = picture.zoom.coerceIn(1, 400)
+                    val dstW = (cellW * zoom) / 100
+                    val dstH = (cellH * zoom) / 100
+                    val originX = if (picture.centerOrigin) picture.x - dstW / 2 else picture.x
+                    val originY = if (picture.centerOrigin) picture.y - dstH / 2 else picture.y
+                    val picX = originX.coerceIn(-dstW, width)
+                    val picY = originY.coerceIn(-dstH, height)
                     canvas.drawBitmap(
                         decoded,
                         Rect(srcX, srcY, srcX + cellW, srcY + cellH),
-                        Rect(picX, picY, picX + cellW, picY + cellH),
+                        Rect(picX, picY, picX + dstW, picY + dstH),
                         paint,
                     )
                 }
@@ -358,15 +362,7 @@ object WolfSceneLoader {
             canvas.drawRect(left, top, left + fillW, top + fillH, rectPaint)
             return
         }
-        android.util.Log.d(
-            "WolfRuntime",
-            "drawText raw=${picture.fileName.take(60)} at=${picture.x},${picture.y} center=${picture.centerOrigin}",
-        )
-        val cleaned = picture.fileName
-            .replace(Regex("""\\f\[\d+]"""), "")
-            .replace(Regex("""</?C>""", RegexOption.IGNORE_CASE), "")
-            .replace(Regex("""\\[A-Za-z]+\[[^]]*|]"""), "")
-            .trim()
+        val cleaned = WolfText.stripPresentationMarkup(picture.fileName)
         if (cleaned.isEmpty()) return
         val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = 0xFFFFFFFF.toInt()

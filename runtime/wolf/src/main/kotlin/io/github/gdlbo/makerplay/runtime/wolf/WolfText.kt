@@ -64,4 +64,14 @@ object WolfText {
         }
         return out
     }
+
+    /** Removes WOLF display directives which Android's canvas does not render. */
+    fun stripPresentationMarkup(raw: String): String = raw
+        .replace(Regex("""\\[Ee]"""), "")
+        .replace(Regex("""\\f\[[^]]*]""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\\space\[[^]]*]""", RegexOption.IGNORE_CASE), " ")
+        .replace(Regex("""\\(?:a[xy]|[a-z]+\d*)\[[^]]*]""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""<[^>]*>"""), "")
+        .replace(Regex("""[ \t]{2,}"""), " ")
+        .trim()
 }

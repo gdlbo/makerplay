@@ -319,29 +319,7 @@ class WolfInterpreter(
             126 -> host.onBanInput(command.params.firstOrNull() != 0)
             130 -> teleport(command)
             140 -> host.onSound(command)
-            150 -> {
-                val resolved = resolveCommandRefs(command)
-                // File-from-string forms keep a CSelf/string id in the raw
-                // params; copy that path into strings before the host applies.
-                if (command.strings.all { it.isBlank() }) {
-                    val strRef = command.params.drop(1).firstOrNull {
-                        it in 1_600_000..1_699_999 || it in 3_000_000..3_000_999
-                    }
-                    if (strRef != null) {
-                        val key = decodeStringRef(strRef)
-                        val path = strings[key].orEmpty()
-                        if (path.isNotBlank()) {
-                            host.onPicture(resolved.copy(strings = listOf(path)))
-                        } else {
-                            host.onPicture(resolved)
-                        }
-                    } else {
-                        host.onPicture(resolved)
-                    }
-                } else {
-                    host.onPicture(resolved)
-                }
-            }
+            150, 152 -> emitPicture(command)
             151, 160, 161, 162 -> host.onScreenEffect(command)
             170 -> beginLoop(command, remaining = null)
             171 -> breakLoop()
@@ -378,9 +356,9 @@ class WolfInterpreter(
             240, 242 -> host.onChipChange(command)
             250, 251, 252, 255 -> host.onDatabase(command)
             270 -> host.onParty(command)
-            280 -> host.onMapEffect(command)
-            281 -> host.onScroll(command)
-            290 -> host.onEffect(command)
+            280 -> host.onMapEffect(resolveCommandRefs(command))
+            281 -> host.onScroll(resolveCommandRefs(command))
+            290 -> host.onEffect(resolveCommandRefs(command))
             300 -> callCommonEventByName(command)
             401, 402 -> {
                 // Case body marker: follows either a 102 choice or a 111/112
@@ -532,6 +510,23 @@ class WolfInterpreter(
         blocking = Blocking.KeyWait(command)
     }
 
+    /** Normalizes Picture and LoadPictureCustom into the picture-state command shape. */
+    private fun emitPicture(command: EventCommand) {
+        val resolved = resolveCommandRefs(command).copy(commandType = 150)
+        // File-from-string forms keep a CSelf/string id in the raw params;
+        // copy that resolved filename into the picture command before the host
+        // applies it to WolfPictureState.
+        if (command.strings.all { it.isBlank() }) {
+            val strRef = command.params.drop(1).firstOrNull {
+                it in 1_600_000..1_699_999 || it in 3_000_000..3_000_999
+            }
+            val path = strRef?.let { strings[decodeStringRef(it)].orEmpty() }
+            host.onPicture(if (path.isNullOrBlank()) resolved else resolved.copy(strings = listOf(path)))
+        } else {
+            host.onPicture(resolved)
+        }
+    }
+
     private fun showMessage(command: EventCommand) {
         val text = host.expandText(command.strings.joinToString("\n")).ifBlank { "…" }
         blocking = Blocking.Message(text)
@@ -644,8 +639,11 @@ class WolfInterpreter(
         lastConditionSatisfied = satisfied
         lastBranchWasChoice = false
         if (!satisfied) {
-            // Leave 401/420 handlers to accept the else arm; do not skip the
-            // whole cluster here or else-bodies never run.
+            val frame = frames.lastOrNull()
+            val nextCommandType = frame?.commands?.getOrNull(frame.pc)?.commandType
+            if (nextCommandType !in CASE_HEADERS) {
+                skipCurrentBranch()
+            }
             return
         } else {
             // Run ONLY the matched case body as a sub-frame and continue the
@@ -928,9 +926,7 @@ class WolfInterpreter(
         }
     }
 
-    private fun debugLog(message: String) {
-        android.util.Log.i(DEBUG_TAG, message)
-    }
+    private fun debugLog(@Suppress("UNUSED_PARAMETER") message: String) = Unit
 
     /**
      * Common-event CSelf (1.6M) vars are per-event in the editor runtime.

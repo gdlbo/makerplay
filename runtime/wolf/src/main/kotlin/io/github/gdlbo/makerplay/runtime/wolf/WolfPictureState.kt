@@ -24,6 +24,8 @@ class WolfPictureState {
         val divisionWidth: Int = 1,
         val divisionHeight: Int = 1,
         val pattern: Int = 0,
+        /** Percent zoom (100 = native). */
+        val zoom: Int = 100,
         /** When true, [fileName] is display text rather than an image path. */
         val isText: Boolean = false,
         /** Built-in &lt;SQUARE&gt; fill size/color; null for normal pictures. */
@@ -51,16 +53,41 @@ class WolfPictureState {
      * opening fades that start at opacity 0 still reveal their layers.
      */
     fun applyEffect(command: EventCommand): Boolean {
+        // 290: [options, processTime, slotFrom, slotTo, a, b, c]
+        // options low nibble = target (0 picture); bits 4-7 = effect type.
+        val options = command.params.getOrNull(0) ?: return false
+        val target = options and 0x0F
+        if (target != 0) return false // character/map effects handled elsewhere
+        val effectType = (options ushr 4) and 0x0F
         val a = command.params.getOrNull(2) ?: return false
         val b = command.params.getOrNull(3) ?: a
         val from = minOf(a, b)
         val to = maxOf(a, b)
         if (to < from || to - from > 1_000) return false
+        val p4 = command.params.getOrNull(4) ?: 0
+        val p5 = command.params.getOrNull(5) ?: 0
         var changed = false
         for (slot in from..to) {
             val existing = slots[slot] ?: continue
-            if (existing.opacity != 255) {
-                slots[slot] = existing.copy(opacity = 255)
+            val updated = when (effectType) {
+                // Flash, color-correction, shake, and flicker are transient;
+                // they have no stable slot state in this renderer.
+                2 -> existing.copy(x = existing.x + p4, y = existing.y + p5)
+                4 -> existing.copy(zoom = p4.takeIf { it in 1..400 } ?: existing.zoom)
+                7 -> existing.copy(zoom = (existing.zoom + 10).coerceAtMost(400))
+                8 -> existing.copy(
+                    pattern = (existing.pattern + 1).coerceAtMost(
+                        (existing.divisionWidth * existing.divisionHeight - 1).coerceAtLeast(0),
+                    ),
+                )
+                9, 10 -> existing.copy(
+                    pattern = (existing.pattern + 1) %
+                        (existing.divisionWidth * existing.divisionHeight).coerceAtLeast(1),
+                )
+                else -> existing
+            }
+            if (updated != existing) {
+                slots[slot] = updated
                 changed = true
             }
         }
@@ -107,6 +134,7 @@ class WolfPictureState {
                     y = y,
                     centerOrigin = isCenterOrigin(command.params),
                     opacity = opacity,
+                    zoom = command.params.getOrNull(9)?.takeIf { it in 1..400 } ?: existing.zoom,
                 )
                 revision++
                 true
@@ -155,6 +183,7 @@ class WolfPictureState {
                     divisionWidth = command.params.getOrNull(3)?.coerceIn(1, 64) ?: 1,
                     divisionHeight = command.params.getOrNull(4)?.coerceIn(1, 64) ?: 1,
                     pattern = command.params.getOrNull(5)?.coerceAtLeast(0) ?: 0,
+                    zoom = command.params.getOrNull(9)?.takeIf { it in 1..400 } ?: 100,
                 )
                 revision++
                 true

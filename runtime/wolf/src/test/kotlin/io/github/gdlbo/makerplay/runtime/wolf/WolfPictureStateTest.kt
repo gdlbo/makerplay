@@ -11,9 +11,9 @@ import org.junit.Test
 class WolfPictureStateTest {
 
     private fun cmd(type0: Int, slot: Int, file: String? = null, x: Int = 0, y: Int = 0) = EventCommand(
-        paramCount = 4,
+        paramCount = 9,
         commandType = 150,
-        params = intArrayOf(type0, slot, x, y),
+        params = intArrayOf(type0, slot, 0, 1, 1, 0, 255, x, y),
         branchDepth = 0,
         strings = if (file == null) emptyList() else listOf(file),
         route = null,
@@ -56,11 +56,14 @@ class WolfPictureStateTest {
     }
 
     @Test
-    fun textPicturesDoNotEnterImageLayer() {
+    fun textPicturesEnterThePictureLayer() {
         val state = WolfPictureState()
         // type nibble 2 = text picture.
         assertTrue(state.apply(cmd(0x2F, 5, "Hello")))
-        assertTrue(state.all().isEmpty())
+        assertEquals(
+            listOf(WolfPictureState.Picture(slot = 5, fileName = "Hello", x = 0, y = 0, isText = true)),
+            state.all(),
+        )
     }
 
     @Test

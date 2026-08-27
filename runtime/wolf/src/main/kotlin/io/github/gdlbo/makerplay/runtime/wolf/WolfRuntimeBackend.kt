@@ -596,9 +596,11 @@ class WolfRuntimeBackend(
                     }
 
                     override fun onLoad(slot: Int): Boolean {
+                        val name = slotSaveName(slot)
+                        if (!saveManager.has(name)) return false
                         return runCatching {
-                            android.util.Log.i("WolfRuntime", "load slot=$slot path=${stateOf(slot)?.mapPath}")
-                            val state = saveManager.load(slotSaveName(slot))
+                            val state = saveManager.load(name)
+                            android.util.Log.i("WolfRuntime", "load slot=$slot path=${state.mapPath}")
                             machineVariables.clear(); machineVariables.putAll(state.variables)
                             machineStrings.clear(); machineStrings.putAll(state.strings)
                             // Restore the observed hero position onto the engine.
@@ -610,12 +612,9 @@ class WolfRuntimeBackend(
                             forceCompose = true
                             true
                         }.onFailure {
-                            android.util.Log.e("WolfRuntime", "load slot=$slot failed", it)
+                            android.util.Log.w("WolfRuntime", "load slot=$slot failed: ${it.message}")
                         }.getOrDefault(false)
                     }
-
-                    private fun stateOf(slot: Int): WolfSaveFormat.GameState? =
-                        runCatching { saveManager.load(slotSaveName(slot)) }.getOrNull()
 
                     private fun slotSaveName(slot: Int): String =
                         if (slot == 0) "slot-0" else "slot-$slot"
@@ -623,12 +622,6 @@ class WolfRuntimeBackend(
                     override fun onPicture(command: EventCommand) {
                         // File-from-string-var forms ship an empty strings[] and
                         // point at a CSelf/string ref in params (title_back etc).
-                        android.util.Log.d(
-                            "WolfRuntime",
-                            "onPicture slotCand=${command.params.getOrNull(1)} " +
-                                "str=${command.strings.firstOrNull()?.take(40)} " +
-                                "p0=${command.params.getOrNull(0)}",
-                        )
                         var resolved = command
                         if (command.strings.all { it.isBlank() }) {
                             // CSelf string slots (1.6M) or low string-vars (3.0M);
@@ -663,10 +656,70 @@ class WolfRuntimeBackend(
                         forceCompose = true
                     }
 
+                    override fun onMove(command: EventCommand) {
+                        val target = command.params.firstOrNull() ?: return
+                        val route = command.route ?: return
+                        // -1/-2 = hero; other ids are map events (not yet moved).
+                        if (target != -1 && target != -2) return
+                        val wait = (route.routeOptionsRaw and 0b00000100) != 0
+                        val skip = (route.routeOptionsRaw and 0b00000010) != 0
+                        engine.queueHeroRoute(route.steps, waitUntilDone = wait, skipImpossible = skip)
+                        forceCompose = true
+                    }
+
+                    override fun onMoveFinished(): Boolean = engine.routesIdle()
+
+                    override fun onMapEffect(command: EventCommand) {
+                        // 280 MapShake: low nibble is power, next nibble speed.
+                        val options = command.params.getOrNull(0) ?: return
+                        val duration = command.params.getOrNull(1) ?: 0
+                        engine.startShake(
+                            power = (options and 0x0F),
+                            durationFrames = duration,
+                        )
+                        forceCompose = true
+                    }
+
+                    override fun onScroll(command: EventCommand) {
+                        // 281: [options, x, y]
+                        val options = command.params.getOrNull(0) ?: return
+                        val x = command.params.getOrNull(1) ?: 0
+                        val y = command.params.getOrNull(2) ?: 0
+                        val op = options and 0x0F
+                        val pixelUnits = ((options ushr 8) and 0b10) != 0
+                        val ts = project.tileSize
+                        when (op) {
+                            0 -> { // MoveScreen; speed controls animation rate, not distance.
+                                val dx = if (pixelUnits) x else x * ts
+                                val dy = if (pixelUnits) y else y * ts
+                                engine.scrollBy(dx, dy)
+                            }
+                            1 -> engine.unlockScroll() // BackToHero
+                            2 -> engine.setScrollLock(true) // LockScroll
+                            3 -> engine.unlockScroll() // UnlockScroll
+                        }
+                        forceCompose = true
+                    }
+
                     override fun onEffect(command: EventCommand) {
-                        // Opacity/position tweens are not fully modeled; avoid
-                        // snapping translucent fog layers to opaque (washes out
-                        // title starfields). Recompose so later moves apply.
+                        val options = command.params.getOrNull(0) ?: return
+                        val targetKind = options and 0x0F
+                        val effectType = (options ushr 4) and 0x0F
+                        when {
+                            targetKind == 0 -> pictures.applyEffect(command)
+                            // Character/map shake has the same visible result
+                            // at this renderer boundary when it targets the hero.
+                            targetKind == 2 && effectType == 1 -> engine.startShake(
+                                power = kotlin.math.abs(command.params.getOrNull(4) ?: 0),
+                                durationFrames = command.params.getOrNull(1) ?: 0,
+                            )
+                            targetKind == 1 && effectType == 1 &&
+                                (command.params.getOrNull(2) == -1 || command.params.getOrNull(2) == -2) ->
+                                engine.startShake(
+                                    power = kotlin.math.abs(command.params.getOrNull(4) ?: 0),
+                                    durationFrames = command.params.getOrNull(1) ?: 0,
+                                )
+                        }
                         forceCompose = true
                     }
 
@@ -748,6 +801,7 @@ class WolfRuntimeBackend(
                             else -> Unit
                         }
                         active.tick()
+                        engine.advanceRouteAndEffects()
                         if (active.finished && active.currentBlocking() == null) {
                             machineVariables.clear(); machineVariables.putAll(active.variables)
                             machineStrings.clear(); machineStrings.putAll(active.strings)
@@ -837,27 +891,26 @@ class WolfRuntimeBackend(
                     val msgText = (interpreter?.currentBlocking() as? WolfInterpreter.Blocking.Message)?.text
                     val choiceOpts = (interpreter?.currentBlocking() as? WolfInterpreter.Blocking.Choices)?.options
                         ?: emptyList()
+                    // Recompose while routes/shakes animate even if hero tile is unchanged.
+                    if (!engine.routesIdle()) forceCompose = true
+                    val camKey = engine.cameraOffset()
                     val key = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, heroPos?.offsetX) to
-                        pictures.version() to (msgText to (choiceOpts to choiceIndex))
+                        pictures.version() to (msgText to (choiceOpts to choiceIndex)) to camKey
                     val frame = if (key != lastFrameKey || forceCompose) {
                         lastFrameKey = key
-                        if (choiceOpts.isNotEmpty() || !msgText.isNullOrEmpty() || pictures.version() % 16L == 0L) {
-                            val summary = pictures.all().joinToString { p ->
-                                "#${p.slot}:${p.fileName.take(24)} a=${p.opacity}"
-                            }
-                            android.util.Log.i(
-                                "WolfRuntime",
-                                "compose pics=${pictures.all().size} [$summary] msg=${msgText?.take(20)} choices=${choiceOpts.size}",
-                            )
-                        }
                         runCatching {
                             withContext(Dispatchers.Default) {
+                                val cam = engine.cameraOffset()
                                 WolfSceneLoader.composeFrame(
                                     source, project, map, tilesets, heroTile = heroPos,
                                     pictures = pictures.all(),
                                     messageText = msgText,
                                     choiceOptions = choiceOpts,
                                     selectedChoice = choiceIndex,
+                                    cameraExtraX = if (engine.isScrollLocked()) 0 else cam.first,
+                                    cameraExtraY = if (engine.isScrollLocked()) 0 else cam.second,
+                                    lockedCamX = if (engine.isScrollLocked()) cam.first else null,
+                                    lockedCamY = if (engine.isScrollLocked()) cam.second else null,
                                 )
                             }
                         }.onFailure {

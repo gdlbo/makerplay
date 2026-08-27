@@ -2,6 +2,7 @@ package io.github.gdlbo.makerplay.feature.player
 
 import io.github.gdlbo.makerplay.feature.player.controller.model.DefaultGamepadProfile
 import io.github.gdlbo.makerplay.feature.player.controller.ui.circularControlSidePx
+import io.github.gdlbo.makerplay.feature.player.controller.ui.controlsFitViewport
 import io.github.gdlbo.makerplay.feature.player.controller.ui.dPadActionsForPosition
 import io.github.gdlbo.makerplay.feature.player.controller.ui.moveVirtualControl
 import io.github.gdlbo.makerplay.input.GameAction
@@ -44,6 +45,17 @@ class VirtualControllerOverlayTest {
 
         assertEquals(302.4f, circularControlSidePx(dpad, canvasWidthPx = 1920f, canvasHeightPx = 1080f), .001f)
         assertEquals(151.2f, circularControlSidePx(button, canvasWidthPx = 1920f, canvasHeightPx = 1080f), .001f)
+    }
+
+    @Test
+    fun `default controls fit the emulator landscape viewport`() {
+        assertTrue(
+            controlsFitViewport(
+                DefaultGamepadProfile,
+                canvasWidthPx = 2400f,
+                canvasHeightPx = 1080f,
+            ),
+        )
     }
 
     @Test

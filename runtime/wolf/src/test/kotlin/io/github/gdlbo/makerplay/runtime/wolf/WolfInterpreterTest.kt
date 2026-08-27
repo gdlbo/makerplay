@@ -302,6 +302,30 @@ class WolfInterpreterTest {
         assertEquals(0, h.unhandled.size)
     }
 
+    @Test
+    fun loadPictureCustomResolvesStringAndSelfVariableFileNames() {
+        val h = host()
+        val interpreter = WolfInterpreter(h)
+        interpreter.start(
+            listOf(
+                cmd(122, params = listOf(3_000_005), strings = listOf("SystemFile/title.jpg")),
+                cmd(122, params = listOf(1_600_006), strings = listOf("SystemFile/logo.png")),
+                cmd(152, params = listOf(0, 20, 3_000_005, 0, 1, 1, 255, 30, 40)),
+                cmd(152, params = listOf(0, 21, 1_600_006, 0, 1, 1, 255, 50, 60)),
+            ),
+        )
+
+        interpreter.tick()
+
+        assertEquals(2, h.pictures.size)
+        assertEquals(150, h.pictures[0].commandType)
+        assertEquals(listOf("SystemFile/title.jpg"), h.pictures[0].strings)
+        assertEquals(listOf("SystemFile/logo.png"), h.pictures[1].strings)
+        assertEquals(20, h.pictures[0].params[1])
+        assertEquals(30, h.pictures[0].params[7])
+        assertEquals(40, h.pictures[0].params[8])
+    }
+
     // --- save / load slices -------------------------------------------------------
 
     @Test

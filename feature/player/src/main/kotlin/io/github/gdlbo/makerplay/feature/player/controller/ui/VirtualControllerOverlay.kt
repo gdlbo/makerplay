@@ -673,3 +673,23 @@ internal fun circularControlSidePx(
     require(control.usesCircularBounds())
     return min(control.width * canvasWidthPx, control.height * canvasHeightPx)
 }
+
+internal fun controlsFitViewport(
+    profile: VirtualControllerProfile,
+    canvasWidthPx: Float,
+    canvasHeightPx: Float,
+): Boolean = profile.controls.all { control ->
+    val rawWidth = control.width * canvasWidthPx
+    val rawHeight = control.height * canvasHeightPx
+    val rawX = control.x * canvasWidthPx
+    val rawY = control.y * canvasHeightPx
+    if (control.usesCircularBounds()) {
+        val side = min(rawWidth, rawHeight)
+        val x = rawX + (rawWidth - side) / 2f
+        val y = rawY + (rawHeight - side) / 2f
+        x >= 0f && y >= 0f && x + side <= canvasWidthPx && y + side <= canvasHeightPx
+    } else {
+        rawX >= 0f && rawY >= 0f &&
+            rawX + rawWidth <= canvasWidthPx && rawY + rawHeight <= canvasHeightPx
+    }
+}

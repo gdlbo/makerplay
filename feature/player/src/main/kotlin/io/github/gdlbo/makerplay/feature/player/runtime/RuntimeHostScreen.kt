@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.AlertDialog
@@ -31,9 +32,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
@@ -225,6 +230,9 @@ fun RuntimeHostScreen(
     }
 
     val focusRequester = remember { FocusRequester() }
+    var runtimeViewport by remember { mutableStateOf(IntSize.Zero) }
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
     LaunchedEffect(gameReady, session?.sessionId) {
         if (gameReady && session != null) {
             runCatching { focusRequester.requestFocus() }
@@ -258,7 +266,7 @@ fun RuntimeHostScreen(
                 else -> false
             }
         }
-    BoxWithConstraints(modifier = runtimeModifier) {
+    BoxWithConstraints(modifier = runtimeModifier.onSizeChanged { runtimeViewport = it }) {
         val compactHeight = maxHeight < 480.dp
         // Overlay Popup is anchored at the window origin and must share the same
         // client coordinate space as the WebView canvas mapping in input-bridge.js.
@@ -342,7 +350,7 @@ fun RuntimeHostScreen(
         if (session != null && !gameReady) {
             RuntimePreparing(modifier = Modifier.align(Alignment.Center))
         }
-        if (session != null && gameReady) {
+        if (session != null && gameReady && runtimeViewport != IntSize.Zero) {
             // The WOLF game surface is an opaque GLSurfaceView (ZOrderOnTop),
             // which covers every Compose sibling in this window. Host the
             // controller chrome in its own always-on-top window so buttons are
@@ -352,7 +360,22 @@ fun RuntimeHostScreen(
                 onDismissRequest = {},
                 properties = PopupProperties(focusable = false),
             ) {
-                Box(Modifier.fillMaxSize()) {
+                // A Popup is measured in its own window. Its WindowManager app
+                // frame can be smaller than the requested surface (for example,
+                // a landscape cutout inset), so clamp to the client bounds used
+                // for both rendering and hit testing.
+                Box(
+                    Modifier.requiredSize(
+                        minOf(
+                            with(density) { runtimeViewport.width.toDp() },
+                            configuration.screenWidthDp.dp,
+                        ),
+                        minOf(
+                            with(density) { runtimeViewport.height.toDp() },
+                            configuration.screenHeightDp.dp,
+                        ),
+                    ),
+                ) {
         if (session != null && gameReady && showControls && layoutLoaded && !showCheats) {
             VirtualControllerOverlay(
                 profile = layouts.activeProfile(),

@@ -68,10 +68,30 @@ class WolfGameEngine(
     private val completedAutoruns = HashSet<Int>()
     private val heldDirections = mutableSetOf<Direction>()
     private var confirmPressedThisTick = false
+    private var slipThrough = false
+    private var heroRoute: RoutePlayback? = null
+    private var scrollLocked = false
+    private var scrollPixelX = 0
+    private var scrollPixelY = 0
+    private var shakeRemaining = 0
+    private var shakePower = 0
 
     /** Tile passability cache for the current map's tileset. */
     private var passability: List<TileSetData.Passability>? =
         tilesets.tilesets.getOrNull(map.tilesetId)?.tilePassability
+
+    private data class RoutePlayback(
+        val steps: List<io.github.gdlbo.makerplay.wolfformat.MoveRoute.Step>,
+        val waitUntilDone: Boolean,
+        val skipImpossible: Boolean,
+        var index: Int = 0,
+        var waitFrames: Int = 0,
+        var pixelsRemaining: Double = 0.0,
+        var stepDirection: Direction? = null,
+        var moveSpeed: Double,
+        var halfTileMovement: Boolean = false,
+        var blockedTries: Int = 0,
+    )
 
     /** Applies a successful map transfer and discards triggers from the prior map. */
     fun replaceMap(nextMap: MapFile, tileX: Int, tileY: Int) {
@@ -86,6 +106,10 @@ class WolfGameEngine(
         firedTriggers.clear()
         completedAutoruns.clear()
         heldDirections.clear()
+        heroRoute = null
+        slipThrough = false
+        scrollLocked = false
+        shakeRemaining = 0
     }
 
     fun position(): Position {
@@ -108,18 +132,89 @@ class WolfGameEngine(
     /** Advances exactly one logical frame. */
     fun tick() {
         if (pendingTransfer != null) return // frozen during transition until applied
-        if (heldDirections.isNotEmpty()) {
+        advanceRouteAndEffects()
+        val routeBlocksInput = heroRoute?.waitUntilDone == true && heroRoute != null
+        if (!routeBlocksInput && heldDirections.isNotEmpty()) {
             // Single direction per tick; diagonal movement comes later.
             val direction = orderedDirection(heldDirections)
             facing = direction
             step(direction)
-        } else {
+        } else if (!routeBlocksInput) {
             checkActionTrigger()
         }
         detectTouchTriggersOnAdjacentTiles()
         detectStandingTriggers(Trigger.PLAYER_TOUCH)
+    }
+
+    /** Advances non-input presentation state while an event interpreter is active. */
+    fun advanceRouteAndEffects() {
+        if (pendingTransfer != null) return
+        tickRoutes()
+        if (shakeRemaining > 0) shakeRemaining--
         tickCount++
     }
+
+    /** Queues a custom move route on the hero (target -1/-2). */
+    fun queueHeroRoute(
+        steps: List<io.github.gdlbo.makerplay.wolfformat.MoveRoute.Step>,
+        waitUntilDone: Boolean,
+        skipImpossible: Boolean,
+    ) {
+        heroRoute = RoutePlayback(
+            steps = steps,
+            waitUntilDone = waitUntilDone,
+            skipImpossible = skipImpossible,
+            moveSpeed = project.heroMoveSpeed * PIXELS_PER_FRAME_PER_SPEED_UNIT,
+        )
+    }
+
+    fun routesIdle(): Boolean = heroRoute == null
+
+    fun startShake(power: Int, durationFrames: Int) {
+        shakePower = power.coerceIn(0, 16)
+        shakeRemaining = durationFrames.coerceIn(0, 600)
+    }
+
+    fun setScrollLock(locked: Boolean) {
+        if (locked && !scrollLocked) {
+            // Capture the current hero-follow camera so locking doesn't jump.
+            val ts = project.tileSize
+            val mapPixelW = map.width * ts
+            val mapPixelH = map.height * ts
+            val screenW = project.screenWidth.takeIf { it > 0 } ?: mapPixelW
+            val screenH = project.screenHeight.takeIf { it > 0 } ?: mapPixelH
+            scrollPixelX = (playerPixelX.toInt() + ts / 2 - screenW / 2)
+                .coerceIn(0, (mapPixelW - screenW).coerceAtLeast(0))
+            scrollPixelY = (playerPixelY.toInt() + ts / 2 - screenH / 2)
+                .coerceIn(0, (mapPixelH - screenH).coerceAtLeast(0))
+        }
+        scrollLocked = locked
+    }
+
+    fun scrollBy(dx: Int, dy: Int) {
+        if (!scrollLocked) setScrollLock(true)
+        val maxX = (map.width * project.tileSize - project.screenWidth).coerceAtLeast(0)
+        val maxY = (map.height * project.tileSize - project.screenHeight).coerceAtLeast(0)
+        scrollPixelX = (scrollPixelX + dx).coerceIn(0, maxX)
+        scrollPixelY = (scrollPixelY + dy).coerceIn(0, maxY)
+    }
+
+    fun unlockScroll() {
+        scrollLocked = false
+    }
+
+    /** Camera pixel offset applied on top of hero-follow (shake + scroll lock). */
+    fun cameraOffset(): Pair<Int, Int> {
+        val shakeX = if (shakeRemaining > 0) ((tickCount % 2L) * 2L - 1L).toInt() * shakePower else 0
+        val shakeY = if (shakeRemaining > 0) (((tickCount / 2) % 2L) * 2L - 1L).toInt() * shakePower else 0
+        return if (scrollLocked) {
+            scrollPixelX + shakeX to scrollPixelY + shakeY
+        } else {
+            shakeX to shakeY
+        }
+    }
+
+    fun isScrollLocked(): Boolean = scrollLocked
 
     /** Drains queued triggers for the interpreter (milestone 6). */
     fun drainFiredTriggers(): List<FiredTrigger> {
@@ -136,10 +231,98 @@ class WolfGameEngine(
             else -> Direction.RIGHT
         }
 
-    private fun step(direction: Direction) {
+    private fun tickRoutes() {
+        val route = heroRoute ?: return
+        if (route.waitFrames > 0) {
+            route.waitFrames--
+            return
+        }
+        // Continue a route movement until its exact requested distance is covered.
+        val ongoing = route.stepDirection
+        if (ongoing != null && route.pixelsRemaining > 0.0) {
+            val beforeX = playerPixelX
+            val beforeY = playerPixelY
+            step(ongoing, route.moveSpeed.coerceAtMost(route.pixelsRemaining))
+            val moved = kotlin.math.abs(playerPixelX - beforeX) + kotlin.math.abs(playerPixelY - beforeY)
+            if (moved <= 0.001) {
+                route.blockedTries++
+                if (route.skipImpossible || route.blockedTries > 8) {
+                    route.blockedTries = 0
+                    route.stepDirection = null
+                    route.pixelsRemaining = 0.0
+                    route.index++
+                }
+            } else {
+                route.blockedTries = 0
+                route.pixelsRemaining -= moved
+                if (route.pixelsRemaining <= 0.001) {
+                    route.stepDirection = null
+                    route.pixelsRemaining = 0.0
+                    route.index++
+                }
+            }
+            if (route.index >= route.steps.size) heroRoute = null
+            return
+        }
+        while (route.index < route.steps.size) {
+            val step = route.steps[route.index]
+            when (step.type) {
+                0 -> startTileStep(route, Direction.DOWN)
+                1 -> startTileStep(route, Direction.LEFT)
+                2 -> startTileStep(route, Direction.RIGHT)
+                3 -> startTileStep(route, Direction.UP)
+                8 -> { facing = Direction.DOWN; route.index++ }
+                9 -> { facing = Direction.LEFT; route.index++ }
+                10 -> { facing = Direction.RIGHT; route.index++ }
+                11 -> { facing = Direction.UP; route.index++ }
+                0x13 -> startTileStep(route, facing) // step forward
+                0x14 -> startTileStep(route, opposite(facing)) // step backward
+                0x1d -> {
+                    route.moveSpeed = ((step.argsU4.firstOrNull() ?: project.heroMoveSpeed) *
+                        PIXELS_PER_FRAME_PER_SPEED_UNIT).coerceAtLeast(0.25)
+                    route.index++
+                }
+                0x1e, 0x1f -> route.index++
+                0x20, 0x21, 0x22, 0x23, 0x24, 0x25 -> route.index++
+                0x26 -> { slipThrough = true; route.index++ }
+                0x27 -> { slipThrough = false; route.index++ }
+                0x28, 0x29, 0x2c -> route.index++
+                0x2d -> route.index++ // opacity (presentation)
+                0x2f -> { // wait N frames
+                    route.waitFrames = step.argsU4.firstOrNull()?.coerceIn(0, 600) ?: 0
+                    route.index++
+                    return
+                }
+                0x30 -> { route.halfTileMovement = true; route.index++ }
+                0x31 -> { route.halfTileMovement = false; route.index++ }
+                else -> route.index++ // unsupported step: skip
+            }
+            if (route.stepDirection != null) return // tile step started
+        }
+        heroRoute = null
+    }
+
+    private fun startTileStep(route: RoutePlayback, direction: Direction) {
+        facing = direction
+        route.blockedTries = 0
+        route.stepDirection = direction
+        route.pixelsRemaining = project.tileSize * if (route.halfTileMovement) 0.5 else 1.0
+    }
+
+    private fun opposite(direction: Direction): Direction = when (direction) {
+        Direction.UP -> Direction.DOWN
+        Direction.DOWN -> Direction.UP
+        Direction.LEFT -> Direction.RIGHT
+        Direction.RIGHT -> Direction.LEFT
+    }
+
+    private fun step(
+        direction: Direction,
+        speedOverride: Double = project.heroMoveSpeed * PIXELS_PER_FRAME_PER_SPEED_UNIT,
+    ) {
         // Movement is expressed directly in pixels per logical frame.
         val ts = project.tileSize.toDouble()
-        val speed = project.heroMoveSpeed * PIXELS_PER_FRAME_PER_SPEED_UNIT
+        val speed = speedOverride.coerceAtLeast(0.0)
         val dx = when (direction) {
             Direction.LEFT -> -speed
             Direction.RIGHT -> speed
@@ -157,7 +340,7 @@ class WolfGameEngine(
         // player may rest flush against a blocking tile but never enter it.
         val destTileX = ((targetX + if (dx > 0) ts - 0.01 else 0.0) / ts).toInt()
         val destTileY = ((targetY + if (dy > 0) ts - 0.01 else 0.0) / ts).toInt()
-        if (!walkable(destTileX, destTileY, direction)) return
+        if (!slipThrough && !walkable(destTileX, destTileY, direction)) return
 
         playerPixelX = targetX.coerceIn(0.0, (map.width * ts) - ts)
         playerPixelY = targetY.coerceIn(0.0, (map.height * ts) - ts)
