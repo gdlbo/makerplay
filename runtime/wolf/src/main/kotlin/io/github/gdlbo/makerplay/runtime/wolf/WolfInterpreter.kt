@@ -25,8 +25,12 @@ class WolfInterpreter(
     private val commonEventsByName: Map<String, List<EventCommand>> = emptyMap(),
     initialVariables: Map<Int, Int> = emptyMap(),
     initialStrings: Map<Int, String> = emptyMap(),
+    sharedVariables: MutableMap<Int, Int>? = null,
+    sharedStrings: MutableMap<Int, String>? = null,
 ) {
     interface Host {
+        fun database(): WolfDatabase? = null
+
         /** Shows a message window; call [advance] to resume once dismissed. */
         fun onMessage(text: String)
 
@@ -106,8 +110,8 @@ class WolfInterpreter(
     }
 
     // Machine state exposed for saves and cheat surfaces.
-    val variables = HashMap<Int, Int>(initialVariables)
-    val strings = HashMap<Int, String>(initialStrings)
+    val variables: MutableMap<Int, Int> = sharedVariables ?: HashMap(initialVariables)
+    val strings: MutableMap<Int, String> = sharedStrings ?: HashMap(initialStrings)
 
     private val frames = ArrayDeque<Frame>()
     private var blocking: Blocking? = null
@@ -323,14 +327,11 @@ class WolfInterpreter(
             151, 160, 161, 162 -> host.onScreenEffect(command)
             170 -> beginLoop(command, remaining = null)
             171 -> breakLoop()
-            172 -> {
-                // BreakEvent ends the current EVENT expansion: the top-level
-                // page (or an extracted case body) ends the whole run; a
-                // called common event (300/210) breaks back to its caller
-                // (voice CEs end with 172 in real data).
+            172, 173 -> {
+                // BreakEvent / EraseEvent ends the current EVENT expansion
                 val frame = frames.lastOrNull()
                 if (frame == null) return
-                if (frame.root) {
+                if (frame.root || command.commandType == 173) {
                     frames.clear()
                     loops.clear()
                     finished = true
@@ -342,18 +343,20 @@ class WolfInterpreter(
             174 -> host.onReturnToTitle()
             175 -> host.onEndGame()
             176 -> beginLoop2(command)
+            177, 178 -> Unit // StopNonPic / ResumeNonPic
             179 -> beginLoop(command, remaining = loopCount(command))
             180 -> beginWait(command)
             201 -> host.onMove(command)
             202 -> { blocking = Blocking.MoveWait(command) }
             212 -> Unit // label marker: resolved by 213 scans
+            99, 105, 106, 107 -> Unit // checkpoints & debug text: non-blocking
             213 -> jumpToLabel(command)
             210, 211 -> callCommonEventById(command)
             220 -> host.onSaveLoad()
             221 -> host.onLoad(saveLoadSlot(command))
             222 -> host.onSave(saveLoadSlot(command))
             230, 231 -> Unit // move-during-event flag: engine-level default
-            240, 242 -> host.onChipChange(command)
+            240, 241, 242 -> host.onChipChange(command)
             250, 251, 252, 255 -> host.onDatabase(command)
             270 -> host.onParty(command)
             280 -> host.onMapEffect(resolveCommandRefs(command))
@@ -381,6 +384,7 @@ class WolfInterpreter(
             }
             498 -> loopEnd()
             499 -> Unit // branch end: natural flow
+            1000 -> Unit // ProFeature (WOLF RPG Editor Pro / v3+ features)
             else -> host.onUnhandled(command)
         }
     }
@@ -513,17 +517,21 @@ class WolfInterpreter(
     /** Normalizes Picture and LoadPictureCustom into the picture-state command shape. */
     private fun emitPicture(command: EventCommand) {
         val resolved = resolveCommandRefs(command).copy(commandType = 150)
+        val expandedStrings = command.strings.map { str ->
+            WolfText.interpolate(str, variables, strings, host.database())
+        }
+        val withExpanded = resolved.copy(strings = expandedStrings)
         // File-from-string forms keep a CSelf/string id in the raw params;
         // copy that resolved filename into the picture command before the host
         // applies it to WolfPictureState.
-        if (command.strings.all { it.isBlank() }) {
+        if (expandedStrings.all { it.isBlank() }) {
             val strRef = command.params.drop(1).firstOrNull {
                 it in 1_600_000..1_699_999 || it in 3_000_000..3_000_999
             }
             val path = strRef?.let { strings[decodeStringRef(it)].orEmpty() }
-            host.onPicture(if (path.isNullOrBlank()) resolved else resolved.copy(strings = listOf(path)))
+            host.onPicture(if (path.isNullOrBlank()) withExpanded else withExpanded.copy(strings = listOf(path)))
         } else {
-            host.onPicture(resolved)
+            host.onPicture(withExpanded)
         }
     }
 
@@ -934,6 +942,7 @@ class WolfInterpreter(
      * CSelf0..N, and restore the caller bank on pop.
      */
     private fun pushCommonEventFrame(body: List<EventCommand>, numericArgs: IntArray = IntArray(0)) {
+        if (frames.size >= 64) return
         val saved = snapshotSelfVars()
         val savedStrings = snapshotSelfStrings()
         clearSelfVars()

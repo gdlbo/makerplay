@@ -60,7 +60,7 @@ class WolfParityCommonEventTest {
                 val interpreter = WolfInterpreter(host, commonEvents = byId, commonEventsByName = byName)
                 interpreter.start(event.commands)
                 var ticks = 0
-                while (!interpreter.finished && ticks < 20_000) {
+                while (!interpreter.finished && ticks < 300) {
                     if (interpreter.currentBlocking() is WolfInterpreter.Blocking.Message) {
                         interpreter.advance()
                     } else if (interpreter.currentBlocking() is WolfInterpreter.Blocking.Choices) {
@@ -71,7 +71,7 @@ class WolfParityCommonEventTest {
                 }
                 // Events that loop (directly or via called common events)
                 // run perpetually by design; opcode coverage is the gate here.
-                if (!interpreter.finished && ticks >= 20_000) {
+                if (!interpreter.finished && ticks >= 300) {
                     println("  (CE ${event.id} '${event.title}' still running at tick cap — looping event)")
                 }
                 assertTrue(

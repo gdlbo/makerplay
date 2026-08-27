@@ -19,7 +19,7 @@ class WolfPictureState {
         val fileName: String,
         val x: Int,
         val y: Int,
-        val centerOrigin: Boolean = false,
+        val anchor: Int = 0,
         val opacity: Int = 255,
         val divisionWidth: Int = 1,
         val divisionHeight: Int = 1,
@@ -32,7 +32,9 @@ class WolfPictureState {
         val fillWidth: Int? = null,
         val fillHeight: Int? = null,
         val fillColor: Int? = null,
-    )
+    ) {
+        val centerOrigin: Boolean get() = anchor == 1
+    }
 
     private val slots = LinkedHashMap<Int, Picture>()
     private var revision = 0L
@@ -112,7 +114,7 @@ class WolfPictureState {
             fileName.contains('/') || fileName.contains('\\') ||
                 fileName.substringAfterLast('.').lowercase() in IMAGE_EXTS
             )
-        val isText = type == 2 || type == 4 || (fileName != null && !looksLikePath)
+        val isText = type == 2 || type == 4
         return when {
             // Process 2 is the documented erase; some fade scripts also send 3.
             process == 2 || process == 3 || (process == 0 && fileName == null && !isText) -> {
@@ -132,7 +134,7 @@ class WolfPictureState {
                 slots[slot] = existing.copy(
                     x = x,
                     y = y,
-                    centerOrigin = isCenterOrigin(command.params),
+                    anchor = (packed ushr 12) and 0xF,
                     opacity = opacity,
                     zoom = command.params.getOrNull(9)?.takeIf { it in 1..400 } ?: existing.zoom,
                 )
@@ -159,7 +161,7 @@ class WolfPictureState {
                     fileName = fileName,
                     x = x,
                     y = y,
-                    centerOrigin = isCenterOrigin(command.params),
+                    anchor = (packed ushr 12) and 0xF,
                     opacity = opacity,
                     isText = true,
                     fillWidth = fillW,
@@ -178,7 +180,7 @@ class WolfPictureState {
                     fileName = fileName,
                     x = x,
                     y = y,
-                    centerOrigin = isCenterOrigin(command.params),
+                    anchor = (packed ushr 12) and 0xF,
                     opacity = opacity,
                     divisionWidth = command.params.getOrNull(3)?.coerceIn(1, 64) ?: 1,
                     divisionHeight = command.params.getOrNull(4)?.coerceIn(1, 64) ?: 1,
@@ -202,16 +204,46 @@ class WolfPictureState {
         if (cleaned.contains('\\') || cleaned.isEmpty()) {
             return null
         }
-        val candidates = listOf(
-            "Data/Picture/$cleaned",
-            "Data/SystemFile/$cleaned",
-            "Data/CG/$cleaned",
-            "Data/$cleaned",
+        val subDirs = listOf(
+            "",
+            "Picture/",
+            "scene/",
+            "cg/",
+            "CG/",
+            "SystemGraphic/",
+            "SystemFile/",
+            "FIcon/",
+            "cutin/",
+            "hscene/",
+            "hword/",
+            "Kagura/",
+            "DLC_data/",
+            "Fog_BackGround/",
+            "BattleEffect/",
+            "CharaChip/",
+            "MapChip/",
         )
-        candidates.firstOrNull { runCatching { source.has(it) }.getOrDefault(false) }?.let { return it }
-        // Android deployments are case-sensitive; editor paths often disagree
-        // with on-disk folder casing (picture_tachi vs Picture_tachi).
-        return candidates.firstNotNullOfOrNull { caseInsensitivePath(source, it) }
+        val hasExt = cleaned.contains('.')
+        val exts = if (hasExt) listOf("") else listOf("", ".png", ".jpg", ".jpeg", ".bmp", ".webp")
+
+        for (ext in exts) {
+            val withExt = "$cleaned$ext"
+            for (dir in subDirs) {
+                val candidate = "Data/$dir$withExt"
+                if (runCatching { source.has(candidate) }.getOrDefault(false)) {
+                    return candidate
+                }
+            }
+        }
+        for (ext in exts) {
+            val withExt = "$cleaned$ext"
+            for (dir in subDirs) {
+                val candidate = "Data/$dir$withExt"
+                val matched = caseInsensitivePath(source, candidate)
+                if (matched != null) return matched
+            }
+        }
+        return null
     }
 
     private fun caseInsensitivePath(source: GameDataSource, relative: String): String? {

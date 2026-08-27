@@ -69,8 +69,13 @@ object WolfText {
     fun stripPresentationMarkup(raw: String): String = raw
         .replace(Regex("""\\[Ee]"""), "")
         .replace(Regex("""\\f\[[^]]*]""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\\c\[[^]]*]""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\\i\[[^]]*]""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\\w\[[^]]*]""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""\\s\[[^]]*]""", RegexOption.IGNORE_CASE), "")
         .replace(Regex("""\\space\[[^]]*]""", RegexOption.IGNORE_CASE), " ")
         .replace(Regex("""\\(?:a[xy]|[a-z]+\d*)\[[^]]*]""", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("""^@\d+\s*""", RegexOption.MULTILINE), "")
         .replace(Regex("""<[^>]*>"""), "")
         .replace(Regex("""[ \t]{2,}"""), " ")
         .trim()

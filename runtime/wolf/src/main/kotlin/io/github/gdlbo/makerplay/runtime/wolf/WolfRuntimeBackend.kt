@@ -42,6 +42,7 @@ import io.github.gdlbo.makerplay.wolfformat.GameDataSource
 import io.github.gdlbo.makerplay.wolfformat.GameDat
 import io.github.gdlbo.makerplay.wolfformat.WolfFormatException
 import io.github.gdlbo.makerplay.input.GameAction
+import io.github.gdlbo.makerplay.wolfformat.CommonEventDat
 import io.github.gdlbo.makerplay.wolfformat.MapFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -376,10 +377,13 @@ class WolfRuntimeBackend(
                 var mapPath = initialPath
                 val commonEvents = HashMap<Int, List<EventCommand>>()
                 val commonEventsByName = HashMap<String, List<EventCommand>>()
+                val commonEventsList = ArrayList<CommonEventDat.CommonEvent>()
                 runCatching {
-                    io.github.gdlbo.makerplay.wolfformat.CommonEventDat.parse(
+                    val dat = CommonEventDat.parse(
                         source.read("Data/BasicData/CommonEvent.dat"),
-                    ).events.forEach {
+                    )
+                    commonEventsList.addAll(dat.events)
+                    dat.events.forEach {
                         commonEvents[it.id] = it.commands
                         if (it.title.isNotEmpty()) {
                             commonEventsByName[it.title] = it.commands
@@ -393,6 +397,8 @@ class WolfRuntimeBackend(
                     source.read("Data/BasicData/TileSetData.dat"),
                 )
                 var interpreter: WolfInterpreter? = null
+                val parallelCommonInterpreters = HashMap<Int, WolfInterpreter>()
+                val parallelMapInterpreters = HashMap<Int, WolfInterpreter>()
                 // Which trigger owns [interpreter]; parallel pages must not hide the hero.
                 var activeTrigger: WolfGameEngine.Trigger? = null
                 var choiceIndex = 0
@@ -862,18 +868,68 @@ class WolfRuntimeBackend(
                         }
                         val fired = engine.drainFiredTriggers()
                         for (trigger in fired) {
+                            if (trigger.trigger == WolfGameEngine.Trigger.PARALLEL) continue
                             if (interpreter != null && !interpreter!!.finished) break
                             if (trigger.trigger == WolfGameEngine.Trigger.AUTORUN) {
                                 engine.markAutorunStarted(trigger.eventId)
                             }
                             val runner = WolfInterpreter(
                                 hostCallbacks, commonEvents, commonEventsByName,
-                                initialVariables = machineVariables,
-                                initialStrings = machineStrings,
+                                sharedVariables = machineVariables,
+                                sharedStrings = machineStrings,
                             )
                             runner.start(trigger.page.commands)
                             interpreter = runner
                             activeTrigger = trigger.trigger
+                        }
+                    }
+
+                    // Parallel common event execution
+                    for (ce in commonEventsList) {
+                        if (ce.runCondition == 2 || ce.runCondition == 3) {
+                            val active = if (ce.runCondition == 3) true else {
+                                val rawVar = ce.conditionVariableRaw
+                                if (rawVar == 0) true else {
+                                    val varId = if (rawVar in 2_000_000..2_999_999) rawVar - 2_000_000 else rawVar
+                                    val actual = machineVariables[varId] ?: machineVariables[rawVar] ?: 0
+                                    actual >= ce.conditionValue
+                                }
+                            }
+                            if (active) {
+                                var runner = parallelCommonInterpreters[ce.id]
+                                if (runner == null || (runner.finished && runner.currentBlocking() == null)) {
+                                    runner = WolfInterpreter(
+                                        hostCallbacks, commonEvents, commonEventsByName,
+                                        sharedVariables = machineVariables,
+                                        sharedStrings = machineStrings,
+                                    )
+                                    runner.start(ce.commands)
+                                    parallelCommonInterpreters[ce.id] = runner
+                                }
+                                runner.tick()
+                            } else {
+                                parallelCommonInterpreters.remove(ce.id)
+                            }
+                        }
+                    }
+
+                    // Parallel map event execution
+                    for (event in map.events) {
+                        val page = engine.activePage(event) ?: continue
+                        if (page.triggerCondition == 2) {
+                            var runner = parallelMapInterpreters[event.eventId]
+                            if (runner == null || (runner.finished && runner.currentBlocking() == null)) {
+                                runner = WolfInterpreter(
+                                    hostCallbacks, commonEvents, commonEventsByName,
+                                    sharedVariables = machineVariables,
+                                    sharedStrings = machineStrings,
+                                )
+                                runner.start(page.commands)
+                                parallelMapInterpreters[event.eventId] = runner
+                            }
+                            runner.tick()
+                        } else {
+                            parallelMapInterpreters.remove(event.eventId)
                         }
                     }
                     // Recompose only when something visible changed: hero moved
@@ -894,15 +950,26 @@ class WolfRuntimeBackend(
                     // Recompose while routes/shakes animate even if hero tile is unchanged.
                     if (!engine.routesIdle()) forceCompose = true
                     val camKey = engine.cameraOffset()
-                    val key = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, heroPos?.offsetX) to
-                        pictures.version() to (msgText to (choiceOpts to choiceIndex)) to camKey
+                    val key = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, (heroPos?.offsetX to heroPos?.offsetY) to engine.facing) to
+                        pictures.version() to (msgText to (choiceOpts to choiceIndex)) to camKey to (engine.tickCount / 16)
                     val frame = if (key != lastFrameKey || forceCompose) {
                         lastFrameKey = key
                         runCatching {
                             withContext(Dispatchers.Default) {
                                 val cam = engine.cameraOffset()
+                                val activePages = map.events.mapNotNull { ev ->
+                                    engine.activePage(ev)?.let { page -> ev to page }
+                                }
                                 WolfSceneLoader.composeFrame(
-                                    source, project, map, tilesets, heroTile = heroPos,
+                                    source = source,
+                                    project = project,
+                                    map = map,
+                                    tilesets = tilesets,
+                                    cameraTile = engine.position(),
+                                    heroTile = heroPos,
+                                    heroFacing = engine.facing,
+                                    activeEvents = activePages,
+                                    tickCount = engine.tickCount,
                                     pictures = pictures.all(),
                                     messageText = msgText,
                                     choiceOptions = choiceOpts,
