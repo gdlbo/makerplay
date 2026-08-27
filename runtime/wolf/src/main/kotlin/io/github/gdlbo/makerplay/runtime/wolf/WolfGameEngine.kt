@@ -91,6 +91,7 @@ class WolfGameEngine(
         var moveSpeed: Double,
         var halfTileMovement: Boolean = false,
         var blockedTries: Int = 0,
+        var ageFrames: Int = 0,
     )
 
     /** Applies a successful map transfer and discards triggers from the prior map. */
@@ -233,6 +234,12 @@ class WolfGameEngine(
 
     private fun tickRoutes() {
         val route = heroRoute ?: return
+        route.ageFrames++
+        // Hard stop so WaitForMove cannot hang the event forever on a bad step.
+        if (route.ageFrames > project.fps.coerceAtLeast(1) * 8) {
+            heroRoute = null
+            return
+        }
         if (route.waitFrames > 0) {
             route.waitFrames--
             return

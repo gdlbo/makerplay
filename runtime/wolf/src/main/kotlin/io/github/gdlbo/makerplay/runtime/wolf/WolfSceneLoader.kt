@@ -312,14 +312,28 @@ object WolfSceneLoader {
         // Pass 4: Picture Overlays (Slots 1..1000)
         // ----------------------------------------------------
         val pictureState = WolfPictureState()
+        var picturesDrawn = 0
+        var picturesSkipped = 0
         for (picture in pictures) {
             if (picture.isText) {
                 drawTextPicture(canvas, picture, width, height)
+                picturesDrawn++
                 continue
             }
-            val path = pictureState.resolvePath(source, picture.fileName)
+            val path = synchronized(picturePathCache) {
+                if (picturePathCache.containsKey(picture.fileName)) {
+                    picturePathCache[picture.fileName]
+                } else {
+                    pictureState.resolvePath(source, picture.fileName).also {
+                        picturePathCache[picture.fileName] = it
+                    }
+                }
+            }
             val decoded = path?.let { runCatching { cachedDecode(source, it) }.getOrNull() }
-                ?: continue
+            if (decoded == null) {
+                picturesSkipped++
+                continue
+            }
             val cols = picture.divisionWidth.coerceAtLeast(1)
             val rows = picture.divisionHeight.coerceAtLeast(1)
             val cellW = (decoded.width / cols).coerceAtLeast(1)
@@ -345,13 +359,22 @@ object WolfSceneLoader {
                 4 -> picture.y - dstH
                 else -> picture.y
             }
+            val prevAlpha = paint.alpha
+            paint.alpha = picture.opacity.coerceIn(0, 255)
             canvas.drawBitmap(
                 decoded,
                 Rect(srcX, srcY, srcX + cellW, srcY + cellH),
                 Rect(originX, originY, originX + dstW, originY + dstH),
                 paint,
             )
-            paint.alpha = 255
+            paint.alpha = prevAlpha
+            picturesDrawn++
+        }
+        if (picturesSkipped > 0 && picturesDrawn == 0) {
+            android.util.Log.w(
+                "WolfScene",
+                "pics drawn=0 skipped=$picturesSkipped of ${pictures.size}",
+            )
         }
 
         // ----------------------------------------------------
@@ -606,8 +629,8 @@ object WolfSceneLoader {
         }
     }
 
-    /** LRU-bounded decode cache: full maps reference hundreds of images. */
-    private const val MAX_CACHED_BITMAPS = 64
+    /** LRU-bounded decode cache: title UIs + tilesets easily exceed 64 images. */
+    private const val MAX_CACHED_BITMAPS = 256
     private val bitmapCache = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>): Boolean {
             val evict = size > MAX_CACHED_BITMAPS
@@ -615,6 +638,8 @@ object WolfSceneLoader {
             return evict
         }
     }
+    /** Positive + negative picture path lookups; misses are expensive on Direct mode. */
+    private val picturePathCache = HashMap<String, String?>()
 
     private fun cachedDecode(source: GameDataSource, path: String): Bitmap =
         synchronized(bitmapCache) { bitmapCache[path] } ?: run {

@@ -206,7 +206,7 @@ class WolfRuntimeBackend(
             currentWolfKey.set(wolfKey)
             if (wolfKey != 0) {
                 latchedWolfKey.set(wolfKey)
-                latchedWolfKeyTtl.set(30)
+                latchedWolfKeyTtl.set(120)
             }
         }
         LaunchedEffect(session.sessionId, nativeBridge) {
@@ -313,7 +313,7 @@ class WolfRuntimeBackend(
                                 if (wolfKey != 0) {
                                     currentWolfKey.set(wolfKey)
                                     latchedWolfKey.set(wolfKey)
-                                    latchedWolfKeyTtl.set(30)
+                                    latchedWolfKeyTtl.set(120)
                                 }
                             } else if (currentWolfKey.get() == wolfKey) {
                                 currentWolfKey.set(0)
@@ -403,6 +403,7 @@ class WolfRuntimeBackend(
                 var activeTrigger: WolfGameEngine.Trigger? = null
                 var choiceIndex = 0
                 var choiceArmed = false
+                var choicesOpenedAtMs = 0L
                 // Persisted machine state: saves snapshot the live interpreter,
                 // loads seed every subsequently created interpreter.
                 val machineVariables = HashMap<Int, Int>()
@@ -471,6 +472,9 @@ class WolfRuntimeBackend(
                     machineStrings[key] = value
                 }
                 var forceCompose = true
+                var composeJob: kotlinx.coroutines.Job? = null
+                var composeGeneration = 0
+                var lastAutosavePath: String? = null
                 val hostCallbacks = object : WolfInterpreter.Host {
                     override fun onMessage(text: String) {
                         // Drop confirms that opened this window so it is not
@@ -482,7 +486,8 @@ class WolfRuntimeBackend(
                     }
                     override fun onChoices(options: List<String>) {
                         choiceIndex = 0
-                        choiceArmed = false
+                        choiceArmed = true // latch already cleared; first confirm selects
+                        choicesOpenedAtMs = android.os.SystemClock.elapsedRealtime()
                         pendingConfirmEdges.set(0)
                         latchedWolfKey.set(0)
                         latchedWolfKeyTtl.set(0)
@@ -504,6 +509,7 @@ class WolfRuntimeBackend(
                         return if (latched != 0) latched else currentWolfKey.get()
                     }
                     override fun onKeyConsumed() {
+                        android.util.Log.i("WolfRuntime", "key consumed")
                         latchedWolfKey.set(0)
                         latchedWolfKeyTtl.set(0)
                     }
@@ -535,6 +541,9 @@ class WolfRuntimeBackend(
                             map = nextMap
                             mapPath = target
                             pictures.clear()
+                            composeGeneration++
+                            composeJob?.cancel()
+                            composeJob = null
                             forceCompose = true
                             engine.replaceMap(nextMap, tileX, tileY)
                         } else {
@@ -546,9 +555,21 @@ class WolfRuntimeBackend(
                         }
                     }
                     override fun onSaveLoad(): Boolean {
-                        // 220 SaveLoad opens the save/load selection; the
-                        // consuming script then performs 221/222 itself, so no
-                        // host action is required here.
+                        // From the title Continue path the script opens its
+                        // picture save/load UI (220). Bridge that to MakerPlay
+                        // snapshots when we already have a non-title slot.
+                        if (mapPath.contains("title", ignoreCase = true) &&
+                            saveManager.has("slot-1")
+                        ) {
+                            val state = runCatching { saveManager.load("slot-1") }.getOrNull()
+                            if (state != null && !state.mapPath.contains("title", ignoreCase = true)) {
+                                android.util.Log.i(
+                                    "WolfRuntime",
+                                    "continue via save-load ui -> ${state.mapPath}",
+                                )
+                                onLoad(1)
+                            }
+                        }
                         return true
                     }
 
@@ -569,12 +590,37 @@ class WolfRuntimeBackend(
                         return dirs.any { File(it, saveRel).isFile }
                     }
 
+                    override fun onSaveFile(name: String): Boolean {
+                        val cleaned = name.removePrefix("/").replace("\\", "/")
+                        if (cleaned.isEmpty()) return false
+                        val saveRel = cleaned.removePrefix("Save/").removePrefix("Data/")
+                        return runCatching {
+                            val saveDir = File(stored.gameRoot, "Data/Save")
+                            saveDir.mkdirs()
+                            File(saveDir, saveRel).writeBytes(byteArrayOf(1))
+                            // Mirror AUTO snapshots into MakerPlay slots so Continue
+                            // can restore a real map instead of a title probe.
+                            val auto = Regex("""AUTO(\d+)\.sav""", RegexOption.IGNORE_CASE)
+                                .find(saveRel)
+                            if (auto != null) {
+                                val slot = auto.groupValues[1].toIntOrNull() ?: 1
+                                onSave(slot)
+                            }
+                            android.util.Log.i("WolfRuntime", "save-file $saveRel path=$mapPath")
+                            true
+                        }.getOrDefault(false)
+                    }
+
                     override fun onSave(slot: Int): Boolean {
                         return runCatching {
                             interpreter?.let {
                                 machineVariables.clear(); machineVariables.putAll(it.variables)
                                 machineStrings.clear(); machineStrings.putAll(it.strings)
                             }
+                            android.util.Log.i(
+                                "WolfRuntime",
+                                "save slot=$slot path=$mapPath pos=${engine.position().tileX},${engine.position().tileY}",
+                            )
                             val ok = saveManager.save(
                                 slotSaveName(slot),
                                 WolfSaveFormat.GameState(
@@ -613,6 +659,9 @@ class WolfRuntimeBackend(
                             if (source.has(state.mapPath)) {
                                 map = MapFile.parse(source.read(state.mapPath))
                                 mapPath = state.mapPath
+                                composeGeneration++
+                                composeJob?.cancel()
+                                composeJob = null
                                 engine.replaceMap(map, state.tileX, state.tileY)
                             }
                             forceCompose = true
@@ -669,7 +718,13 @@ class WolfRuntimeBackend(
                         if (target != -1 && target != -2) return
                         val wait = (route.routeOptionsRaw and 0b00000100) != 0
                         val skip = (route.routeOptionsRaw and 0b00000010) != 0
-                        engine.queueHeroRoute(route.steps, waitUntilDone = wait, skipImpossible = skip)
+                        // When the event waits for completion, always skip blocked
+                        // steps so WaitForMove cannot hang on collision.
+                        engine.queueHeroRoute(
+                            route.steps,
+                            waitUntilDone = wait,
+                            skipImpossible = skip || wait,
+                        )
                         forceCompose = true
                     }
 
@@ -748,10 +803,19 @@ class WolfRuntimeBackend(
 
                 val tickMillis = 1000L / project.fps.coerceAtLeast(1)
                 var lastFrameKey: Any? = null
+                var lastUiKey: Any? = null
+                var lastMapKey: Any? = null
+                var lastPictureVersion = -1L
                 var lastFrame: WolfSceneLoader.StaticFrame? = null
+                var lastComposeAtMs = 0L
+                var loopSerial = 0
                 while (isActive) {
+                    val loopStarted = android.os.SystemClock.elapsedRealtime()
+                    loopSerial++
                     val active = interpreter
                     if (active != null && !active.finished) {
+                        // Advance routes before interpreter MoveWait polls idle state.
+                        engine.advanceRouteAndEffects()
                         when (val blocking = active.currentBlocking()) {
                             is WolfInterpreter.Blocking.Message -> {
                                 if (confirmEdges() || latchedWolfKey.get() != 0) {
@@ -761,8 +825,24 @@ class WolfRuntimeBackend(
                                 }
                             }
                             is WolfInterpreter.Blocking.Choices -> {
-                                // Consume a stale confirm latch from the prior
-                                // menu so New Game does not auto-pick option 0.
+                                // Drop only confirms that arrived in the same
+                                // instant the menu opened (stale New Game key).
+                                val openedAgo = android.os.SystemClock.elapsedRealtime() - choicesOpenedAtMs
+                                val stale = openedAgo < 50L
+                                var confirmedThisTick = false
+                                fun confirmChoice() {
+                                    if (stale || confirmedThisTick) return
+                                    if (active.currentBlocking() !is WolfInterpreter.Blocking.Choices) return
+                                    confirmedThisTick = true
+                                    android.util.Log.i(
+                                        "WolfRuntime",
+                                        "choices confirm idx=$choiceIndex opts=${blocking.options.size}",
+                                    )
+                                    active.choose(choiceIndex)
+                                    choiceIndex = 0
+                                    choiceArmed = false
+                                }
+                                if (confirmEdges()) confirmChoice()
                                 val key = latchedWolfKey.get()
                                 when (key) {
                                     8 -> { // up
@@ -771,35 +851,23 @@ class WolfRuntimeBackend(
                                         choiceIndex = (choiceIndex - 1).coerceAtLeast(0)
                                         forceCompose = true
                                     }
-                                    2 -> { // down
+                                    2, 6 -> { // down / right
                                         latchedWolfKey.set(0)
                                         latchedWolfKeyTtl.set(0)
-                                        choiceIndex =
-                                            (choiceIndex + 1).coerceAtMost(blocking.options.size - 1)
+                                        if (blocking.options.isNotEmpty()) {
+                                            choiceIndex = (choiceIndex + 1) % blocking.options.size
+                                        }
                                         forceCompose = true
                                     }
                                     10 -> { // confirm
                                         latchedWolfKey.set(0)
                                         latchedWolfKeyTtl.set(0)
-                                        if (choiceArmed) {
-                                            active.choose(choiceIndex)
-                                            choiceIndex = 0
-                                            choiceArmed = false
-                                        } else {
-                                            choiceArmed = true
-                                        }
+                                        confirmChoice()
                                     }
                                     else -> {
                                         if (key != 0) {
                                             latchedWolfKey.set(0)
                                             latchedWolfKeyTtl.set(0)
-                                        }
-                                        if (confirmEdges() && choiceArmed) {
-                                            active.choose(choiceIndex)
-                                            choiceIndex = 0
-                                            choiceArmed = false
-                                        } else if (confirmEdges()) {
-                                            choiceArmed = true
                                         }
                                     }
                                 }
@@ -807,7 +875,6 @@ class WolfRuntimeBackend(
                             else -> Unit
                         }
                         active.tick()
-                        engine.advanceRouteAndEffects()
                         if (active.finished && active.currentBlocking() == null) {
                             machineVariables.clear(); machineVariables.putAll(active.variables)
                             machineStrings.clear(); machineStrings.putAll(active.strings)
@@ -833,6 +900,9 @@ class WolfRuntimeBackend(
                                 map = nextMap
                                 mapPath = target
                                 pictures.clear()
+                                composeGeneration++
+                                composeJob?.cancel()
+                                composeJob = null
                                 forceCompose = true
                                 engine.replaceMap(nextMap, pos.first, pos.second)
                             } else {
@@ -877,6 +947,7 @@ class WolfRuntimeBackend(
                                 hostCallbacks, commonEvents, commonEventsByName,
                                 sharedVariables = machineVariables,
                                 sharedStrings = machineStrings,
+                                fps = project.fps,
                             )
                             runner.start(trigger.page.commands)
                             interpreter = runner
@@ -884,52 +955,66 @@ class WolfRuntimeBackend(
                         }
                     }
 
-                    // Parallel common event execution
-                    for (ce in commonEventsList) {
-                        if (ce.runCondition == 2 || ce.runCondition == 3) {
-                            val active = if (ce.runCondition == 3) true else {
-                                val rawVar = ce.conditionVariableRaw
-                                if (rawVar == 0) true else {
-                                    val varId = if (rawVar in 2_000_000..2_999_999) rawVar - 2_000_000 else rawVar
-                                    val actual = machineVariables[varId] ?: machineVariables[rawVar] ?: 0
-                                    actual >= ce.conditionValue
+                    // Parallel pages only animate pictures/UI. Skip them while
+                    // the main event is blocked: Wait must expire in wall time,
+                    // and Choices/KeyWait must not lose confirm latches to
+                    // parallel InputKey consumers.
+                    val mainBlocking = interpreter?.currentBlocking()
+                    val pauseParallel = mainBlocking is WolfInterpreter.Blocking.Wait ||
+                        mainBlocking is WolfInterpreter.Blocking.Choices ||
+                        mainBlocking is WolfInterpreter.Blocking.Message ||
+                        mainBlocking is WolfInterpreter.Blocking.KeyWait ||
+                        mainBlocking is WolfInterpreter.Blocking.MoveWait
+                    if (!pauseParallel) {
+                        // Parallel common event execution
+                        for (ce in commonEventsList) {
+                            if (ce.runCondition == 2 || ce.runCondition == 3) {
+                                val activeCe = if (ce.runCondition == 3) true else {
+                                    val rawVar = ce.conditionVariableRaw
+                                    if (rawVar == 0) true else {
+                                        val varId = if (rawVar in 2_000_000..2_999_999) rawVar - 2_000_000 else rawVar
+                                        val actual = machineVariables[varId] ?: machineVariables[rawVar] ?: 0
+                                        actual >= ce.conditionValue
+                                    }
+                                }
+                                if (activeCe) {
+                                    var runner = parallelCommonInterpreters[ce.id]
+                                    if (runner == null || (runner.finished && runner.currentBlocking() == null)) {
+                                        runner = WolfInterpreter(
+                                            hostCallbacks, commonEvents, commonEventsByName,
+                                            sharedVariables = machineVariables,
+                                            sharedStrings = machineStrings,
+                                            fps = project.fps,
+                                        )
+                                        runner.start(ce.commands)
+                                        parallelCommonInterpreters[ce.id] = runner
+                                    }
+                                    runner.tick(WolfInterpreter.MAX_PARALLEL_COMMANDS_PER_TICK)
+                                } else {
+                                    parallelCommonInterpreters.remove(ce.id)
                                 }
                             }
-                            if (active) {
-                                var runner = parallelCommonInterpreters[ce.id]
+                        }
+
+                        // Parallel map event execution
+                        for (event in map.events) {
+                            val page = engine.activePage(event) ?: continue
+                            if (page.triggerCondition == 2) {
+                                var runner = parallelMapInterpreters[event.eventId]
                                 if (runner == null || (runner.finished && runner.currentBlocking() == null)) {
                                     runner = WolfInterpreter(
                                         hostCallbacks, commonEvents, commonEventsByName,
                                         sharedVariables = machineVariables,
                                         sharedStrings = machineStrings,
+                                        fps = project.fps,
                                     )
-                                    runner.start(ce.commands)
-                                    parallelCommonInterpreters[ce.id] = runner
+                                    runner.start(page.commands)
+                                    parallelMapInterpreters[event.eventId] = runner
                                 }
-                                runner.tick()
+                                runner.tick(WolfInterpreter.MAX_PARALLEL_COMMANDS_PER_TICK)
                             } else {
-                                parallelCommonInterpreters.remove(ce.id)
+                                parallelMapInterpreters.remove(event.eventId)
                             }
-                        }
-                    }
-
-                    // Parallel map event execution
-                    for (event in map.events) {
-                        val page = engine.activePage(event) ?: continue
-                        if (page.triggerCondition == 2) {
-                            var runner = parallelMapInterpreters[event.eventId]
-                            if (runner == null || (runner.finished && runner.currentBlocking() == null)) {
-                                runner = WolfInterpreter(
-                                    hostCallbacks, commonEvents, commonEventsByName,
-                                    sharedVariables = machineVariables,
-                                    sharedStrings = machineStrings,
-                                )
-                                runner.start(page.commands)
-                                parallelMapInterpreters[event.eventId] = runner
-                            }
-                            runner.tick()
-                        } else {
-                            parallelMapInterpreters.remove(event.eventId)
                         }
                     }
                     // Recompose only when something visible changed: hero moved
@@ -950,51 +1035,116 @@ class WolfRuntimeBackend(
                     // Recompose while routes/shakes animate even if hero tile is unchanged.
                     if (!engine.routesIdle()) forceCompose = true
                     val camKey = engine.cameraOffset()
-                    val key = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, (heroPos?.offsetX to heroPos?.offsetY) to engine.facing) to
-                        pictures.version() to (msgText to (choiceOpts to choiceIndex)) to camKey to (engine.tickCount / 16)
-                    val frame = if (key != lastFrameKey || forceCompose) {
+                    // Do not key on raw tickCount: that forced a full bitmap
+                    // recompose every 16 frames and stalled title/input on device.
+                    val mapKey = Triple(mapPath, heroPos?.tileX to heroPos?.tileY, (heroPos?.offsetX to heroPos?.offsetY) to engine.facing) to
+                        (msgText to (choiceOpts to choiceIndex)) to camKey
+                    val key = mapKey to pictures.version()
+                    val nowMs = android.os.SystemClock.elapsedRealtime()
+                    val wantsCompose = key != lastFrameKey || forceCompose
+                    val blockingNow = active?.currentBlocking()
+                    val waiting = blockingNow is WolfInterpreter.Blocking.Wait
+                    val uiBlocked = blockingNow is WolfInterpreter.Blocking.Choices ||
+                        blockingNow is WolfInterpreter.Blocking.Message ||
+                        blockingNow is WolfInterpreter.Blocking.KeyWait
+                    val uiKey = msgText to (choiceOpts to choiceIndex) to mapPath
+                    val pictureOnlyChange =
+                        mapKey == lastMapKey && pictures.version() != lastPictureVersion
+                    // Picture-heavy title CEs set forceCompose every tick. While
+                    // Wait is pending, keep the last frame so the interpreter
+                    // can advance; during Choices/KeyWait ignore picture churn
+                    // so confirm edges are sampled in real time.
+                    val composeDue = when {
+                        lastFrame == null -> true
+                        // Teleport/load must paint even while Wait/UI is pending.
+                        forceCompose -> true
+                        waiting -> false
+                        uiBlocked -> uiKey != lastUiKey
+                        pictureOnlyChange -> nowMs - lastComposeAtMs >= 200L
+                        wantsCompose && nowMs - lastComposeAtMs >= 50L -> true
+                        else -> false
+                    }
+                    // Compose off the gameplay loop so movement/input keep
+                    // ticking while a heavy frame is built. Teleports cancel
+                    // in-flight jobs so a stale frame cannot cover the new map.
+                    if (composeDue && composeJob?.isActive != true) {
                         lastFrameKey = key
-                        runCatching {
-                            withContext(Dispatchers.Default) {
-                                val cam = engine.cameraOffset()
-                                val activePages = map.events.mapNotNull { ev ->
+                        lastMapKey = mapKey
+                        lastUiKey = uiKey
+                        lastPictureVersion = pictures.version()
+                        lastComposeAtMs = nowMs
+                        forceCompose = false
+                        val composeMap = map
+                        val composeMapPath = mapPath
+                        val composeHero = heroPos
+                        val composeFacing = engine.facing
+                        val composeTick = engine.tickCount
+                        val composePics = pictures.all()
+                        val composeMsg = msgText
+                        val composeChoices = choiceOpts
+                        val composeChoiceIndex = choiceIndex
+                        val composeCam = engine.cameraOffset()
+                        val composeScrollLocked = engine.isScrollLocked()
+                        val composeStarted = nowMs
+                        val loopNo = loopSerial
+                        val generation = composeGeneration
+                        composeJob = launch(Dispatchers.Default) {
+                            val frame = runCatching {
+                                val activePages = composeMap.events.mapNotNull { ev ->
                                     engine.activePage(ev)?.let { page -> ev to page }
                                 }
                                 WolfSceneLoader.composeFrame(
                                     source = source,
                                     project = project,
-                                    map = map,
+                                    map = composeMap,
                                     tilesets = tilesets,
                                     cameraTile = engine.position(),
-                                    heroTile = heroPos,
-                                    heroFacing = engine.facing,
+                                    heroTile = composeHero,
+                                    heroFacing = composeFacing,
                                     activeEvents = activePages,
-                                    tickCount = engine.tickCount,
-                                    pictures = pictures.all(),
-                                    messageText = msgText,
-                                    choiceOptions = choiceOpts,
-                                    selectedChoice = choiceIndex,
-                                    cameraExtraX = if (engine.isScrollLocked()) 0 else cam.first,
-                                    cameraExtraY = if (engine.isScrollLocked()) 0 else cam.second,
-                                    lockedCamX = if (engine.isScrollLocked()) cam.first else null,
-                                    lockedCamY = if (engine.isScrollLocked()) cam.second else null,
+                                    tickCount = composeTick,
+                                    pictures = composePics,
+                                    messageText = composeMsg,
+                                    choiceOptions = composeChoices,
+                                    selectedChoice = composeChoiceIndex,
+                                    cameraExtraX = if (composeScrollLocked) 0 else composeCam.first,
+                                    cameraExtraY = if (composeScrollLocked) 0 else composeCam.second,
+                                    lockedCamX = if (composeScrollLocked) composeCam.first else null,
+                                    lockedCamY = if (composeScrollLocked) composeCam.second else null,
                                 )
+                            }.onFailure {
+                                android.util.Log.e("WolfRuntime", "compose failed: ${it.message}", it)
+                                (stored.logger ?: logger).error(
+                                    "runtime.loop_frame_failed",
+                                    mapOf("error" to (it.message ?: "unknown")),
+                                )
+                            }.getOrNull()
+                            if (frame != null && generation == composeGeneration) {
+                                val composeMs = android.os.SystemClock.elapsedRealtime() - composeStarted
+                                if (composeMs > 100 || loopNo <= 3) {
+                                    android.util.Log.i(
+                                        "WolfRuntime",
+                                        "compose ${composeMs}ms ${frame.width}x${frame.height} path=$composeMapPath",
+                                    )
+                                }
+                                lastFrame = frame
+                                bridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
+                                if (!composeMapPath.contains("title", ignoreCase = true) &&
+                                    composeMapPath != lastAutosavePath
+                                ) {
+                                    lastAutosavePath = composeMapPath
+                                    hostCallbacks.onSave(1)
+                                }
                             }
-                        }.onFailure {
-                            android.util.Log.e("WolfRuntime", "compose failed: ${it.message}", it)
-                            (stored.logger ?: logger).error(
-                                "runtime.loop_frame_failed",
-                                mapOf("error" to (it.message ?: "unknown")),
-                            )
-                        }.getOrNull()
-                    } else {
-                        lastFrame
+                        }
                     }
-                    if (frame != null) {
-                        bridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
-                        forceCompose = false
+                    val loopMs = android.os.SystemClock.elapsedRealtime() - loopStarted
+                    if (loopSerial <= 5 || loopMs > 250 || loopSerial % 60 == 0) {
+                        android.util.Log.i(
+                            "WolfRuntime",
+                            "loop #$loopSerial ${loopMs}ms blocking=${active?.currentBlocking()?.javaClass?.simpleName} key=${latchedWolfKey.get()} pics=${pictures.version()}",
+                        )
                     }
-                    lastFrame = frame
                     delay(tickMillis.milliseconds)
                 }
             }

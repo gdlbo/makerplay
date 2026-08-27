@@ -38,6 +38,7 @@ class WolfPictureState {
 
     private val slots = LinkedHashMap<Int, Picture>()
     private var revision = 0L
+    private val pathCache = HashMap<String, String?>()
 
     /** Monotonic change counter; the renderer recomposes when it advances. */
     fun version(): Long = revision
@@ -204,6 +205,7 @@ class WolfPictureState {
         if (cleaned.contains('\\') || cleaned.isEmpty()) {
             return null
         }
+        if (pathCache.containsKey(cleaned)) return pathCache[cleaned]
         val subDirs = listOf(
             "",
             "Picture/",
@@ -231,6 +233,7 @@ class WolfPictureState {
             for (dir in subDirs) {
                 val candidate = "Data/$dir$withExt"
                 if (runCatching { source.has(candidate) }.getOrDefault(false)) {
+                    pathCache[cleaned] = candidate
                     return candidate
                 }
             }
@@ -240,9 +243,13 @@ class WolfPictureState {
             for (dir in subDirs) {
                 val candidate = "Data/$dir$withExt"
                 val matched = caseInsensitivePath(source, candidate)
-                if (matched != null) return matched
+                if (matched != null) {
+                    pathCache[cleaned] = matched
+                    return matched
+                }
             }
         }
+        pathCache[cleaned] = null
         return null
     }
 

@@ -27,6 +27,7 @@ class WolfInterpreter(
     initialStrings: Map<Int, String> = emptyMap(),
     sharedVariables: MutableMap<Int, Int>? = null,
     sharedStrings: MutableMap<Int, String>? = null,
+    private val fps: Int = 60,
 ) {
     interface Host {
         fun database(): WolfDatabase? = null
@@ -60,6 +61,9 @@ class WolfInterpreter(
 
         /** Probes a runtime file (Save/..) existence for 122 GET_FILE_EXIST. */
         fun onFileExists(name: String): Boolean = false
+
+        /** Writes a named save probe file (System.sav / AUTOn.sav markers). */
+        fun onSaveFile(name: String): Boolean = false
 
         /** Key-wait poll (123); return true once the awaited key is pressed. */
         fun onKeyWait(command: EventCommand): Boolean = true
@@ -104,7 +108,7 @@ class WolfInterpreter(
     sealed class Blocking {
         data class Message(val text: String) : Blocking()
         data class Choices(val options: List<String>) : Blocking()
-        data class Wait(val remainingTicks: Int) : Blocking()
+        data class Wait(val remainingTicks: Int, val deadlineElapsedMs: Long = 0L) : Blocking()
         data class KeyWait(val command: EventCommand) : Blocking()
         data class MoveWait(val command: EventCommand) : Blocking()
     }
@@ -131,11 +135,14 @@ class WolfInterpreter(
 
     private val loops = ArrayDeque<LoopMarker>()
 
-    private companion object {
+    companion object {
         private const val DEBUG_TAG = "WolfRuntime"
 
-        /** Generous ceiling on commands per tick; real events finish far below this. */
-        const val MAX_COMMANDS_PER_TICK = 1_000_000
+        /** Ceiling for the foreground event; large New Game init loops need headroom. */
+        const val MAX_COMMANDS_PER_TICK = 50_000
+
+        /** Parallel pages/CEs must not stall the frame; they resume next tick. */
+        const val MAX_PARALLEL_COMMANDS_PER_TICK = 4_000
 
         /** Commands that open a skippable body closed by 499. */
         val BRANCH_OPENERS = setOf(111, 112, 170, 176, 179, 401, 402, 420, 421)
@@ -180,21 +187,31 @@ class WolfInterpreter(
     /**
      * Advances one logical frame: executes commands until a blocking state is
      * reached, decrements active waits, and finishes cleanly when all frames
-     * complete.
+     * complete. Parallel runners should pass [MAX_PARALLEL_COMMANDS_PER_TICK].
      */
-    fun tick() {
+    fun tick(maxCommands: Int = MAX_COMMANDS_PER_TICK) {
+        commandBudget = maxCommands.coerceAtLeast(1)
         if (finished) return
         val current = blocking
         when (current) {
             is Blocking.Wait -> {
-                val remaining = current.remainingTicks - 1
-                if (remaining <= 0) {
+                // Prefer wall-clock so slow compose/ticks cannot stretch a
+                // 30-frame fade into minutes; tick countdown keeps unit tests
+                // deterministic without sleeping.
+                val nowMs = System.nanoTime() / 1_000_000L
+                if (current.deadlineElapsedMs != 0L && nowMs >= current.deadlineElapsedMs) {
                     blocking = null
                     lastLoggedBlocking = null
                 } else {
-                    blocking = current.copy(remainingTicks = remaining)
-                    logBlocking("Wait($remaining)")
-                    return
+                    val remaining = current.remainingTicks - 1
+                    if (remaining <= 0) {
+                        blocking = null
+                        lastLoggedBlocking = null
+                    } else {
+                        blocking = current.copy(remainingTicks = remaining)
+                        logBlocking("Wait($remaining)")
+                        return
+                    }
                 }
             }
             is Blocking.KeyWait -> {
@@ -267,6 +284,8 @@ class WolfInterpreter(
 
     fun currentBlocking(): Blocking? = blocking
 
+    private var commandBudget = MAX_COMMANDS_PER_TICK
+
     private fun runUntilBlocked() {
         // Safety valve: a malformed event whose loop never blocks would
         // otherwise hang the render loop; cap work per tick and bail out.
@@ -282,7 +301,7 @@ class WolfInterpreter(
                 continue
             }
             execute(frame.commands[frame.pc++])
-            if (++executed > MAX_COMMANDS_PER_TICK) {
+            if (++executed > commandBudget) {
                 // Yield to the next tick instead of aborting the whole event
                 // (party-init loops can be large right after New Game).
                 return
@@ -353,8 +372,37 @@ class WolfInterpreter(
             213 -> jumpToLabel(command)
             210, 211 -> callCommonEventById(command)
             220 -> host.onSaveLoad()
-            221 -> host.onLoad(saveLoadSlot(command))
-            222 -> host.onSave(saveLoadSlot(command))
+            221 -> {
+                // Title/New Game scripts issue field/file 221 probes; only a
+                // full-slot load may replace the live map.
+                if (isFullSlotLoad(command)) {
+                    host.onLoad(saveLoadSlot(command))
+                } else {
+                    // Field probe: params[0]=result var, params[1]=filename string.
+                    val dest = command.params.getOrNull(0)
+                    val nameRef = command.params.getOrNull(1)
+                    if (dest != null && nameRef != null) {
+                        val name = strings[decodeStringRef(nameRef)]
+                            ?: strings[decodeVariableRef(nameRef)]
+                            .orEmpty()
+                        val exists = name.isNotBlank() && host.onFileExists(name)
+                        variables[decodeVariableRef(dest)] = if (exists) 1 else 0
+                    }
+                }
+            }
+            222 -> {
+                if (isFullSlotLoad(command)) {
+                    host.onSave(saveLoadSlot(command))
+                } else {
+                    val nameRef = command.params.getOrNull(1)
+                    if (nameRef != null) {
+                        val name = strings[decodeStringRef(nameRef)]
+                            ?: strings[decodeVariableRef(nameRef)]
+                            .orEmpty()
+                        if (name.isNotBlank()) host.onSaveFile(name)
+                    }
+                }
+            }
             230, 231 -> Unit // move-during-event flag: engine-level default
             240, 241, 242 -> host.onChipChange(command)
             250, 251, 252, 255 -> host.onDatabase(command)
@@ -460,9 +508,17 @@ class WolfInterpreter(
     }
 
     private fun breakLoop() {
-        val frame = frames.lastOrNull() ?: return
-        loops.removeAll { it.frame !== frame }
-        loops.removeLastOrNull()
+        // Choice/common-event subframes often issue BreakLoop for a loop that
+        // lives on a parent frame. Target that frame instead of wiping parent
+        // markers with a subframe-local filter.
+        val marker = loops.lastOrNull() ?: return
+        val frame = marker.frame
+        while (frames.isNotEmpty() && frames.last() !== frame) {
+            popFrame()
+        }
+        if (frames.lastOrNull() !== frame) return
+        loops.removeLast()
+        debugLog("BreakLoop -> skip to end depth=${frames.size}")
         // Skip forward past the matching loop-end marker (498), accounting for
         // nested loop constructs so an inner 498 cannot end an outer loop early.
         var pending = 1
@@ -879,7 +935,11 @@ class WolfInterpreter(
     private fun beginWait(command: EventCommand) {
         // Duration may be a CSelf/variable ref (fade CEs use 1600000).
         val frames_ = operandValue(command.params.firstOrNull() ?: 0).coerceIn(0, 600)
-        if (frames_ > 0) blocking = Blocking.Wait(frames_)
+        if (frames_ > 0) {
+            val ms = frames_ * 1000L / fps.coerceAtLeast(1)
+            val deadline = System.nanoTime() / 1_000_000L + ms
+            blocking = Blocking.Wait(frames_, deadline)
+        }
     }
 
     private fun callCommonEventById(command: EventCommand) {

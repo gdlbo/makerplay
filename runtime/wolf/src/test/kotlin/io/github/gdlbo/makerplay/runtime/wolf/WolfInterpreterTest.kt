@@ -570,6 +570,33 @@ class WolfInterpreterTest {
     }
 
     @Test
+    fun breakLoopFromChoiceSubframeExitsParentLoop() {
+        val h = host()
+        val interpreter = WolfInterpreter(h)
+        // Mirrors DB OP-skip menu: loop { choices; 401/2 -> BreakLoop }; after loop set v1=9
+        interpreter.start(
+            listOf(
+                cmd(170),
+                cmd(102, strings = listOf("Watch", "Skip")),
+                cmd(401, params = listOf(2)),
+                cmd(171),
+                cmd(401, params = listOf(3)),
+                cmd(121, params = listOf(1, 1, 0, 0)),
+                cmd(171),
+                cmd(499),
+                cmd(498),
+                cmd(121, params = listOf(1, 9, 0, 0)),
+            ),
+        )
+        interpreter.tick()
+        assertTrue(interpreter.currentBlocking() is WolfInterpreter.Blocking.Choices)
+        interpreter.choose(0) // Watch -> BreakLoop in subframe
+        interpreter.tick()
+        assertEquals(9, interpreter.variables[1])
+        assertTrue(interpreter.finished || interpreter.currentBlocking() == null)
+    }
+
+    @Test
     fun engineHooksFireForDatabasePartyEffectsAndFlow() {
         val h = host()
         val interpreter = WolfInterpreter(h)
