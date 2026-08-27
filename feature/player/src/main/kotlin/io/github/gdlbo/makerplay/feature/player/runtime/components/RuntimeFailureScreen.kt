@@ -18,7 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ErrorOutline
-import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -169,7 +169,7 @@ internal fun RuntimeFailureScreen(
                         enabled = actionsEnabled,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Default.Refresh, contentDescription = null)
+                        Icon(Icons.Default.RestartAlt, contentDescription = null)
                         Text(
                             stringResource(R.string.restart_game),
                             modifier = Modifier.padding(start = 8.dp)

@@ -29,9 +29,19 @@ import io.github.gdlbo.makerplay.feature.importer.ImportUiState
 import io.github.gdlbo.makerplay.feature.library.R
 import io.github.gdlbo.makerplay.model.GameSummary
 
+import androidx.compose.material3.FilledTonalButton
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun LibraryTopBar(games: List<GameSummary>, onSettings: () -> Unit) {
+internal fun LibraryTopBar(
+    games: List<GameSummary>,
+    onSettings: () -> Unit,
+    showImportButton: Boolean = false,
+    importState: ImportUiState = ImportUiState.Idle,
+    onImport: () -> Unit = {},
+    showRuntimeSmokeTest: Boolean = false,
+    onRunSmokeTest: () -> Unit = {},
+) {
     TopAppBar(
         title = {
             Column {
@@ -46,6 +56,27 @@ internal fun LibraryTopBar(games: List<GameSummary>, onSettings: () -> Unit) {
             }
         },
         actions = {
+            if (showImportButton && games.isNotEmpty()) {
+                if (showRuntimeSmokeTest) {
+                    IconButton(onClick = onRunSmokeTest) {
+                        Icon(
+                            Icons.Default.Science,
+                            contentDescription = stringResource(R.string.run_runtime_smoke_test),
+                        )
+                    }
+                }
+                FilledTonalButton(
+                    onClick = onImport,
+                    enabled = importState !is ImportUiState.Running,
+                    modifier = Modifier.padding(end = 4.dp),
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Text(
+                        stringResource(R.string.import_another_game),
+                        modifier = Modifier.padding(start = 6.dp),
+                    )
+                }
+            }
             IconButton(onClick = onSettings) {
                 Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
             }
@@ -61,8 +92,9 @@ internal fun LibraryBottomBar(
     onImport: () -> Unit,
     onRunSmokeTest: () -> Unit,
     showRuntimeSmokeTest: Boolean,
+    visible: Boolean = true,
 ) {
-    if (!hasGames) return
+    if (!hasGames || !visible) return
 
     Surface(color = MaterialTheme.colorScheme.surfaceContainer) {
         Column(

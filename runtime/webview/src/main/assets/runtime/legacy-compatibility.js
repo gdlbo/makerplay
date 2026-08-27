@@ -48,4 +48,57 @@
     compatibleGetImageData.__makerplayIntegerCoordinates = true;
     canvasContext.prototype.getImageData = compatibleGetImageData;
   }
+
+  // Polyfill Cordova keyboard plugin if missing
+  if (!globalThis.cordova) globalThis.cordova = {};
+  if (!globalThis.cordova.plugins) globalThis.cordova.plugins = {};
+  if (!globalThis.cordova.plugins.Keyboard) {
+    globalThis.cordova.plugins.Keyboard = {
+      show: () => {},
+      hide: () => {},
+      isVisible: false,
+    };
+  }
+
+  // Provide TouchInput.requestKeyboard support for plugins requesting text input
+  if (!globalThis.TouchInput) globalThis.TouchInput = {};
+  if (typeof globalThis.TouchInput.requestKeyboard !== "function") {
+    globalThis.TouchInput.requestKeyboard = function (variableId, title, defaultValue) {
+      const promptTitle = typeof title === "string" ? title : "Input:";
+      const initialValue = typeof defaultValue === "string" ? defaultValue : "";
+      const result = globalThis.prompt(promptTitle, initialValue);
+      if (result !== null && result !== undefined) {
+        if (variableId && globalThis.$gameVariables && typeof globalThis.$gameVariables.setValue === "function") {
+          globalThis.$gameVariables.setValue(variableId, result);
+        }
+      }
+      return result;
+    };
+  }
+
+  // Ensure game canvas element has id="gameCanvas" for DOM form positioning plugins
+  const ensureCanvasId = () => {
+    if (typeof document === "undefined") return;
+    const canvas = document.querySelector("canvas");
+    if (canvas && !canvas.id) {
+      canvas.id = "gameCanvas";
+    }
+  };
+  if (typeof document !== "undefined") {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", ensureCanvasId, { once: true });
+    } else {
+      ensureCanvasId();
+    }
+    document.addEventListener("click", event => {
+      const target = event.target;
+      if (target && target.id === "_111_input") {
+        const current = target.value || "";
+        const result = globalThis.prompt("Input:", current);
+        if (result !== null && result !== undefined) {
+          target.value = result;
+        }
+      }
+    }, true);
+  }
 })();

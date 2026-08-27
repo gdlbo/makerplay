@@ -49,6 +49,14 @@ class LegacyCompatibilityScriptTest {
               width: 1,
               height: 1,
             });
+            assert.equal(typeof globalThis.cordova.plugins.Keyboard.show, "function");
+            assert.equal(typeof globalThis.TouchInput.requestKeyboard, "function");
+            globalThis.prompt = (title, def) => "test_val";
+            const setValues = [];
+            globalThis.${'$'}gameVariables = { setValue: (id, val) => setValues.push({ id, val }) };
+            const res = globalThis.TouchInput.requestKeyboard(42, "Name:", "default");
+            assert.equal(res, "test_val");
+            assert.deepEqual(setValues, [{ id: 42, val: "test_val" }]);
         """.trimIndent()
         val scriptFile = Files.createTempFile("legacy-compatibility", ".js")
         try {

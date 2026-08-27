@@ -10,7 +10,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -50,7 +54,6 @@ import io.github.gdlbo.makerplay.feature.player.controller.ui.ControllerEditorPa
 import io.github.gdlbo.makerplay.feature.player.controller.ui.VirtualControllerOverlay
 import io.github.gdlbo.makerplay.feature.player.controller.ui.moveVirtualControl
 import io.github.gdlbo.makerplay.feature.player.runtime.components.CheatOverlay
-import io.github.gdlbo.makerplay.feature.player.runtime.components.PlayerBackButton
 import io.github.gdlbo.makerplay.feature.player.runtime.components.PlayerToolbar
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeFailureScreen
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeFailureUi
@@ -101,6 +104,7 @@ fun RuntimeHostScreen(
     var showControls by remember(request.gameId) { mutableStateOf(true) }
     var editControls by remember(request.gameId) { mutableStateOf(false) }
     var confirmExit by rememberSaveable(request.gameId) { mutableStateOf(false) }
+    var showRestartConfirm by rememberSaveable(request.gameId) { mutableStateOf(false) }
     var layouts by remember(request.gameId) { mutableStateOf(ControllerLayouts()) }
     var layoutLoaded by remember(request.gameId) { mutableStateOf(layoutFile == null) }
     var selectedControlId by remember(request.gameId) { mutableStateOf<String?>(null) }
@@ -409,11 +413,11 @@ fun RuntimeHostScreen(
                             scope.launch(Dispatchers.IO) { layoutStore?.save(resetLayouts) }
                         },
                         modifier = Modifier
-                            .align(Alignment.TopCenter)
+                            .align(Alignment.BottomCenter)
                             .safeDrawingPadding()
-                            .padding(start = 12.dp, top = if (compactHeight) 56.dp else 64.dp, end = 12.dp)
-                            .widthIn(max = 600.dp)
-                            .heightIn(max = if (compactHeight) 320.dp else 480.dp),
+                            .padding(start = 12.dp, bottom = 12.dp, end = 12.dp)
+                            .widthIn(max = 560.dp)
+                            .heightIn(max = if (compactHeight) 250.dp else 360.dp),
                     )
                 }
             }
@@ -425,8 +429,6 @@ fun RuntimeHostScreen(
                 cheatsAvailable = request.settings.modules.cheatBridge && cheatsAvailable == true,
                 layoutLoaded = layoutLoaded,
                 controllerMode = layouts.mode,
-                loggingEnabled = loggingEnabled,
-                onToggleLogging = onToggleLogging,
                 onToggleControls = {
                     if (showControls && editControls) scope.launch(Dispatchers.IO) {
                         layoutStore?.save(
@@ -463,11 +465,10 @@ fun RuntimeHostScreen(
                     virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
                     scope.launch(Dispatchers.IO) { layoutStore?.save(layouts) }
                 },
+                onRestart = { showRestartConfirm = true },
+                onBack = ::handleBack,
                 modifier = Modifier.align(Alignment.TopCenter),
             )
-        }
-        if (!showCheats && failure == null) {
-            PlayerBackButton(onBack = ::handleBack, modifier = Modifier.align(Alignment.TopEnd))
         }
         if (session != null && gameReady && showCheats) {
             CheatOverlay(
@@ -510,6 +511,31 @@ fun RuntimeHostScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmExit = false }) {
+                    Text(stringResource(R.string.continue_playing))
+                }
+            },
+        )
+    }
+
+    if (showRestartConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRestartConfirm = false },
+            icon = { Icon(Icons.Default.RestartAlt, contentDescription = null) },
+            title = { Text(stringResource(R.string.restart_game)) },
+            text = { Text(stringResource(R.string.exit_game_message)) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showRestartConfirm = false
+                        virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                        launchAttempt++
+                    },
+                ) {
+                    Text(stringResource(R.string.restart_game))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRestartConfirm = false }) {
                     Text(stringResource(R.string.continue_playing))
                 }
             },

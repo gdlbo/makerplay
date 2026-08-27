@@ -14,7 +14,10 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
@@ -24,8 +27,9 @@ import androidx.compose.material.icons.filled.CropSquare
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.Gamepad
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -45,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -113,22 +118,24 @@ internal fun ControllerEditorPanel(
     if (!expanded) {
         Surface(
             modifier = modifier,
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            tonalElevation = 3.dp,
+            shape = androidx.compose.foundation.shape.CircleShape,
+            color = androidx.compose.ui.graphics.Color(0xEE14161E),
+            border = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.14f)),
+            contentColor = androidx.compose.ui.graphics.Color.White,
+            shadowElevation = 6.dp,
         ) {
-            IconButton(onClick = { expanded = true }, modifier = Modifier.size(44.dp)) {
-                Icon(Icons.Default.Tune, stringResource(R.string.controller_editor_expand))
+            IconButton(onClick = { expanded = true }, modifier = Modifier.size(40.dp)) {
+                Icon(Icons.Default.Tune, stringResource(R.string.controller_editor_expand), tint = androidx.compose.ui.graphics.Color.White)
             }
         }
     } else {
         Surface(
             modifier = modifier,
-            shape = MaterialTheme.shapes.large,
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            contentColor = MaterialTheme.colorScheme.onSurface,
-            shadowElevation = 6.dp,
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+            color = androidx.compose.ui.graphics.Color(0xF2151720),
+            border = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.14f)),
+            contentColor = androidx.compose.ui.graphics.Color.White,
+            shadowElevation = 8.dp,
         ) {
             Column(
                 modifier = Modifier
@@ -167,7 +174,7 @@ internal fun ControllerEditorPanel(
     if (showResetDialog) {
         AlertDialog(
             onDismissRequest = { showResetDialog = false },
-            icon = { Icon(Icons.Default.Restore, contentDescription = null) },
+            icon = { Icon(Icons.Default.RestartAlt, contentDescription = null) },
             title = { Text(stringResource(R.string.controller_reset_title)) },
             text = { Text(stringResource(R.string.controller_reset_message)) },
             confirmButton = {
@@ -209,14 +216,15 @@ private fun EditorHeader(
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = stringResource(R.string.controller_editor_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
+                color = Color.White,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
                     text = controlDisplayLabel(selected),
                     color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -226,22 +234,22 @@ private fun EditorHeader(
                         selectedIndex + 1,
                         controlCount
                     ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.labelSmall,
                 )
             }
         }
-        IconButton(onClick = onReset, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.Restore, stringResource(R.string.controller_reset_layout))
+        IconButton(onClick = onReset, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.RestartAlt, stringResource(R.string.controller_reset_layout), modifier = Modifier.size(18.dp), tint = Color.White)
         }
-        IconButton(enabled = canDelete, onClick = onDelete, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.DeleteOutline, stringResource(R.string.controller_delete))
+        IconButton(enabled = canDelete, onClick = onDelete, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.DeleteOutline, stringResource(R.string.controller_delete), modifier = Modifier.size(18.dp), tint = if (canDelete) Color.White else Color.White.copy(alpha = 0.38f))
         }
-        IconButton(enabled = canAdd, onClick = onAdd, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.Add, stringResource(R.string.controller_add_button))
+        IconButton(enabled = canAdd, onClick = onAdd, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.Add, stringResource(R.string.controller_add_button), modifier = Modifier.size(18.dp), tint = if (canAdd) Color.White else Color.White.copy(alpha = 0.38f))
         }
-        IconButton(onClick = onCollapse, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.ExpandLess, stringResource(R.string.controller_editor_collapse))
+        IconButton(onClick = onCollapse, modifier = Modifier.size(36.dp)) {
+            Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.controller_editor_collapse), modifier = Modifier.size(20.dp), tint = Color.White)
         }
     }
 }
@@ -253,43 +261,41 @@ private fun ControlPicker(
     state: LazyListState,
     onSelected: (String?) -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            text = stringResource(R.string.controller_button_list),
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelSmall,
-        )
-        LazyRow(
-            state = state,
-            horizontalArrangement = Arrangement.spacedBy(5.dp),
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            itemsIndexed(controls, key = { _, control -> control.id }) { _, control ->
-                val selected = control.id == selectedId
-                Surface(
-                    onClick = { onSelected(control.id) },
-                    modifier = Modifier
-                        .height(48.dp)
-                        .widthIn(min = 44.dp, max = 96.dp),
-                    shape = MaterialTheme.shapes.small,
-                    color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer,
-                    contentColor = if (selected) {
-                        MaterialTheme.colorScheme.onPrimaryContainer
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
+    LazyRow(
+        state = state,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        itemsIndexed(controls, key = { _, control -> control.id }) { _, control ->
+            val selected = control.id == selectedId
+            Surface(
+                onClick = { onSelected(control.id) },
+                modifier = Modifier
+                    .height(34.dp)
+                    .widthIn(min = 42.dp),
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(10.dp),
+                color = if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.08f),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+                ),
+                contentColor = if (selected) {
+                    MaterialTheme.colorScheme.onPrimary
+                } else {
+                    Color.White
+                },
+            ) {
+                Box(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = controlDisplayLabel(control),
-                            style = MaterialTheme.typography.labelMedium,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
+                    Text(
+                        text = controlDisplayLabel(control),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
@@ -299,18 +305,20 @@ private fun ControlPicker(
 @Composable
 private fun DPadSummary() {
     Surface(
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        color = Color.White.copy(alpha = 0.08f),
+        contentColor = Color.White,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Icon(Icons.Default.Gamepad, contentDescription = null, modifier = Modifier.size(20.dp))
+            Icon(Icons.Default.Gamepad, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
             Text(
                 stringResource(R.string.controller_dpad),
-                style = MaterialTheme.typography.labelLarge
+                style = MaterialTheme.typography.labelMedium,
+                color = Color.White,
             )
         }
     }
@@ -365,26 +373,28 @@ private fun ActionSelector(
                     )
                 )
             },
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(34.dp),
         ) {
-            Icon(Icons.Default.ChevronLeft, stringResource(R.string.controller_previous_action))
+            Icon(Icons.Default.ChevronLeft, stringResource(R.string.controller_previous_action), modifier = Modifier.size(18.dp), tint = Color.White)
         }
         Surface(
             modifier = Modifier
                 .weight(1f)
-                .height(48.dp),
-            shape = MaterialTheme.shapes.small,
-            color = MaterialTheme.colorScheme.surfaceContainerHighest,
-            contentColor = MaterialTheme.colorScheme.onSurface,
+                .height(34.dp),
+            shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+            color = Color.White.copy(alpha = 0.08f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            contentColor = Color.White,
         ) {
             Box(
-                modifier = Modifier.padding(horizontal = 10.dp),
+                modifier = Modifier.padding(horizontal = 8.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     text = if (selected.keyCode != null) controlDisplayLabel(selected)
                     else gameActionLabel(selected.action),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -402,9 +412,9 @@ private fun ActionSelector(
                     )
                 )
             },
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(34.dp),
         ) {
-            Icon(Icons.Default.ChevronRight, stringResource(R.string.controller_next_action))
+            Icon(Icons.Default.ChevronRight, stringResource(R.string.controller_next_action), modifier = Modifier.size(18.dp), tint = Color.White)
         }
     }
 }
@@ -424,7 +434,8 @@ private fun ShapeSelector(
         ) {
             Icon(
                 Icons.Default.RadioButtonUnchecked,
-                stringResource(R.string.controller_shape_round)
+                stringResource(R.string.controller_shape_round),
+                modifier = Modifier.size(16.dp),
             )
         }
         ShapeButton(
@@ -433,7 +444,11 @@ private fun ShapeSelector(
                 onProfileChanged(profile.update(selected.copy(shape = VirtualControlShape.ROUNDED_RECTANGLE)))
             },
         ) {
-            Icon(Icons.Default.CropSquare, stringResource(R.string.controller_shape_rectangle))
+            Icon(
+                Icons.Default.CropSquare,
+                stringResource(R.string.controller_shape_rectangle),
+                modifier = Modifier.size(16.dp),
+            )
         }
     }
 }
@@ -446,12 +461,16 @@ private fun ShapeButton(
 ) {
     Surface(
         onClick = onClick,
-        modifier = Modifier.size(48.dp),
-        shape = MaterialTheme.shapes.small,
+        modifier = Modifier.size(34.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
         color = if (selected) MaterialTheme.colorScheme.primaryContainer
-        else MaterialTheme.colorScheme.surfaceContainerHighest,
+        else Color.White.copy(alpha = 0.08f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.12f),
+        ),
         contentColor = if (selected) MaterialTheme.colorScheme.onPrimaryContainer
-        else MaterialTheme.colorScheme.onSurface,
+        else Color.White,
     ) {
         Box(contentAlignment = Alignment.Center) { content() }
     }
@@ -557,17 +576,29 @@ private fun ControlSlider(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
                 stringResource(labelRes),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelSmall
+                color = Color.White.copy(alpha = 0.7f),
+                style = MaterialTheme.typography.labelSmall,
             )
-            Text(
-                valueLabel,
-                color = MaterialTheme.colorScheme.primary,
-                style = MaterialTheme.typography.labelSmall
-            )
+            Surface(
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.18f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)),
+            ) {
+                Text(
+                    valueLabel,
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
         }
         Slider(
             value = value,

@@ -1,8 +1,16 @@
 package io.github.gdlbo.makerplay.runtime.webview.internal.web
 
+import android.app.AlertDialog
+import android.content.Context
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.webkit.ConsoleMessage
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.WebChromeClient
 import android.webkit.WebView
+import android.widget.EditText
+import android.widget.FrameLayout
 
 internal class RuntimeWebChromeClient(
     private val onRuntimeError: (String, Map<String, String>) -> Unit,
@@ -23,6 +31,94 @@ internal class RuntimeWebChromeClient(
             onRuntimeError(entry.event, entry.fields)
         }
         return super.onConsoleMessage(consoleMessage)
+    }
+
+    override fun onJsPrompt(
+        view: WebView?,
+        url: String?,
+        message: String?,
+        defaultValue: String?,
+        result: JsPromptResult?,
+    ): Boolean {
+        if (view == null || result == null) return false
+        val context = view.context ?: return false
+        val density = context.resources.displayMetrics.density
+        val editText = EditText(context).apply {
+            setText(defaultValue ?: "")
+            setSelection(text.length)
+            isSingleLine = true
+            imeOptions = EditorInfo.IME_ACTION_DONE
+        }
+        val container = FrameLayout(context).apply {
+            val horizontalPadding = (20 * density).toInt()
+            val verticalPadding = (10 * density).toInt()
+            setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
+            addView(editText)
+        }
+        val dialog = AlertDialog.Builder(context)
+            .setTitle(message ?: "Input")
+            .setView(container)
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                result.confirm(editText.text.toString())
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                result.cancel()
+            }
+            .setOnCancelListener {
+                result.cancel()
+            }
+            .create()
+
+        dialog.show()
+        editText.requestFocus()
+        editText.post {
+            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+            imm?.showSoftInput(editText, 0)
+        }
+        return true
+    }
+
+    override fun onJsAlert(
+        view: WebView?,
+        url: String?,
+        message: String?,
+        result: JsResult?,
+    ): Boolean {
+        if (view == null || result == null) return false
+        val context = view.context ?: return false
+        AlertDialog.Builder(context)
+            .setMessage(message ?: "")
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                result.confirm()
+            }
+            .setOnCancelListener {
+                result.confirm()
+            }
+            .show()
+        return true
+    }
+
+    override fun onJsConfirm(
+        view: WebView?,
+        url: String?,
+        message: String?,
+        result: JsResult?,
+    ): Boolean {
+        if (view == null || result == null) return false
+        val context = view.context ?: return false
+        AlertDialog.Builder(context)
+            .setMessage(message ?: "")
+            .setPositiveButton(android.R.string.ok) { _, _ ->
+                result.confirm()
+            }
+            .setNegativeButton(android.R.string.cancel) { _, _ ->
+                result.cancel()
+            }
+            .setOnCancelListener {
+                result.cancel()
+            }
+            .show()
+        return true
     }
 
     override fun onCloseWindow(window: WebView) {

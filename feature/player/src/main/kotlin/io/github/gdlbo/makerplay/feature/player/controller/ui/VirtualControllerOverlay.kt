@@ -41,9 +41,16 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
@@ -160,9 +167,10 @@ internal fun VirtualControllerOverlay(
                 modifier = Modifier
                     .offset(x = maxWidth * frame.left, y = maxHeight * frame.top)
                     .size(width = maxWidth * frame.width, height = maxHeight * frame.height),
-                shape = RoundedCornerShape(8.dp),
-                color = Color(0xFF14161A).copy(alpha = .78f),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = .10f)),
+                shape = RoundedCornerShape(16.dp),
+                color = Color(0xF2101218),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = .14f)),
+                shadowElevation = 10.dp,
             ) {}
         }
         profile.controls.forEach { control ->
@@ -207,7 +215,10 @@ internal fun VirtualControllerOverlay(
                         selected = selectedControlId == control.id,
                         reducer = reducer,
                         onSnapshotChanged = onSnapshotChanged,
-                        modifier = interaction,
+                        placement = placement,
+                        canvasWidth = maxWidth,
+                        canvasHeight = maxHeight,
+                        editModifier = interaction,
                     )
                 } else {
                     VirtualButton(
@@ -237,7 +248,16 @@ private fun VirtualButton(
     val controlColor = Color(control.color)
     val darkControl = controlColor.luminance() < .45f
     var pressed by remember(control.id) { mutableStateOf(false) }
+    val isKey = control.keyCode != null
     val circular = control.shape == VirtualControlShape.CIRCLE
+    val keyShape = when {
+        circular -> CircleShape
+        isKey -> RoundedCornerShape(6.dp)
+        else -> RoundedCornerShape(10.dp)
+    }
+    val isModifierKey = isKey && (control.keyCode in listOf(59, 60, 113, 114, 57, 58, 61, 115, 67, 111, 82))
+    val isEnterKey = isKey && control.keyCode == 66
+
     val inputModifier = if (editMode) {
         Modifier
     } else {
@@ -274,29 +294,37 @@ private fun VirtualButton(
     }
 
     val fillAlpha = when {
-        pressed -> (control.opacity + .16f).coerceIn(.35f, 1f)
+        pressed -> 1.0f
         else -> control.opacity.coerceIn(.2f, 1f)
     }
+    val buttonColor = when {
+        pressed -> Color(0xFF0284C7)
+        isEnterKey -> Color(0xFF1E3A5F).copy(alpha = fillAlpha)
+        isModifierKey -> Color(0xFF1B1D26).copy(alpha = fillAlpha)
+        isKey -> Color(0xFF282B36).copy(alpha = fillAlpha)
+        else -> controlColor.copy(alpha = fillAlpha)
+    }
+
     Surface(
         modifier = modifier.then(inputModifier),
-        shape = if (circular) CircleShape else RoundedCornerShape(8.dp),
-        color = controlColor.copy(alpha = fillAlpha),
-        contentColor = if (darkControl) Color.White else Color.Black,
+        shape = keyShape,
+        color = buttonColor,
+        contentColor = if (pressed) Color.White else if (darkControl || isKey) Color.White else Color.Black,
         border = controlBorder(editMode, selected, darkControl, pressed),
         tonalElevation = if (pressed) 0.dp else 1.dp,
-        shadowElevation = 0.dp,
+        shadowElevation = if (isKey && !pressed) 2.dp else 0.dp,
     ) {
         Box(
             contentAlignment = Alignment.Center,
             // Circles are already square-fitted; extra horizontal padding makes
             // right-side face buttons look uneven on tall portrait canvases.
-            modifier = if (circular) Modifier else Modifier.padding(horizontal = 4.dp),
+            modifier = if (circular) Modifier else Modifier.padding(horizontal = if (isKey) 2.dp else 4.dp),
         ) {
             Text(
                 text = controlDisplayLabel(control),
                 style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = if (circular) 13.sp else 12.sp,
+                    fontWeight = if (isKey) FontWeight.Medium else FontWeight.SemiBold,
+                    fontSize = if (circular) 13.sp else if (isKey) 11.sp else 12.sp,
                     letterSpacing = 0.sp,
                 ),
                 maxLines = 1,
@@ -313,187 +341,296 @@ private fun VirtualDPad(
     selected: Boolean,
     reducer: InputStateReducer,
     onSnapshotChanged: (LogicalInputSnapshot) -> Unit,
-    modifier: Modifier,
+    placement: ControlPlacement,
+    canvasWidth: Dp,
+    canvasHeight: Dp,
+    editModifier: Modifier,
 ) {
     val source = "virtual:${control.id}"
     val controlColor = Color(control.color)
     val darkControl = controlColor.luminance() < .45f
     var activeActions by remember(control.id) { mutableStateOf(emptySet<GameAction>()) }
-    val inputModifier = if (editMode) {
-        Modifier
-    } else {
-        Modifier.pointerInput(control.id) {
-            awaitEachGesture {
-                var currentActions = emptySet<GameAction>()
 
-                fun updateActions(nextActions: Set<GameAction>) {
-                    if (nextActions == currentActions) return
-                    reducer.clearSource(source)
-                    nextActions.forEach { action ->
-                        reducer.press(source, action)
-                        when (action) {
-                            GameAction.UP -> reducer.pressKeyCode(source, 19)
-                            GameAction.DOWN -> reducer.pressKeyCode(source, 20)
-                            GameAction.LEFT -> reducer.pressKeyCode(source, 21)
-                            GameAction.RIGHT -> reducer.pressKeyCode(source, 22)
-                            else -> Unit
-                        }
-                    }
-                    currentActions = nextActions
-                    activeActions = nextActions
-                    onSnapshotChanged(reducer.snapshot())
-                }
+    if (editMode) {
+        Surface(
+            modifier = editModifier,
+            shape = CircleShape,
+            color = Color(0xF012141C),
+            contentColor = Color.White,
+            border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
+                     else BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+            tonalElevation = 2.dp,
+            shadowElevation = 6.dp,
+        ) {
+            DPadFace(activeActions = emptySet())
+        }
+        return
+    }
 
-                try {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    down.consume()
-                    updateActions(
-                        dPadActionsForPosition(
-                            down.position.x / size.width,
-                            down.position.y / size.height,
-                        ),
-                    )
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (!change.pressed) break
-                        updateActions(
-                            dPadActionsForPosition(
-                                change.position.x / size.width,
-                                change.position.y / size.height,
-                            ),
-                        )
-                        change.consume()
-                    }
-                } finally {
-                    reducer.clearSource(source)
-                    activeActions = emptySet()
-                    onSnapshotChanged(reducer.snapshot())
-                }
-            }
+    // Play mode: Expanded invisible touch zone so diagonal touches (e.g. left-down) never miss
+    // and touches never pass through to cause accidental walking on the game canvas!
+    val dPadSize = placement.width
+    val extraMargin = (dPadSize * 0.50f).coerceIn(40.dp, 90.dp)
+    val touchLeft = if (placement.x <= extraMargin * 1.5f) 0.dp else placement.x - extraMargin
+    val touchTop = maxOf(0.dp, placement.y - extraMargin)
+    val touchRight = minOf(canvasWidth, placement.x + dPadSize + extraMargin)
+    val touchBottom = if (canvasHeight - (placement.y + dPadSize) <= extraMargin * 1.5f) canvasHeight else placement.y + dPadSize + extraMargin
+    val touchWidth = touchRight - touchLeft
+    val touchHeight = touchBottom - touchTop
+
+    fun actionsForTouchInBox(
+        boxX: Float,
+        boxY: Float,
+        dPadLeftInBoxPx: Float,
+        dPadTopInBoxPx: Float,
+        dPadSizePx: Float,
+    ): Set<GameAction> {
+        val centerX = dPadLeftInBoxPx + dPadSizePx / 2f
+        val centerY = dPadTopInBoxPx + dPadSizePx / 2f
+        val deltaX = boxX - centerX
+        val deltaY = boxY - centerY
+        val radiusPx = dPadSizePx / 2f
+        val dist = kotlin.math.hypot(deltaX, deltaY)
+        if (dist < radiusPx * 0.16f) return emptySet()
+
+        val degrees = Math.toDegrees(atan2(deltaY.toDouble(), deltaX.toDouble()))
+        val octant = kotlin.math.floor((degrees + 22.5 + 360.0) % 360.0 / 45.0).toInt()
+        return when (octant) {
+            0 -> setOf(GameAction.RIGHT)
+            1 -> setOf(GameAction.DOWN, GameAction.RIGHT)
+            2 -> setOf(GameAction.DOWN)
+            3 -> setOf(GameAction.DOWN, GameAction.LEFT)
+            4 -> setOf(GameAction.LEFT)
+            5 -> setOf(GameAction.UP, GameAction.LEFT)
+            6 -> setOf(GameAction.UP)
+            else -> setOf(GameAction.UP, GameAction.RIGHT)
         }
     }
 
-    Surface(
-        modifier = modifier.then(inputModifier),
-        shape = CircleShape,
-        color = controlColor.copy(alpha = control.opacity.coerceIn(.2f, 1f)),
-        contentColor = if (darkControl) Color.White else Color.Black,
-        border = controlBorder(editMode, selected, darkControl, pressed = activeActions.isNotEmpty()),
-        tonalElevation = 1.dp,
-        shadowElevation = 0.dp,
+    Box(
+        modifier = Modifier
+            .offset(x = touchLeft, y = touchTop)
+            .size(width = touchWidth, height = touchHeight)
+            .pointerInput(control.id) {
+                awaitEachGesture {
+                    var currentActions = emptySet<GameAction>()
+
+                    fun updateActions(nextActions: Set<GameAction>) {
+                        if (nextActions == currentActions) return
+                        reducer.clearSource(source)
+                        nextActions.forEach { action ->
+                            reducer.press(source, action)
+                            when (action) {
+                                GameAction.UP -> reducer.pressKeyCode(source, 19)
+                                GameAction.DOWN -> reducer.pressKeyCode(source, 20)
+                                GameAction.LEFT -> reducer.pressKeyCode(source, 21)
+                                GameAction.RIGHT -> reducer.pressKeyCode(source, 22)
+                                else -> Unit
+                            }
+                        }
+                        currentActions = nextActions
+                        activeActions = nextActions
+                        onSnapshotChanged(reducer.snapshot())
+                    }
+
+                    try {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        val dPadLeftPx = (placement.x - touchLeft).toPx()
+                        val dPadTopPx = (placement.y - touchTop).toPx()
+                        val dPadSizePx = dPadSize.toPx()
+                        updateActions(
+                            actionsForTouchInBox(
+                                down.position.x,
+                                down.position.y,
+                                dPadLeftPx,
+                                dPadTopPx,
+                                dPadSizePx,
+                            )
+                        )
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (!change.pressed) break
+                            change.consume()
+                            updateActions(
+                                actionsForTouchInBox(
+                                    change.position.x,
+                                    change.position.y,
+                                    dPadLeftPx,
+                                    dPadTopPx,
+                                    dPadSizePx,
+                                )
+                            )
+                        }
+                    } finally {
+                        reducer.clearSource(source)
+                        activeActions = emptySet()
+                        onSnapshotChanged(reducer.snapshot())
+                    }
+                }
+            },
     ) {
-        DPadFace(activeActions = activeActions)
+        Surface(
+            modifier = Modifier
+                .offset(x = placement.x - touchLeft, y = placement.y - touchTop)
+                .size(dPadSize),
+            shape = CircleShape,
+            color = Color(0xF012141C),
+            contentColor = Color.White,
+            border = BorderStroke(
+                1.dp,
+                if (activeActions.isNotEmpty()) Color(0xFF38BDF8).copy(alpha = 0.6f)
+                else Color.White.copy(alpha = 0.12f),
+            ),
+            tonalElevation = 2.dp,
+            shadowElevation = 6.dp,
+        ) {
+            DPadFace(activeActions = activeActions)
+        }
     }
 }
 
 @Composable
 private fun DPadFace(activeActions: Set<GameAction>) {
-    val idleArm = Color.White.copy(alpha = .10f)
-    val activeArm = Color.White.copy(alpha = .30f)
-    val ring = Color.White.copy(alpha = .18f)
-    val disc = Color.Black.copy(alpha = .14f)
+    val idleButtonColor = Color.White.copy(alpha = 0.09f)
+    val idleBorderColor = Color.White.copy(alpha = 0.18f)
+    val activeButtonColor = Color(0xFF0284C7).copy(alpha = 0.92f)
+    val activeGlowColor = Color(0xFF38BDF8)
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
-            val diameter = size.minDimension
-            val strokeWidth = 1.dp.toPx()
-            val radius = diameter * .5f - strokeWidth
-            drawCircle(color = disc, radius = radius)
-            drawCircle(color = ring, radius = radius, style = Stroke(width = strokeWidth))
-
-            val armThickness = diameter * .33f
-            val armReach = diameter * .78f
-            val corner = CornerRadius(armThickness * .28f, armThickness * .28f)
+            val d = size.minDimension
             val cx = center.x
             val cy = center.y
 
-            fun drawArm(left: Float, top: Float, width: Float, height: Float, active: Boolean) {
+            // Diagonal corner reference dots (45, 135, 225, 315 deg)
+            val diagDist = d * 0.35f
+            val dotRadius = 2.dp.toPx()
+            for (angle in listOf(45.0, 135.0, 225.0, 315.0)) {
+                val rad = Math.toRadians(angle)
+                val dotX = cx + (diagDist * kotlin.math.cos(rad)).toFloat()
+                val dotY = cy + (diagDist * kotlin.math.sin(rad)).toFloat()
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.22f),
+                    radius = dotRadius,
+                    center = Offset(dotX, dotY),
+                )
+            }
+
+            // Button geometry: 4 distinct, sculpted directional keys that NEVER overlap!
+            val hubRadius = d * 0.15f
+            val btnWidth = d * 0.27f
+            val btnReach = d * 0.45f
+            val btnLength = btnReach - hubRadius
+            val corner = CornerRadius(btnWidth * 0.28f, btnWidth * 0.28f)
+
+            fun drawButton(left: Float, top: Float, width: Float, height: Float, active: Boolean) {
+                val fillColor = if (active) activeButtonColor else idleButtonColor
+                val strokeColor = if (active) activeGlowColor else idleBorderColor
+                val strokeW = if (active) 2.dp.toPx() else 1.dp.toPx()
+
                 drawRoundRect(
-                    color = if (active) activeArm else idleArm,
+                    color = fillColor,
                     topLeft = Offset(left, top),
                     size = Size(width, height),
                     cornerRadius = corner,
                 )
-            }
-
-            drawArm(
-                left = cx - armThickness / 2f,
-                top = cy - armReach / 2f,
-                width = armThickness,
-                height = armReach / 2f - armThickness * .12f,
-                active = GameAction.UP in activeActions,
-            )
-            drawArm(
-                left = cx - armThickness / 2f,
-                top = cy + armThickness * .12f,
-                width = armThickness,
-                height = armReach / 2f - armThickness * .12f,
-                active = GameAction.DOWN in activeActions,
-            )
-            drawArm(
-                left = cx - armReach / 2f,
-                top = cy - armThickness / 2f,
-                width = armReach / 2f - armThickness * .12f,
-                height = armThickness,
-                active = GameAction.LEFT in activeActions,
-            )
-            drawArm(
-                left = cx + armThickness * .12f,
-                top = cy - armThickness / 2f,
-                width = armReach / 2f - armThickness * .12f,
-                height = armThickness,
-                active = GameAction.RIGHT in activeActions,
-            )
-
-            val hub = Path().apply {
-                addRoundRect(
-                    RoundRect(
-                        left = cx - armThickness * .42f,
-                        top = cy - armThickness * .42f,
-                        right = cx + armThickness * .42f,
-                        bottom = cy + armThickness * .42f,
-                        cornerRadius = CornerRadius(armThickness * .18f, armThickness * .18f),
-                    ),
+                drawRoundRect(
+                    color = strokeColor,
+                    topLeft = Offset(left, top),
+                    size = Size(width, height),
+                    cornerRadius = corner,
+                    style = Stroke(width = strokeW),
                 )
             }
-            drawPath(hub, color = Color.Black.copy(alpha = .22f))
-            drawPath(hub, color = ring, style = Stroke(width = strokeWidth))
-        }
-        DPadArrow(Icons.Default.KeyboardArrowUp, Alignment.TopCenter, Modifier.padding(top = 10.dp))
-        DPadArrow(
-            Icons.Default.KeyboardArrowDown,
-            Alignment.BottomCenter,
-            Modifier.padding(bottom = 10.dp),
-        )
-        DPadArrow(
-            Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-            Alignment.CenterStart,
-            Modifier.padding(start = 10.dp),
-        )
-        DPadArrow(
-            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-            Alignment.CenterEnd,
-            Modifier.padding(end = 10.dp),
-        )
-    }
-}
 
-@Composable
-private fun BoxScope.DPadArrow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    alignment: Alignment,
-    modifier: Modifier = Modifier,
-) {
-    Icon(
-        imageVector = icon,
-        contentDescription = null,
-        modifier = Modifier
-            .align(alignment)
-            .then(modifier)
-            .size(20.dp),
-        tint = Color.White.copy(alpha = .86f),
-    )
+            // UP button
+            val isUp = GameAction.UP in activeActions
+            drawButton(
+                left = cx - btnWidth / 2f,
+                top = cy - btnReach,
+                width = btnWidth,
+                height = btnLength,
+                active = isUp,
+            )
+            // DOWN button
+            val isDown = GameAction.DOWN in activeActions
+            drawButton(
+                left = cx - btnWidth / 2f,
+                top = cy + hubRadius,
+                width = btnWidth,
+                height = btnLength,
+                active = isDown,
+            )
+            // LEFT button
+            val isLeft = GameAction.LEFT in activeActions
+            drawButton(
+                left = cx - btnReach,
+                top = cy - btnWidth / 2f,
+                width = btnLength,
+                height = btnWidth,
+                active = isLeft,
+            )
+            // RIGHT button
+            val isRight = GameAction.RIGHT in activeActions
+            drawButton(
+                left = cx + hubRadius,
+                top = cy - btnWidth / 2f,
+                width = btnLength,
+                height = btnWidth,
+                active = isRight,
+            )
+
+            // Draw crisp chevrons on each button
+            val btnCenterDist = (hubRadius + btnReach) / 2f
+            val chevronArm = 6.5.dp.toPx()
+
+            fun drawChevron(midX: Float, midY: Float, angleDeg: Float, active: Boolean) {
+                val strokeW = (if (active) 3.dp else 2.2.dp).toPx()
+                val color = if (active) Color.White else Color.White.copy(alpha = 0.85f)
+                rotate(angleDeg, pivot = Offset(midX, midY)) {
+                    val path = Path().apply {
+                        moveTo(midX - chevronArm, midY + chevronArm * 0.45f)
+                        lineTo(midX, midY - chevronArm * 0.45f)
+                        lineTo(midX + chevronArm, midY + chevronArm * 0.45f)
+                    }
+                    drawPath(
+                        path = path,
+                        color = color,
+                        style = Stroke(
+                            width = strokeW,
+                            cap = StrokeCap.Round,
+                            join = StrokeJoin.Round,
+                        ),
+                    )
+                }
+            }
+
+            drawChevron(cx, cy - btnCenterDist, 0f, isUp)
+            drawChevron(cx + btnCenterDist, cy, 90f, isRight)
+            drawChevron(cx, cy + btnCenterDist, 180f, isDown)
+            drawChevron(cx - btnCenterDist, cy, 270f, isLeft)
+
+            // Recessed center hub
+            drawCircle(
+                color = Color(0x9008090E),
+                radius = hubRadius * 0.85f,
+                center = Offset(cx, cy),
+            )
+            drawCircle(
+                color = Color.White.copy(alpha = 0.15f),
+                radius = hubRadius * 0.85f,
+                center = Offset(cx, cy),
+                style = Stroke(width = 1.dp.toPx()),
+            )
+            drawCircle(
+                color = Color.White.copy(alpha = 0.35f),
+                radius = 2.dp.toPx(),
+                center = Offset(cx, cy),
+            )
+        }
+    }
 }
 
 @Composable

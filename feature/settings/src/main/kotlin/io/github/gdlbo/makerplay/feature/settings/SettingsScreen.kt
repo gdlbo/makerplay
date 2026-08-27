@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -50,6 +51,11 @@ import io.github.gdlbo.makerplay.runtime.api.RuntimeScaleMode
 import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.runtime.api.SUPPORTED_FPS_LIMITS
 
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.Surface
+import androidx.compose.ui.graphics.Color
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -82,90 +88,99 @@ fun SettingsScreen(
             )
         },
     ) { contentPadding ->
-        Column(
+        Box(
             modifier = Modifier
-                .padding(contentPadding)
-                .widthIn(max = 720.dp)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(contentPadding),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            SettingsSection(stringResource(R.string.appearance_section))
-            ChoiceSetting(
-                title = stringResource(R.string.app_theme),
-                values = ThemeMode.entries,
-                selected = themeMode,
-                label = { mode ->
-                    stringResource(
-                        when (mode) {
-                            ThemeMode.SYSTEM -> R.string.theme_system
-                            ThemeMode.LIGHT -> R.string.theme_light
-                            ThemeMode.DARK -> R.string.theme_dark
-                        },
-                    )
-                },
-                onSelected = onThemeModeChange,
-            )
-            Text(
-                stringResource(R.string.library_section),
-                modifier = Modifier.padding(start = 12.dp, top = 12.dp),
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
-            ListItem(
+            Column(
                 modifier = Modifier
+                    .fillMaxHeight()
+                    .widthIn(max = 680.dp)
                     .fillMaxWidth()
-                    .clickable(onClick = onChooseDefaultGameFolder),
-                leadingContent = {
-                    Icon(Icons.Default.FolderOpen, contentDescription = null)
-                },
-                headlineContent = {
-                    Text(stringResource(R.string.default_game_folder))
-                },
-                supportingContent = {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            defaultGameFolder.ifBlank {
-                                stringResource(R.string.default_game_folder_example)
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.MiddleEllipsis,
-                        )
-                        Text(
-                            stringResource(R.string.default_game_folder_description),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                },
-                trailingContent = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (defaultGameFolder.isNotEmpty()) {
-                            IconButton(
-                                onClick = { onDefaultGameFolderChange("") },
-                            ) {
-                                Icon(
-                                    Icons.Default.Clear,
-                                    contentDescription = stringResource(R.string.clear_default_game_folder),
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SettingsSection(stringResource(R.string.appearance_section))
+                SettingsCard {
+                    ChoiceSetting(
+                        title = stringResource(R.string.app_theme),
+                        values = ThemeMode.entries,
+                        selected = themeMode,
+                        label = { mode ->
+                            stringResource(
+                                when (mode) {
+                                    ThemeMode.SYSTEM -> R.string.theme_system
+                                    ThemeMode.LIGHT -> R.string.theme_light
+                                    ThemeMode.DARK -> R.string.theme_dark
+                                },
+                            )
+                        },
+                        onSelected = onThemeModeChange,
+                    )
+                }
+
+                SettingsSection(stringResource(R.string.library_section))
+                SettingsCard {
+                    ListItem(
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onChooseDefaultGameFolder),
+                        leadingContent = {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null)
+                        },
+                        headlineContent = {
+                            Text(stringResource(R.string.default_game_folder))
+                        },
+                        supportingContent = {
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    defaultGameFolder.ifBlank {
+                                        stringResource(R.string.default_game_folder_example)
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.MiddleEllipsis,
+                                )
+                                Text(
+                                    stringResource(R.string.default_game_folder_description),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                        }
-                        SettingsChevron()
-                    }
-                },
-            )
-            ChoiceSetting(
-                title = stringResource(R.string.default_import_mode),
-                values = listOf(false, true),
-                selected = defaultInstallDirect,
-                label = { mode ->
-                    stringResource(
-                        if (mode) R.string.default_direct_mode else R.string.default_copy_mode,
+                        },
+                        trailingContent = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (defaultGameFolder.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { onDefaultGameFolderChange("") },
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Clear,
+                                            contentDescription = stringResource(R.string.clear_default_game_folder),
+                                        )
+                                    }
+                                }
+                                SettingsChevron()
+                            }
+                        },
                     )
-                },
-                onSelected = onDefaultInstallDirectChange,
-            )
-            RuntimeSettingsOptions(runtimeSettings, onRuntimeSettingsChange)
+                    ChoiceSetting(
+                        title = stringResource(R.string.default_import_mode),
+                        values = listOf(false, true),
+                        selected = defaultInstallDirect,
+                        label = { mode ->
+                            stringResource(
+                                if (mode) R.string.default_direct_mode else R.string.default_copy_mode,
+                            )
+                        },
+                        onSelected = onDefaultInstallDirectChange,
+                    )
+                }
+
+                RuntimeSettingsOptions(runtimeSettings, onRuntimeSettingsChange)
+            }
         }
     }
 }
@@ -199,34 +214,43 @@ fun GameSettingsScreen(
             )
         },
     ) { contentPadding ->
-        Column(
+        Box(
             modifier = Modifier
-                .padding(contentPadding)
-                .widthIn(max = 720.dp)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+                .padding(contentPadding),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            ToggleSetting(
-                title = stringResource(R.string.use_common_settings),
-                description = stringResource(R.string.use_common_settings_description),
-                checked = useCommonSettings,
-                onCheckedChange = onUseCommonSettingsChange,
-            )
-            if (!useCommonSettings) {
-                RuntimeSettingsOptions(customSettings, onCustomSettingsChange)
-            } else {
-                Text(
-                    stringResource(
-                        R.string.common_settings_summary,
-                        commonSettings.fpsLimit?.let { stringResource(R.string.fps_value, it) }
-                            ?: stringResource(R.string.fps_auto),
-                    ),
-                    modifier = Modifier.padding(horizontal = 12.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+            Column(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .widthIn(max = 680.dp)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                SettingsCard {
+                    ToggleSetting(
+                        title = stringResource(R.string.use_common_settings),
+                        description = stringResource(R.string.use_common_settings_description),
+                        checked = useCommonSettings,
+                        onCheckedChange = onUseCommonSettingsChange,
+                    )
+                }
+                if (!useCommonSettings) {
+                    RuntimeSettingsOptions(customSettings, onCustomSettingsChange, isWolfGame = isWolfGame)
+                } else {
+                    Text(
+                        stringResource(
+                            R.string.common_settings_summary,
+                            commonSettings.fpsLimit?.let { stringResource(R.string.fps_value, it) }
+                                ?: stringResource(R.string.fps_auto),
+                        ),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }
@@ -242,199 +266,229 @@ private fun ColumnScope.RuntimeSettingsOptions(
     // apply and are hidden entirely.
 
     SettingsSection(stringResource(R.string.display_section))
-    ChoiceSetting(
-        title = stringResource(R.string.orientation),
-        values = RuntimeOrientation.entries,
-        selected = runtimeSettings.orientation,
-        label = { orientation ->
-            stringResource(
-                when (orientation) {
-                    RuntimeOrientation.AUTO -> R.string.orientation_auto
-                    RuntimeOrientation.PORTRAIT -> R.string.orientation_portrait
-                    RuntimeOrientation.LANDSCAPE -> R.string.orientation_landscape
-                },
-            )
-        },
-        onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(orientation = it)) },
-    )
-    ChoiceSetting(
-        title = stringResource(R.string.scale_mode),
-        values = RuntimeScaleMode.entries,
-        selected = runtimeSettings.scaleMode,
-        label = { mode ->
-            stringResource(
-                when (mode) {
-                    RuntimeScaleMode.FIT -> R.string.scale_fit
-                    RuntimeScaleMode.INTEGER -> R.string.scale_integer
-                    RuntimeScaleMode.STRETCH -> R.string.scale_stretch
-                },
-            )
-        },
-        onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(scaleMode = it)) },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.pixel_smoothing),
-        description = stringResource(R.string.pixel_smoothing_description),
-        checked = runtimeSettings.pixelSmoothing,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(pixelSmoothing = it)) },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.immersive_mode),
-        description = stringResource(R.string.immersive_mode_description),
-        checked = runtimeSettings.immersiveMode,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(immersiveMode = it)) },
-    )
+    SettingsCard {
+        ChoiceSetting(
+            title = stringResource(R.string.orientation),
+            values = RuntimeOrientation.entries,
+            selected = runtimeSettings.orientation,
+            label = { orientation ->
+                stringResource(
+                    when (orientation) {
+                        RuntimeOrientation.AUTO -> R.string.orientation_auto
+                        RuntimeOrientation.PORTRAIT -> R.string.orientation_portrait
+                        RuntimeOrientation.LANDSCAPE -> R.string.orientation_landscape
+                    },
+                )
+            },
+            onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(orientation = it)) },
+        )
+        ChoiceSetting(
+            title = stringResource(R.string.scale_mode),
+            values = RuntimeScaleMode.entries,
+            selected = runtimeSettings.scaleMode,
+            label = { mode ->
+                stringResource(
+                    when (mode) {
+                        RuntimeScaleMode.FIT -> R.string.scale_fit
+                        RuntimeScaleMode.INTEGER -> R.string.scale_integer
+                        RuntimeScaleMode.STRETCH -> R.string.scale_stretch
+                    },
+                )
+            },
+            onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(scaleMode = it)) },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.pixel_smoothing),
+            description = stringResource(R.string.pixel_smoothing_description),
+            checked = runtimeSettings.pixelSmoothing,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(pixelSmoothing = it)) },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.immersive_mode),
+            description = stringResource(R.string.immersive_mode_description),
+            checked = runtimeSettings.immersiveMode,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(immersiveMode = it)) },
+        )
+    }
+
     SettingsSection(stringResource(R.string.playback_section))
-    ToggleSetting(
-        title = stringResource(R.string.pause_on_background),
-        description = stringResource(R.string.pause_on_background_description),
-        checked = runtimeSettings.pauseOnBackground,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(pauseOnBackground = it)) },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.game_vibration),
-        description = stringResource(R.string.game_vibration_description),
-        checked = runtimeSettings.vibrationEnabled,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(vibrationEnabled = it)) },
-    )
-    SettingsSection(stringResource(R.string.compatibility_section))
-    if (!isWolfGame) ChoiceSetting(
-        title = stringResource(R.string.engine_mode),
-        values = RuntimeEngineMode.entries,
-        selected = runtimeSettings.engineMode,
-        label = { mode ->
-            stringResource(
-                when (mode) {
-                    RuntimeEngineMode.AUTO -> R.string.engine_auto
-                    RuntimeEngineMode.MV -> R.string.engine_mv
-                    RuntimeEngineMode.MZ -> R.string.engine_mz
-                },
-            )
-        },
-        onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(engineMode = it)) },
-    )
+    SettingsCard {
+        ToggleSetting(
+            title = stringResource(R.string.pause_on_background),
+            description = stringResource(R.string.pause_on_background_description),
+            checked = runtimeSettings.pauseOnBackground,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(pauseOnBackground = it)) },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.game_vibration),
+            description = stringResource(R.string.game_vibration_description),
+            checked = runtimeSettings.vibrationEnabled,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(vibrationEnabled = it)) },
+        )
+    }
+
     if (!isWolfGame) {
-        ToggleSetting(
-            title = stringResource(R.string.webgl_enabled),
-            description = stringResource(R.string.webgl_description),
-            checked = runtimeSettings.webGlEnabled,
-            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(webGlEnabled = it)) },
-        )
-        ToggleSetting(
-            title = stringResource(R.string.legacy_compatibility),
-            description = stringResource(R.string.legacy_compatibility_description),
-            checked = runtimeSettings.legacyCompatibility,
-            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(legacyCompatibility = it)) },
-        )
-        ToggleSetting(
-            title = stringResource(R.string.ignore_missing_files),
-            description = stringResource(R.string.ignore_missing_files_description),
-            checked = runtimeSettings.ignoreMissingFiles,
-            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(ignoreMissingFiles = it)) },
-        )
+        SettingsSection(stringResource(R.string.compatibility_section))
+        SettingsCard {
+            ChoiceSetting(
+                title = stringResource(R.string.engine_mode),
+                values = RuntimeEngineMode.entries,
+                selected = runtimeSettings.engineMode,
+                label = { mode ->
+                    stringResource(
+                        when (mode) {
+                            RuntimeEngineMode.AUTO -> R.string.engine_auto
+                            RuntimeEngineMode.MV -> R.string.engine_mv
+                            RuntimeEngineMode.MZ -> R.string.engine_mz
+                        },
+                    )
+                },
+                onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(engineMode = it)) },
+            )
+            ToggleSetting(
+                title = stringResource(R.string.webgl_enabled),
+                description = stringResource(R.string.webgl_description),
+                checked = runtimeSettings.webGlEnabled,
+                onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(webGlEnabled = it)) },
+            )
+            ToggleSetting(
+                title = stringResource(R.string.legacy_compatibility),
+                description = stringResource(R.string.legacy_compatibility_description),
+                checked = runtimeSettings.legacyCompatibility,
+                onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(legacyCompatibility = it)) },
+            )
+            ToggleSetting(
+                title = stringResource(R.string.ignore_missing_files),
+                description = stringResource(R.string.ignore_missing_files_description),
+                checked = runtimeSettings.ignoreMissingFiles,
+                onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(ignoreMissingFiles = it)) },
+            )
+        }
         Text(
             stringResource(R.string.compatibility_restart_description),
-            modifier = Modifier.padding(horizontal = 12.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+
     SettingsSection(stringResource(R.string.performance_section))
-    ChoiceSetting(
-        title = stringResource(R.string.fps_limit),
-        values = listOf<Int?>(null) + SUPPORTED_FPS_LIMITS,
-        selected = runtimeSettings.fpsLimit,
-        label = { value ->
-            value?.let { stringResource(R.string.fps_value, it) }
-                ?: stringResource(R.string.fps_auto)
-        },
-        onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(fpsLimit = it)) },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.record_logs),
-        description = stringResource(R.string.record_logs_description),
-        checked = runtimeSettings.recordLogs,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(recordLogs = it)) },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.show_fps_counter),
-        description = stringResource(R.string.show_fps_counter_description),
-        checked = runtimeSettings.showFpsCounter,
-        onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(showFpsCounter = it)) },
-    )
+    SettingsCard {
+        ChoiceSetting(
+            title = stringResource(R.string.fps_limit),
+            values = listOf<Int?>(null) + SUPPORTED_FPS_LIMITS,
+            selected = runtimeSettings.fpsLimit,
+            label = { value ->
+                value?.let { stringResource(R.string.fps_value, it) }
+                    ?: stringResource(R.string.fps_auto)
+            },
+            onSelected = { onRuntimeSettingsChange(runtimeSettings.copy(fpsLimit = it)) },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.record_logs),
+            description = stringResource(R.string.record_logs_description),
+            checked = runtimeSettings.recordLogs,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(recordLogs = it)) },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.show_fps_counter),
+            description = stringResource(R.string.show_fps_counter_description),
+            checked = runtimeSettings.showFpsCounter,
+            onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(showFpsCounter = it)) },
+        )
+    }
+
     SettingsSection(stringResource(R.string.runtime_modules_section))
     Text(
         stringResource(R.string.runtime_modules_description),
-        modifier = Modifier.padding(horizontal = 12.dp),
+        modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
-    if (!isWolfGame) {
+    SettingsCard {
+        if (!isWolfGame) {
+            ToggleSetting(
+                title = stringResource(R.string.module_steam),
+                description = stringResource(R.string.module_steam_description),
+                checked = runtimeSettings.modules.steamCompatibility,
+                onCheckedChange = {
+                    onRuntimeSettingsChange(
+                        runtimeSettings.copy(modules = runtimeSettings.modules.copy(steamCompatibility = it)),
+                    )
+                },
+            )
+            ToggleSetting(
+                title = stringResource(R.string.limit_background_load),
+                description = stringResource(R.string.limit_background_load_description),
+                checked = runtimeSettings.modules.limitWorkerCount,
+                onCheckedChange = {
+                    onRuntimeSettingsChange(
+                        runtimeSettings.copy(modules = runtimeSettings.modules.copy(limitWorkerCount = it)),
+                    )
+                },
+            )
+            ToggleSetting(
+                title = stringResource(R.string.module_performance),
+                description = stringResource(R.string.module_performance_description),
+                checked = runtimeSettings.modules.performanceOptimization,
+                onCheckedChange = {
+                    onRuntimeSettingsChange(
+                        runtimeSettings.copy(
+                            modules = runtimeSettings.modules.copy(performanceOptimization = it),
+                        ),
+                    )
+                },
+            )
+        }
         ToggleSetting(
-            title = stringResource(R.string.module_steam),
-            description = stringResource(R.string.module_steam_description),
-            checked = runtimeSettings.modules.steamCompatibility,
-            onCheckedChange = {
-                onRuntimeSettingsChange(
-                    runtimeSettings.copy(modules = runtimeSettings.modules.copy(steamCompatibility = it)),
-                )
-            },
-        )
-        ToggleSetting(
-            title = stringResource(R.string.limit_background_load),
-            description = stringResource(R.string.limit_background_load_description),
-            checked = runtimeSettings.modules.limitWorkerCount,
-            onCheckedChange = {
-                onRuntimeSettingsChange(
-                    runtimeSettings.copy(modules = runtimeSettings.modules.copy(limitWorkerCount = it)),
-                )
-            },
-        )
-        ToggleSetting(
-            title = stringResource(R.string.module_performance),
-            description = stringResource(R.string.module_performance_description),
-            checked = runtimeSettings.modules.performanceOptimization,
+            title = stringResource(R.string.module_cheats),
+            description = stringResource(R.string.module_cheats_description),
+            checked = runtimeSettings.modules.cheatBridge,
             onCheckedChange = {
                 onRuntimeSettingsChange(
                     runtimeSettings.copy(
-                        modules = runtimeSettings.modules.copy(performanceOptimization = it),
-                    ),
+                        modules = runtimeSettings.modules.copy(
+                            cheatBridge = it
+                        )
+                    )
+                )
+            },
+        )
+        ToggleSetting(
+            title = stringResource(R.string.module_diagnostics),
+            description = stringResource(R.string.module_diagnostics_description),
+            checked = runtimeSettings.modules.diagnosticsBridge,
+            onCheckedChange = {
+                onRuntimeSettingsChange(
+                    runtimeSettings.copy(modules = runtimeSettings.modules.copy(diagnosticsBridge = it)),
                 )
             },
         )
     }
-    ToggleSetting(
-        title = stringResource(R.string.module_cheats),
-        description = stringResource(R.string.module_cheats_description),
-        checked = runtimeSettings.modules.cheatBridge,
-        onCheckedChange = {
-            onRuntimeSettingsChange(
-                runtimeSettings.copy(
-                    modules = runtimeSettings.modules.copy(
-                        cheatBridge = it
-                    )
-                )
-            )
-        },
-    )
-    ToggleSetting(
-        title = stringResource(R.string.module_diagnostics),
-        description = stringResource(R.string.module_diagnostics_description),
-        checked = runtimeSettings.modules.diagnosticsBridge,
-        onCheckedChange = {
-            onRuntimeSettingsChange(
-                runtimeSettings.copy(modules = runtimeSettings.modules.copy(diagnosticsBridge = it)),
-            )
-        },
-    )
+}
+
+@Composable
+private fun SettingsCard(
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            content = content,
+        )
+    }
 }
 
 @Composable
 private fun SettingsSection(title: String) {
     Text(
         title,
-        modifier = Modifier.padding(start = 12.dp, top = 8.dp),
-        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.primary,
     )
 }
@@ -449,6 +503,7 @@ private fun <T> ChoiceSetting(
 ) {
     var expanded by remember { mutableStateOf(false) }
     ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier
             .fillMaxWidth()
             .clickable { expanded = true },
@@ -504,10 +559,10 @@ private fun ToggleSetting(
     onCheckedChange: (Boolean) -> Unit,
 ) {
     ListItem(
+        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier
             .fillMaxWidth()
-            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange)
-            .padding(horizontal = 0.dp),
+            .toggleable(value = checked, role = Role.Switch, onValueChange = onCheckedChange),
         headlineContent = { Text(title, style = MaterialTheme.typography.titleMedium) },
         supportingContent = {
             Text(

@@ -70,9 +70,22 @@ fun LibraryScreen(
         dragOffset = Offset.Zero
     }
 
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val isLandscape = configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+
     Scaffold(
         contentWindowInsets = WindowInsets(0.dp),
-        topBar = { LibraryTopBar(games = games, onSettings = onSettings) },
+        topBar = {
+            LibraryTopBar(
+                games = games,
+                onSettings = onSettings,
+                showImportButton = isLandscape,
+                importState = importState,
+                onImport = onImport,
+                showRuntimeSmokeTest = showRuntimeSmokeTest,
+                onRunSmokeTest = onRunSmokeTest,
+            )
+        },
         bottomBar = {
             LibraryBottomBar(
                 hasGames = games.isNotEmpty(),
@@ -80,6 +93,7 @@ fun LibraryScreen(
                 onImport = onImport,
                 onRunSmokeTest = onRunSmokeTest,
                 showRuntimeSmokeTest = showRuntimeSmokeTest,
+                visible = !isLandscape,
             )
         },
     ) { contentPadding ->
@@ -98,14 +112,23 @@ fun LibraryScreen(
                     .fillMaxSize()
                     .padding(contentPadding),
             ) {
-                val compact = maxWidth < 600.dp
+                val minCardSize = when {
+                    isLandscape -> 200.dp
+                    maxWidth < 600.dp -> 156.dp
+                    else -> 196.dp
+                }
+                val contentPaddingValues = when {
+                    isLandscape -> PaddingValues(start = 24.dp, end = 24.dp, top = 8.dp, bottom = 24.dp)
+                    maxWidth < 600.dp -> PaddingValues(16.dp)
+                    else -> PaddingValues(24.dp)
+                }
                 LazyVerticalGrid(
-                    columns = GridCells.Adaptive(minSize = if (compact) 156.dp else 196.dp),
+                    columns = GridCells.Adaptive(minSize = minCardSize),
                     state = gridState,
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(if (compact) 16.dp else 24.dp),
-                    horizontalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 16.dp),
+                    contentPadding = contentPaddingValues,
+                    horizontalArrangement = Arrangement.spacedBy(if (maxWidth < 600.dp && !isLandscape) 12.dp else 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (maxWidth < 600.dp && !isLandscape) 12.dp else 16.dp),
                 ) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         ImportStatus(importState, onCancelImport)

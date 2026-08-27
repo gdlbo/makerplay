@@ -184,12 +184,18 @@ internal fun GameCard(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    MetadataLabel(
-                        text = listOfNotNull(
-                            game.engine.name,
-                            game.engineVersion
-                        ).joinToString(" "),
-                    )
+                    val engineDisplay = remember(game.engine, game.engineVersion) {
+                        val version = game.engineVersion.orEmpty().trim()
+                        val name = game.engine.name
+                        when {
+                            version.isBlank() -> name
+                            version.equals(name, ignoreCase = true) -> version
+                            version.startsWith(name, ignoreCase = true) -> version
+                            version.contains(name, ignoreCase = true) -> version
+                            else -> "$name $version"
+                        }
+                    }
+                    MetadataLabel(text = engineDisplay)
                     if (game.plugins.isNotEmpty()) {
                         MetadataLabel(
                             text = game.plugins.size.toString(),
