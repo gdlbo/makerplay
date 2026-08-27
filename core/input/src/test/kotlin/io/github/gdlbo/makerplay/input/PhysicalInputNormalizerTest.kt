@@ -13,8 +13,10 @@ class PhysicalInputNormalizerTest {
         assertTrue(input.onKey(PhysicalKeyEvent("keyboard", 21, PhysicalKeyAction.DOWN)))
         assertTrue(input.onKey(PhysicalKeyEvent("pad", 96, PhysicalKeyAction.DOWN)))
         assertEquals(setOf(GameAction.LEFT, GameAction.OK), input.snapshot().pressedActions)
+        assertEquals(setOf(21, 96), input.snapshot().pressedKeyCodes)
         input.clearSource("keyboard")
         assertEquals(setOf(GameAction.OK), input.snapshot().pressedActions)
+        assertEquals(setOf(96), input.snapshot().pressedKeyCodes)
     }
 
     @Test

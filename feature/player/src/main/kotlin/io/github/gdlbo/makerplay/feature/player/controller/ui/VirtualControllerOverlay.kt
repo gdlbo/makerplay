@@ -329,7 +329,16 @@ private fun VirtualDPad(
                 fun updateActions(nextActions: Set<GameAction>) {
                     if (nextActions == currentActions) return
                     reducer.clearSource(source)
-                    nextActions.forEach { reducer.press(source, it) }
+                    nextActions.forEach { action ->
+                        reducer.press(source, action)
+                        when (action) {
+                            GameAction.UP -> reducer.pressKeyCode(source, 19)
+                            GameAction.DOWN -> reducer.pressKeyCode(source, 20)
+                            GameAction.LEFT -> reducer.pressKeyCode(source, 21)
+                            GameAction.RIGHT -> reducer.pressKeyCode(source, 22)
+                            else -> Unit
+                        }
+                    }
                     currentActions = nextActions
                     activeActions = nextActions
                     onSnapshotChanged(reducer.snapshot())

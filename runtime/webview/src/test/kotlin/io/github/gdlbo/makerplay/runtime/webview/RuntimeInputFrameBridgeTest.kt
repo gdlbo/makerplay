@@ -176,6 +176,28 @@ class RuntimeInputFrameBridgeTest {
         }
     }
 
+    @Test
+    fun `document bridge maps actions to default dom key events when explicit keys are absent`() {
+        val source = RuntimeInputFrameBridge.source(runtimeAsset("bridges/input-bridge.js"))
+
+        assertTrue(source.contains("ACTION_DEFAULT_KEYS"))
+        assertTrue(source.contains("ArrowUp"))
+        assertTrue(source.contains("ArrowDown"))
+        assertTrue(source.contains("ArrowLeft"))
+        assertTrue(source.contains("ArrowRight"))
+    }
+
+    @Test
+    fun `document bridge dispatches dom mouse and pointer events for overlay pointers`() {
+        val source = RuntimeInputFrameBridge.source(runtimeAsset("bridges/input-bridge.js"))
+
+        assertTrue(source.contains("elementFromPoint"))
+        assertTrue(source.contains("pointerdown"))
+        assertTrue(source.contains("mousedown"))
+        assertTrue(source.contains("mouseup"))
+        assertTrue(source.contains("click"))
+    }
+
     private fun snapshot(vararg actions: GameAction) =
         LogicalInputSnapshot(actions.toSet(), emptySet())
 }

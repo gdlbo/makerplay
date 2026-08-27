@@ -40,10 +40,12 @@ class PhysicalInputNormalizer(
             PhysicalKeyAction.DOWN -> {
                 pressedKeys.getOrPut(event.sourceId, ::linkedSetOf).add(event.keyCode)
                 reducer.press(reducerSource, action)
+                reducer.pressKeyCode(reducerSource, event.keyCode)
             }
 
             PhysicalKeyAction.UP -> {
                 reducer.release(reducerSource, action)
+                reducer.releaseKeyCode(reducerSource, event.keyCode)
                 pressedKeys[event.sourceId]?.let { keys ->
                     keys.remove(event.keyCode)
                     if (keys.isEmpty()) pressedKeys.remove(event.sourceId)
@@ -94,10 +96,32 @@ class PhysicalInputNormalizer(
         negative: GameAction,
         positive: GameAction,
     ) {
-        if (previous == AxisDirection.NEGATIVE) reducer.release(sourceId, negative)
-        if (previous == AxisDirection.POSITIVE) reducer.release(sourceId, positive)
-        if (next == AxisDirection.NEGATIVE) reducer.press(sourceId, negative)
-        if (next == AxisDirection.POSITIVE) reducer.press(sourceId, positive)
+        val negCode = when (negative) {
+            GameAction.UP -> 19
+            GameAction.LEFT -> 21
+            else -> null
+        }
+        val posCode = when (positive) {
+            GameAction.DOWN -> 20
+            GameAction.RIGHT -> 22
+            else -> null
+        }
+        if (previous == AxisDirection.NEGATIVE) {
+            reducer.release(sourceId, negative)
+            negCode?.let { reducer.releaseKeyCode(sourceId, it) }
+        }
+        if (previous == AxisDirection.POSITIVE) {
+            reducer.release(sourceId, positive)
+            posCode?.let { reducer.releaseKeyCode(sourceId, it) }
+        }
+        if (next == AxisDirection.NEGATIVE) {
+            reducer.press(sourceId, negative)
+            negCode?.let { reducer.pressKeyCode(sourceId, it) }
+        }
+        if (next == AxisDirection.POSITIVE) {
+            reducer.press(sourceId, positive)
+            posCode?.let { reducer.pressKeyCode(sourceId, it) }
+        }
     }
 
     private fun direction(value: Float, previous: AxisDirection): AxisDirection = when {
