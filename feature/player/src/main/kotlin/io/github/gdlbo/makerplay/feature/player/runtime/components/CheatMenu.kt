@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -58,15 +61,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -97,11 +105,14 @@ internal fun CheatOverlay(
     modifier: Modifier = Modifier,
 ) {
     BackHandler(onBack = onClose)
+    val imeBottom = WindowInsets.ime.getBottom(LocalDensity.current)
+    val keyboardOpen = imeBottom > 0
     Box(
         modifier = modifier
             .background(Color.Black.copy(alpha = 0.55f))
-            .pointerInput(onClose) { detectTapGestures(onTap = { onClose() }) },
-        contentAlignment = Alignment.Center,
+            .pointerInput(onClose) { detectTapGestures(onTap = { onClose() }) }
+            .imePadding(),
+        contentAlignment = if (keyboardOpen) Alignment.BottomCenter else Alignment.Center,
     ) {
         CheatMenu(
             flags = flags,
@@ -109,9 +120,9 @@ internal fun CheatOverlay(
             onFlagsChanged = onFlagsChanged,
             onOperation = onOperation,
             onClose = onClose,
+            keyboardOpen = keyboardOpen,
             modifier = Modifier
                 .safeDrawingPadding()
-                .imePadding()
                 .padding(8.dp)
                 .pointerInput(Unit) { detectTapGestures(onTap = {}) },
         )
@@ -126,6 +137,7 @@ private fun CheatMenu(
     onOperation: (CheatOperation) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
+    keyboardOpen: Boolean = false,
 ) {
     var tabName by rememberSaveable { mutableStateOf(CheatTab.BOOST.name) }
     val tab = CheatTab.entries.firstOrNull { it.name == tabName } ?: CheatTab.BOOST
@@ -142,13 +154,23 @@ private fun CheatMenu(
         val landscape = maxWidth > maxHeight
         val panelMaxWidth = if (landscape) 760.dp else 460.dp
         val panelWidthFraction = if (landscape) 0.84f else 0.94f
-        val panelHeightFraction = if (landscape) 0.88f else 0.90f
-
-        Surface(
-            modifier = Modifier
+        // When IME is open the popup host is short — avoid fillMaxHeight blowups that
+        // crush tabs into 1-glyph columns and spill list rows outside the card.
+        val panelModifier = if (keyboardOpen) {
+            Modifier
                 .widthIn(max = panelMaxWidth)
                 .fillMaxWidth(panelWidthFraction)
-                .fillMaxHeight(panelHeightFraction),
+                .heightIn(min = 160.dp, max = maxHeight)
+                .fillMaxHeight(0.98f)
+        } else {
+            Modifier
+                .widthIn(max = panelMaxWidth)
+                .fillMaxWidth(panelWidthFraction)
+                .fillMaxHeight(if (landscape) 0.88f else 0.90f)
+        }
+
+        Surface(
+            modifier = panelModifier,
             shape = MaterialTheme.shapes.small,
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
             contentColor = MaterialTheme.colorScheme.onSurface,
@@ -214,6 +236,8 @@ private fun CheatMenu(
                                     },
                                     style = MaterialTheme.typography.labelLarge,
                                     maxLines = 1,
+                                    softWrap = false,
+                                    overflow = TextOverflow.Ellipsis,
                                 )
                             },
                             modifier = Modifier.height(36.dp),
@@ -532,7 +556,7 @@ private fun ItemsTab(
     }
     Column(modifier = Modifier.fillMaxSize()) {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val wide = maxWidth >= 420.dp
+            val wide = maxWidth >= 420.dp && maxHeight >= 280.dp
             if (wide) {
                 Row(
                     modifier = Modifier
@@ -677,7 +701,7 @@ private fun DataTab(
     }
     Column(modifier = Modifier.fillMaxSize()) {
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val wide = maxWidth >= 420.dp
+            val wide = maxWidth >= 420.dp && maxHeight >= 280.dp
             if (wide) {
                 Row(
                     modifier = Modifier
@@ -746,27 +770,46 @@ private fun DataTab(
         }
         if (kind == 0 && selectedVariable != null) {
             val entry = selectedVariable!!
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 10.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                CompactValueField(
-                    value = variableDraft,
-                    onValueChange = { variableDraft = it.take(160) },
-                    placeholder = "#${entry.id}",
-                    keyboardType = KeyboardType.Text,
-                    modifier = Modifier.weight(1f),
-                    textAlignStart = true,
-                )
-                TextButton(
-                    onClick = {
-                        onOperation(CheatOperation.SetVariable(entry.id, variableDraft))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CompactValueField(
+                        value = variableDraft,
+                        onValueChange = { variableDraft = it.take(160) },
+                        placeholder = "#${entry.id}",
+                        keyboardType = KeyboardType.Text,
+                        modifier = Modifier.weight(1f),
+                        textAlignStart = true,
+                    )
+                    TextButton(
+                        onClick = {
+                            onOperation(CheatOperation.SetVariable(entry.id, variableDraft))
+                        },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    ) { Text(stringResource(R.string.set_variable)) }
+                }
+                ValueStepperRow(
+                    enabled = variableDraft.isBlank() || variableDraft.toDoubleOrNull() != null,
+                    onStep = { delta ->
+                        val current = variableDraft.toDoubleOrNull() ?: 0.0
+                        val nextValue = current + delta
+                        val next = if (nextValue == nextValue.toLong().toDouble()) {
+                            nextValue.toLong().toString()
+                        } else {
+                            nextValue.toString()
+                        }
+                        variableDraft = next.take(160)
+                        onOperation(CheatOperation.SetVariable(entry.id, next))
                     },
-                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                ) { Text(stringResource(R.string.set_variable)) }
+                )
             }
         }
         Text(
@@ -1037,11 +1080,16 @@ private fun CompactValueField(
 ) {
     val align = if (textAlignStart) TextAlign.Start else TextAlign.Center
     val boxAlign = if (textAlignStart) Alignment.CenterStart else Alignment.Center
+    val keyboard = LocalSoftwareKeyboardController.current
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         singleLine = true,
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        keyboardOptions = KeyboardOptions(
+            keyboardType = keyboardType,
+            imeAction = ImeAction.Done,
+        ),
+        keyboardActions = KeyboardActions(onDone = { keyboard?.hide() }),
         textStyle = MaterialTheme.typography.bodyMedium.copy(
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = align,
@@ -1050,6 +1098,7 @@ private fun CompactValueField(
         decorationBox = { inner ->
             Box(
                 modifier = Modifier
+                    .fillMaxWidth()
                     .height(36.dp)
                     .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
                     .padding(horizontal = 8.dp),
@@ -1062,11 +1111,36 @@ private fun CompactValueField(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                inner()
+                // Keep the editable text as the direct touch target so caret
+                // placement / selection are not stolen by a wrapping clickable.
+                Box(modifier = Modifier.fillMaxWidth()) { inner() }
             }
         },
-        modifier = modifier,
+        modifier = modifier
+            .fillMaxWidth()
+            .onFocusChanged { state ->
+                if (state.isFocused) keyboard?.show()
+            },
     )
+}
+
+@Composable
+private fun ValueStepperRow(
+    enabled: Boolean,
+    onStep: (Double) -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
+    ) {
+        listOf(-10.0 to "-10", -1.0 to "-1", 1.0 to "+1", 10.0 to "+10").forEach { (delta, label) ->
+            TextButton(
+                onClick = { onStep(delta) },
+                enabled = enabled,
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+            ) { Text(label) }
+        }
+    }
 }
 
 @Composable

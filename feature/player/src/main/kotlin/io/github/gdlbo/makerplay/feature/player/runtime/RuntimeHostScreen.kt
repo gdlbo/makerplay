@@ -47,6 +47,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import io.github.gdlbo.makerplay.feature.player.R
@@ -390,10 +392,19 @@ fun RuntimeHostScreen(
             // visible above the surface and receive taps.
             Popup(
                 alignment = Alignment.TopStart,
-                onDismissRequest = {},
-                // Sliders (opacity/size) and shape toggles need a focusable window;
-                // non-focusable popups drop drag gestures on many WebView/GL hosts.
-                properties = PopupProperties(focusable = editControls),
+                onDismissRequest = {
+                    if (editControls) {
+                        editControls = false
+                        virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                        scope.launch(Dispatchers.IO) { layoutStore?.save(layouts) }
+                    }
+                },
+                // Controller editor sliders need a focusable window; cheats use a Dialog.
+                properties = PopupProperties(
+                    focusable = editControls,
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = false,
+                ),
             ) {
                 // Match the runtime surface pixel-for-pixel. Clamping to screenWidthDp
                 // previously made the overlay wider/narrower than the WebView and shifted
@@ -494,23 +505,36 @@ fun RuntimeHostScreen(
                 modifier = Modifier.align(Alignment.TopCenter),
             )
         }
-        if (session != null && gameReady && showCheats) {
-            RuntimeOverlayTheme {
-                cheatStateHolder.SaveableStateProvider("cheat-menu-${request.gameId}") {
-                    CheatOverlay(
-                        flags = cheatFlags,
-                        catalog = cheatCatalog,
-                        onFlagsChanged = { flags ->
-                            cheatFlags = flags
-                            sendCheat(flags.toSetFlags())
-                        },
-                        onOperation = ::sendCheat,
-                        onClose = { showCheats = false },
-                        modifier = Modifier.fillMaxSize(),
-                    )
                 }
             }
         }
+
+        // Cheats need a real dialog window so IME insets/focus work. Keeping them inside
+        // the controller Popup made the panel jump away when the keyboard opened.
+        if (session != null && gameReady && showCheats) {
+            Dialog(
+                onDismissRequest = { showCheats = false },
+                properties = DialogProperties(
+                    dismissOnBackPress = true,
+                    dismissOnClickOutside = false,
+                    usePlatformDefaultWidth = false,
+                    decorFitsSystemWindows = true,
+                ),
+            ) {
+                RuntimeOverlayTheme {
+                    cheatStateHolder.SaveableStateProvider("cheat-menu-${request.gameId}") {
+                        CheatOverlay(
+                            flags = cheatFlags,
+                            catalog = cheatCatalog,
+                            onFlagsChanged = { flags ->
+                                cheatFlags = flags
+                                sendCheat(flags.toSetFlags())
+                            },
+                            onOperation = ::sendCheat,
+                            onClose = { showCheats = false },
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                 }
             }
         }
@@ -563,7 +587,7 @@ fun RuntimeHostScreen(
     }
 }
 
-/** Overlay Popup must not cover the system IME or an unready/zero-sized surface. */
+/** Controller overlay Popup must not cover the system IME or an unready/zero-sized surface. */
 internal fun shouldHostRuntimeOverlayPopup(
     gameReady: Boolean,
     runtimeViewport: IntSize,
