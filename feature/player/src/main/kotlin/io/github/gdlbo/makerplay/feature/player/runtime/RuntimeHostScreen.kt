@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -102,6 +103,7 @@ fun RuntimeHostScreen(
     var cheatCatalog by remember(request.gameId) { mutableStateOf(CheatCatalog()) }
     var cheatSequence by remember { mutableLongStateOf(0L) }
     var showCheats by remember(request.gameId) { mutableStateOf(false) }
+    val cheatStateHolder = rememberSaveableStateHolder()
     var cheatsAvailable by remember(request.gameId) { mutableStateOf<Boolean?>(null) }
     var showControls by remember(request.gameId) { mutableStateOf(true) }
     var editControls by remember(request.gameId) { mutableStateOf(false) }
@@ -438,8 +440,8 @@ fun RuntimeHostScreen(
                             .align(Alignment.BottomCenter)
                             .safeDrawingPadding()
                             .padding(start = 12.dp, bottom = 12.dp, end = 12.dp)
-                            .widthIn(max = 560.dp)
-                            .heightIn(max = if (compactHeight) 250.dp else 360.dp),
+                            .widthIn(max = 480.dp)
+                            .heightIn(max = if (compactHeight) 220.dp else 300.dp),
                     )
                 }
             }
@@ -493,25 +495,21 @@ fun RuntimeHostScreen(
             )
         }
         if (session != null && gameReady && showCheats) {
-            CheatOverlay(
-                flags = cheatFlags,
-                catalog = cheatCatalog,
-                onFlagsChanged = { flags ->
-                    cheatFlags = flags
-                    sendCheat(
-                        CheatOperation.SetFlags(
-                            godMode = flags.godMode,
-                            infiniteHp = flags.infiniteHp,
-                            infiniteMp = flags.infiniteMp,
-                            playerSpeedMultiplier = flags.playerSpeedMultiplier,
-                            noClip = flags.noClip,
-                        )
+            RuntimeOverlayTheme {
+                cheatStateHolder.SaveableStateProvider("cheat-menu-${request.gameId}") {
+                    CheatOverlay(
+                        flags = cheatFlags,
+                        catalog = cheatCatalog,
+                        onFlagsChanged = { flags ->
+                            cheatFlags = flags
+                            sendCheat(flags.toSetFlags())
+                        },
+                        onOperation = ::sendCheat,
+                        onClose = { showCheats = false },
+                        modifier = Modifier.fillMaxSize(),
                     )
-                },
-                onOperation = ::sendCheat,
-                onClose = { showCheats = false },
-                modifier = Modifier.fillMaxSize(),
-            )
+                }
+            }
         }
                 }
             }

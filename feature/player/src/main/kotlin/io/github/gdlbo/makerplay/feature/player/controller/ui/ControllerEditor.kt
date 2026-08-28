@@ -131,17 +131,18 @@ internal fun ControllerEditorPanel(
     } else {
         Surface(
             modifier = modifier,
-            shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-            color = androidx.compose.ui.graphics.Color(0xF2151720),
-            border = androidx.compose.foundation.BorderStroke(1.dp, androidx.compose.ui.graphics.Color.White.copy(alpha = 0.14f)),
-            contentColor = androidx.compose.ui.graphics.Color.White,
-            shadowElevation = 8.dp,
+            shape = MaterialTheme.shapes.small,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+            contentColor = MaterialTheme.colorScheme.onSurface,
+            tonalElevation = 2.dp,
+            shadowElevation = 4.dp,
         ) {
             Column(
                 modifier = Modifier
-                    .padding(10.dp)
+                    .padding(horizontal = 10.dp, vertical = 8.dp)
                     .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(7.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 EditorHeader(
                     selected = selected,
@@ -218,7 +219,6 @@ private fun EditorHeader(
                 text = stringResource(R.string.controller_editor_title),
                 style = MaterialTheme.typography.titleSmall,
                 fontWeight = FontWeight.SemiBold,
-                color = Color.White,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -234,22 +234,22 @@ private fun EditorHeader(
                         selectedIndex + 1,
                         controlCount
                     ),
-                    color = Color.White.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.labelSmall,
                 )
             }
         }
         IconButton(onClick = onReset, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.RestartAlt, stringResource(R.string.controller_reset_layout), modifier = Modifier.size(18.dp), tint = Color.White)
+            Icon(Icons.Default.RestartAlt, stringResource(R.string.controller_reset_layout), modifier = Modifier.size(18.dp))
         }
         IconButton(enabled = canDelete, onClick = onDelete, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.DeleteOutline, stringResource(R.string.controller_delete), modifier = Modifier.size(18.dp), tint = if (canDelete) Color.White else Color.White.copy(alpha = 0.38f))
+            Icon(Icons.Default.DeleteOutline, stringResource(R.string.controller_delete), modifier = Modifier.size(18.dp))
         }
         IconButton(enabled = canAdd, onClick = onAdd, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.Add, stringResource(R.string.controller_add_button), modifier = Modifier.size(18.dp), tint = if (canAdd) Color.White else Color.White.copy(alpha = 0.38f))
+            Icon(Icons.Default.Add, stringResource(R.string.controller_add_button), modifier = Modifier.size(18.dp))
         }
         IconButton(onClick = onCollapse, modifier = Modifier.size(36.dp)) {
-            Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.controller_editor_collapse), modifier = Modifier.size(20.dp), tint = Color.White)
+            Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.controller_editor_collapse), modifier = Modifier.size(20.dp))
         }
     }
 }

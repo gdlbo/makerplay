@@ -363,16 +363,7 @@ fun RuntimeWebView(
                                 RuntimeCheatBridge.apply(
                                     view,
                                     cheatSession,
-                                    CheatCommand(
-                                        Long.MIN_VALUE,
-                                        CheatOperation.SetFlags(
-                                            godMode = flags.godMode,
-                                            infiniteHp = flags.infiniteHp,
-                                            infiniteMp = flags.infiniteMp,
-                                            playerSpeedMultiplier = flags.playerSpeedMultiplier,
-                                            noClip = flags.noClip,
-                                        ),
-                                    ),
+                                    CheatCommand(Long.MIN_VALUE, flags.toSetFlags()),
                                 )
                                 appliedCheatFlags.value = flags
                                 latestCheatCommand.value?.takeIf { it.sequence != appliedCheatSequence.value }
@@ -409,16 +400,7 @@ fun RuntimeWebView(
                         RuntimeCheatBridge.apply(
                             webView,
                             cheatSession,
-                            CheatCommand(
-                                Long.MIN_VALUE,
-                                CheatOperation.SetFlags(
-                                    godMode = flags.godMode,
-                                    infiniteHp = flags.infiniteHp,
-                                    infiniteMp = flags.infiniteMp,
-                                    playerSpeedMultiplier = flags.playerSpeedMultiplier,
-                                    noClip = flags.noClip,
-                                ),
-                            ),
+                            CheatCommand(Long.MIN_VALUE, flags.toSetFlags()),
                         )
                         appliedCheatFlags.value = flags
                     }
