@@ -939,7 +939,7 @@ class WolfRuntimeBackend(
                         val fired = engine.drainFiredTriggers()
                         for (trigger in fired) {
                             if (trigger.trigger == WolfGameEngine.Trigger.PARALLEL) continue
-                            if (interpreter != null && !interpreter!!.finished) break
+                            if (interpreter != null && !interpreter.finished) break
                             if (trigger.trigger == WolfGameEngine.Trigger.AUTORUN) {
                                 engine.markAutorunStarted(trigger.eventId)
                             }
@@ -1022,7 +1022,7 @@ class WolfRuntimeBackend(
                     // Hide the hero during autorun/action scripts, not parallel pages.
                     val heroPos = if (
                         interpreter != null &&
-                        !interpreter!!.finished &&
+                        !interpreter.finished &&
                         activeTrigger != WolfGameEngine.Trigger.PARALLEL
                     ) {
                         null
@@ -1274,7 +1274,7 @@ class WolfRuntimeBackend(
                 // later maps that merely have longer autorun scripts.
                 val earlyOpening = mapNum != null && mapNum in 1..15 && autoCommands >= 10
                 if (earlyOpening) {
-                    val score = 10_000 - mapNum!! + autoCommands
+                    val score = 10_000 - mapNum + autoCommands
                     if (score > bestAutorunCommands) {
                         bestAutorunCommands = score
                         bestAutorun = path to parsed

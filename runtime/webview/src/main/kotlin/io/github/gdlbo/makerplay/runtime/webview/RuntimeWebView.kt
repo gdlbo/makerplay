@@ -116,6 +116,9 @@ fun RuntimeWebView(
                     performanceOptimization = baseScripts.performanceOptimization.takeIf {
                         profileSettings.modules.performanceOptimization
                     }.orEmpty(),
+                    visualBoosts = baseScripts.visualBoosts.takeIf {
+                        profileSettings.modules.visualBoosts
+                    }.orEmpty(),
                     frameRate = baseScripts.frameRate.takeIf {
                         profileSettings.fpsLimit != null || profileSettings.showFpsCounter
                     }.orEmpty(),
@@ -235,6 +238,13 @@ fun RuntimeWebView(
                             runtimeScripts.performanceOptimization,
                             setOf(allowedOrigin),
                         )
+                        if (runtimeScripts.visualBoosts.isNotEmpty()) {
+                            WebViewCompat.addDocumentStartJavaScript(
+                                this,
+                                runtimeScripts.visualBoosts,
+                                setOf(allowedOrigin),
+                            )
+                        }
                     }
                     val inputBridge = RuntimeInputFrameBridge.install(
                         this,

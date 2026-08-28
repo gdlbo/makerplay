@@ -36,3 +36,11 @@ google-services.json
 /.pi
 /docs
 /third_party
+
+# Rust rpgm_native
+runtime/webview/src/main/rust/rpgm_native/target/
+runtime/webview/src/main/jniLibs/
+
+# Rust wolf_native (M3 staging)
+runtime/wolf/src/main/rust/wolf_native/target/
+runtime/wolf/src/main/rust/wolf_native/android-libs/

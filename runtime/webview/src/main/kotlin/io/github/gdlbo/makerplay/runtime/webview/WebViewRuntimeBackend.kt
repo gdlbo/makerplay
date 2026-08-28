@@ -78,12 +78,27 @@ class WebViewRuntimeBackend(
             )
             val sessionId = UUID.randomUUID().toString()
             val gameOrigin = gameOrigin(request.gameId)
+            val rpgmNative = io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative
+            // ADB A/B: `adb shell run-as … touch files/disable-rpgm-native` forces JVM IO.
+            val gameCatalogDir = gameIndexDirectory?.invoke(request.gameId)
+            val filesRoot = gameCatalogDir?.parentFile?.parentFile // files/games/<id> -> files/
+            val disableNative = filesRoot?.resolve("disable-rpgm-native")?.isFile == true
+            rpgmNative.setForceDisabled(disableNative)
+            val mountStartedAt = System.nanoTime()
             val fileSystem =
-                RpgMakerGameMount.open(root, gameIndexDirectory?.invoke(request.gameId) ?: root)
+                RpgMakerGameMount.open(
+                    root = root,
+                    indexRoot = gameIndexDirectory?.invoke(request.gameId) ?: root,
+                    codecFactory = rpgmNative.codecFactoryOrDefault(),
+                    entryScanner = rpgmNative.entryScannerOrNull(root),
+                )
+            val mountMs = (System.nanoTime() - mountStartedAt) / 1_000_000L
+            val inspectStartedAt = System.nanoTime()
             val fingerprint = deploymentInspector.inspect(fileSystem).copy(
                 deploymentLayout = if (root != importedRoot) io.github.gdlbo.makerplay.runtime.api.DeploymentLayout.WWW
                 else io.github.gdlbo.makerplay.runtime.api.DeploymentLayout.ROOT,
             )
+            val inspectMs = (System.nanoTime() - inspectStartedAt) / 1_000_000L
             val runtimeProfile = RuntimeProfileResolver.resolve(
                 fingerprint = fingerprint,
                 settings = request.settings,
@@ -93,6 +108,9 @@ class WebViewRuntimeBackend(
                 "layout" to runtimeProfile.fingerprint.deploymentLayout.name,
                 "selectedEngine" to runtimeProfile.selectedEngine.name,
                 "modules" to runtimeProfile.moduleDecisions.entries.joinToString(",") { "${it.key}:${it.value}" },
+                "mountMs" to mountMs.toString(),
+                "inspectMs" to inspectMs.toString(),
+                "native" to rpgmNative.isAvailable().toString(),
             ))
             val forcedEngineAvailable = when (request.settings.engineMode) {
                 RuntimeEngineMode.AUTO -> true
@@ -160,6 +178,37 @@ class WebViewRuntimeBackend(
                     saveStore = writeBehindStore,
                 )
             }
+            val prefetch = io.github.gdlbo.makerplay.runtime.webview.nativebridge.NativeAssetPrefetch()
+            if (rpgmNative.isAvailable()) {
+                val plans = io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmBootPrefetchPlans
+                val hotPaths = plans.plaintextHotPaths(fileSystem)
+                prefetch.prefetchPlaintext(fileSystem, hotPaths)
+                val key = runCatching { plans.readEncryptionKey(fileSystem) }.getOrNull()
+                var mediaPrefetchCount = 0
+                if (key != null) {
+                    plans.encryptedLogicalPaths(fileSystem).forEach { logical ->
+                        val asset = fileSystem.resolve(logical) ?: return@forEach
+                        val opened = fileSystem.open(asset.storedPath.value) as? VfsOpenResult.Found
+                            ?: return@forEach
+                        val stored = opened.stream.use { it.readBytes() }
+                        prefetch.prefetchEncrypted(key, logical, stored)
+                        mediaPrefetchCount += 1
+                    }
+                } else {
+                    val media = plans.plaintextMediaPaths(fileSystem)
+                    prefetch.prefetchPlaintext(fileSystem, media)
+                    mediaPrefetchCount = media.size
+                }
+                gameLogger.info(
+                    "runtime.native.prefetch",
+                    mapOf(
+                        "gameId" to request.gameId,
+                        "paths" to hotPaths.size.toString(),
+                        "media" to mediaPrefetchCount.toString(),
+                        "encrypted" to (key != null).toString(),
+                    ),
+                )
+            }
             val responder = GameOriginResponder(
                 host = gameOrigin.removePrefix("https://"),
                 sessionId = sessionId,
@@ -176,6 +225,7 @@ class WebViewRuntimeBackend(
                     )
                 },
                 overlayAsset = nodeProtocol?.let { protocol -> protocol::overlayAsset },
+                prefetchLookup = prefetch::get,
             )
             val commonJs = nodeProtocol?.let {
                 CommonJsRuntimeConfiguration(

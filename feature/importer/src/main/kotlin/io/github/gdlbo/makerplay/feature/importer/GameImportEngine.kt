@@ -57,16 +57,6 @@ class GameImportEngine(
             .filter { it.relativePath.isNotBlank() }
             .filterNot(::isReservedRootFile)
         validateEntries(selected)
-        val totalBytes = selected.sumOf { it.size.coerceAtLeast(0L) }
-        onProgress(
-            ImportProgress(
-                ImportPhase.FINALIZING,
-                0L,
-                totalBytes,
-                0L,
-                selected.size.toLong()
-            )
-        )
 
         val canonicalSource = sourceRoot.canonicalFile
         val actualSourcePrefix = entries
@@ -83,11 +73,29 @@ class GameImportEngine(
             .takeIf(String::isNotEmpty)
             ?.let { File(canonicalSource, it).canonicalFile }
             ?: canonicalSource
-        if (!contentRoot.isDirectory || !contentRoot.toPath()
-                .startsWith(canonicalSource.toPath())
-        ) {
-            throw ImportFailure("The selected folder is no longer available.")
+
+        // Direct play can only see files on disk. Packed Game.exe / EVB entries are
+        // expanded into synthetic ImportSource rows for detection, then discarded with
+        // the spool — so fall back to copy when any selected game file is not loose.
+        val contentRootUsable = contentRoot.isDirectory &&
+            contentRoot.toPath().startsWith(canonicalSource.toPath())
+        val missingLooseFiles = !contentRootUsable || selected.any { entry ->
+            !File(contentRoot, entry.relativePath).isFile
         }
+        if (missingLooseFiles) {
+            return@withContext importExpanded(source, store, importId, onProgress)
+        }
+
+        val totalBytes = selected.sumOf { it.size.coerceAtLeast(0L) }
+        onProgress(
+            ImportProgress(
+                ImportPhase.FINALIZING,
+                0L,
+                totalBytes,
+                0L,
+                selected.size.toLong()
+            )
+        )
         validateWolfArchives(contentRoot)
 
         val staging = store.begin(importId)

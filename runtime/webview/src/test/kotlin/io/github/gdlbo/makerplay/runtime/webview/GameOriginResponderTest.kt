@@ -103,6 +103,23 @@ class GameOriginResponderTest {
     }
 
     @Test
+    fun missingEncryptedAssetsStayNotFoundEvenWhenMissingFilesAreIgnored() {
+        val ignored = mutableListOf<Pair<String, String>>()
+        responder = GameOriginResponder(
+            HOST,
+            SESSION,
+            GameFileSystem(GameFileIndex.build(root)),
+            ignoreMissingFiles = true,
+            onMissingFileIgnored = { path, mimeType -> ignored += path to mimeType },
+        )
+
+        val response = request("GET", "img/pictures/Hero.rpgmvp")
+
+        assertEquals(404, response.statusCode)
+        assertTrue(ignored.isEmpty())
+    }
+
+    @Test
     fun servesGeneratedOverlayAssetsBeforeTheImmutableGameIndex() {
         responder = GameOriginResponder(
             HOST,

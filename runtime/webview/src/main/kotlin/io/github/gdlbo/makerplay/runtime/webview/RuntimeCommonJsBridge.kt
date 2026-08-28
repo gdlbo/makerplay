@@ -94,10 +94,19 @@ internal object RuntimeCommonJsBridge {
             val accepted = attachment.queue.submit(
                 weight = request.length,
                 task = {
-                    val response = configuration.protocol.handle(request)
-                    if (attachment.attached.get()) {
-                        view.post {
-                            if (attachment.attached.get()) replyProxy.postMessage(response)
+                    val replied = configuration.protocol.handleReadAsyncIfPossible(request) { response ->
+                        if (attachment.attached.get()) {
+                            view.post {
+                                if (attachment.attached.get()) replyProxy.postMessage(response)
+                            }
+                        }
+                    }
+                    if (!replied) {
+                        val response = configuration.protocol.handle(request)
+                        if (attachment.attached.get()) {
+                            view.post {
+                                if (attachment.attached.get()) replyProxy.postMessage(response)
+                            }
                         }
                     }
                 },

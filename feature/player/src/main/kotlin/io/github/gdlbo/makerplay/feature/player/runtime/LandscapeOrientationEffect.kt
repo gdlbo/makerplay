@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
+import android.media.AudioManager
 import android.view.ViewTreeObserver
 import android.view.WindowManager
 import androidx.compose.runtime.Composable
@@ -59,6 +60,24 @@ internal fun RuntimeDisplayEffect(settings: RuntimeSettings, enabled: Boolean) {
             if (!wasKeepingScreenOn) {
                 activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             }
+        }
+    }
+}
+
+/**
+ * Bind side volume keys / edge volume gesture to STREAM_MUSIC while a game runs.
+ * WebView HTML5 / Web Audio play on the media stream; without this, Android often
+ * adjusts ring/notification volume instead and game loudness appears stuck.
+ */
+@Composable
+internal fun RuntimeMediaVolumeEffect(enabled: Boolean) {
+    val activity = LocalContext.current.findActivity()
+    DisposableEffect(activity, enabled) {
+        if (activity == null || !enabled) return@DisposableEffect onDispose { }
+        val previous = activity.volumeControlStream
+        activity.volumeControlStream = AudioManager.STREAM_MUSIC
+        onDispose {
+            activity.volumeControlStream = previous
         }
     }
 }

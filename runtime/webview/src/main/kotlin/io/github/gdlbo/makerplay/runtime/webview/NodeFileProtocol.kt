@@ -11,6 +11,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -132,6 +133,53 @@ internal class NodeFileProtocol(
             "Game deletion index escapes the data root"
         }
         cleanupManagedGarbage()
+    }
+
+    /**
+     * If this is a game-file read that can be served by non-blocking native IO,
+     * start the async read and invoke [onResult] later. Returns true when accepted.
+     */
+    fun handleReadAsyncIfPossible(message: String, onResult: (String) -> Unit): Boolean {
+        if (!io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.isAvailable()) {
+            return false
+        }
+        val request = runCatching {
+            Json.parseToJsonElement(message).jsonObject
+        }.getOrNull() ?: return false
+        val requestId = request["id"]?.jsonPrimitive?.contentOrNull ?: return false
+        if (request["op"]?.jsonPrimitive?.contentOrNull != "read") return false
+        val rawPath = request["path"]?.jsonPrimitive?.contentOrNull ?: return false
+        val absolute = synchronized(lock) {
+            val path = runCatching { virtualPath(rawPath) }.getOrNull() ?: return@synchronized null
+            if (path !is VirtualPath.Game) return@synchronized null
+            if (isGameDeleted(path)) return@synchronized null
+            if (gameOverlayFile(path, allowRoot = false).exists()) return@synchronized null
+            gameFileSystem.absoluteFile(path.path)?.absolutePath
+        } ?: return false
+        io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.nativeReadFileAsync(
+            absolute,
+            object : io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.BytesCallback {
+                override fun onSuccess(bytes: ByteArray) {
+                    val response = synchronized(lock) {
+                        try {
+                            require(bytes.size <= MAX_PAYLOAD_BYTES) { "File is too large" }
+                            success(
+                                requestId,
+                                JsonPrimitive(Base64.getEncoder().encodeToString(bytes)),
+                            )
+                        } catch (error: Throwable) {
+                            failure(requestId, error.message ?: "native read failed")
+                        }
+                    }
+                    onResult(response)
+                }
+
+                override fun onError(message: String) {
+                    onResult(synchronized(lock) { failure(requestId, message) })
+                }
+            },
+        )
+        return true
     }
 
     fun handle(message: String): String = synchronized(lock) {
@@ -340,6 +388,7 @@ internal class NodeFileProtocol(
                 overlay.readBytes()
             } else {
                 if (isGameDeleted(path)) missing()
+                nativeGameBytes(path.path)?.let { return it }
                 when (val opened = gameFileSystem.open(path.path)) {
                     is VfsOpenResult.Found -> opened.stream.use { stream ->
                         require(opened.contentLength <= MAX_PAYLOAD_BYTES) { "File is too large" }
@@ -358,6 +407,16 @@ internal class NodeFileProtocol(
             require(file.length() <= MAX_PAYLOAD_BYTES) { "File is too large" }
             file.readBytes()
         }
+    }
+
+    private fun nativeGameBytes(logicalPath: String): ByteArray? {
+        if (!io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.isAvailable()) return null
+        val file = gameFileSystem.absoluteFile(logicalPath) ?: return null
+        val bytes = runCatching {
+            io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.nativeReadFile(file.absolutePath)
+        }.getOrNull() ?: return null
+        require(bytes.size <= MAX_PAYLOAD_BYTES) { "File is too large" }
+        return bytes
     }
 
     private fun missing(): Nothing = throw ProtocolFailure("missing")

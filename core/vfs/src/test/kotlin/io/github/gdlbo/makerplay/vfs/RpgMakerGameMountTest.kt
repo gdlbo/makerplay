@@ -78,6 +78,25 @@ class RpgMakerGameMountTest {
     }
 
     @Test
+    fun splitIndexRootReusesPersistedIndexWhenStillValid() {
+        write("index.html", "game".toByteArray())
+        write(
+            "data/System.json",
+            """{"gameTitle":"Reuse","hasEncryptedImages":false,"hasEncryptedAudio":false,"encryptionKey":""}""".toByteArray(),
+        )
+        val indexRoot = Files.createTempDirectory("makerplay-mount-index").toFile()
+        try {
+            RpgMakerGameMount.open(root, indexRoot)
+            assertTrue(File(indexRoot, GameFileIndex.INDEX_FILE).isFile)
+            val before = File(indexRoot, GameFileIndex.INDEX_FILE).readBytes()
+            RpgMakerGameMount.open(root, indexRoot)
+            assertArrayEquals(before, File(indexRoot, GameFileIndex.INDEX_FILE).readBytes())
+        } finally {
+            indexRoot.deleteRecursively()
+        }
+    }
+
+    @Test
     fun oversizedSystemMetadataIsRejectedBeforeParsing() {
         write("index.html", "game".toByteArray())
         write("data/System.json", ByteArray(2 * 1024 * 1024 + 1) { 'x'.code.toByte() })
@@ -96,6 +115,27 @@ class RpgMakerGameMountTest {
         GameFileIndex.build(root).write()
 
         assertThrows(GameMountException::class.java) { RpgMakerGameMount.open(root) }
+    }
+
+    @Test
+    fun volatileLogAndSavePathsDoNotInvalidatePersistedIndex() {
+        write("index.html", "game".toByteArray())
+        write(
+            "data/System.json",
+            """{"gameTitle":"Stable","hasEncryptedImages":false,"hasEncryptedAudio":false,"encryptionKey":""}""".toByteArray(),
+        )
+        val indexRoot = Files.createTempDirectory("makerplay-mount-volatile").toFile()
+        try {
+            RpgMakerGameMount.open(root, indexRoot)
+            val before = File(indexRoot, GameFileIndex.INDEX_FILE).readBytes()
+            write("logs.txt", "session-1".toByteArray())
+            File(root, "save").mkdirs()
+            write("save/file1.rpgsave", "save".toByteArray())
+            RpgMakerGameMount.open(root, indexRoot)
+            assertArrayEquals(before, File(indexRoot, GameFileIndex.INDEX_FILE).readBytes())
+        } finally {
+            indexRoot.deleteRecursively()
+        }
     }
 
     private fun write(path: String, bytes: ByteArray) {

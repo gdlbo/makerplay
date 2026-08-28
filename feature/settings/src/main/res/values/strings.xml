@@ -66,6 +66,8 @@
     <string name="limit_background_load_description">Runs fewer background tasks. This may reduce heat but slow loading</string>
     <string name="module_performance">Performance optimizations</string>
     <string name="module_performance_description">Reduces repeated text and picture work in compatible RPG Maker plugins. Turn off if a game behaves incorrectly</string>
+    <string name="module_visual_boosts">Visual boosts</string>
+    <string name="module_visual_boosts_description">Sharper pixel scaling, light contrast/saturation filters, and crisp canvas blits for RPG Maker games. Turn off if colors or scaling look wrong</string>
     <string name="module_cheats">Cheats</string>
     <string name="module_cheats_description">Adds the cheats menu while playing</string>
     <string name="module_diagnostics">Graphics monitoring</string>

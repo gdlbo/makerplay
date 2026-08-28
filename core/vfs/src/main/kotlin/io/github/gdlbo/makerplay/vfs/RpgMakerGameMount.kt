@@ -16,13 +16,17 @@ import java.util.Locale
 class GameMountException(message: String) : IllegalStateException(message)
 
 object RpgMakerGameMount {
-    fun open(root: File, indexRoot: File = root): GameFileSystem {
+    fun open(
+        root: File,
+        indexRoot: File = root,
+        codecFactory: (hexKey: String) -> io.github.gdlbo.makerplay.codec.AssetCodec =
+            RpgMakerAssetCodec::fromHexKey,
+        entryScanner: (() -> List<IndexedGameFile>?)? = null,
+    ): GameFileSystem {
         val index = try {
-            if (root.canonicalFile == indexRoot.canonicalFile) {
-                GameFileIndex.loadOrBuild(root, indexRoot)
-            } else {
-                GameFileIndex.build(root).also { it.write(indexRoot) }
-            }
+            // Direct installs keep the index in private storage (indexRoot != root).
+            // Reuse it when still valid; rebuild only when GameFileIndex.read rejects stale metadata.
+            GameFileIndex.loadOrBuild(root, indexRoot, entryScanner)
         } catch (_: Exception) {
             throw GameMountException("The imported game index is unavailable.")
         }
@@ -30,7 +34,7 @@ object RpgMakerGameMount {
         val encrypted = metadata.hasEncryptedImages || metadata.hasEncryptedAudio
         val codecs = if (encrypted) {
             val codec = try {
-                RpgMakerAssetCodec.fromHexKey(metadata.encryptionKey.orEmpty())
+                codecFactory(metadata.encryptionKey.orEmpty())
             } catch (_: IllegalArgumentException) {
                 throw GameMountException("The imported game has invalid encryption metadata.")
             }

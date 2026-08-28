@@ -85,17 +85,19 @@ internal class DeploymentInspector(
     }
 
     private fun probe(fileSystem: GameFileSystem, path: String): ReadResult {
-        val result = fileSystem.open(path)
-        return when (result) {
-            is VfsOpenResult.Found -> {
-                result.stream.close()
-                ReadResult(found = true)
-            }
-            else -> ReadResult(found = false)
-        }
+        if (fileSystem.resolve(path) != null) return ReadResult(found = true)
+        return ReadResult(found = false)
     }
 
     private suspend fun read(fileSystem: GameFileSystem, path: String): ReadResult {
+        coroutineContext.ensureActive()
+        nativeRead(fileSystem, path)?.let { bytes ->
+            return if (bytes.size > MAX_METADATA_BYTES) {
+                ReadResult(found = true)
+            } else {
+                ReadResult(found = true, text = String(bytes, StandardCharsets.UTF_8))
+            }
+        }
         val result = fileSystem.open(path)
         if (result !is VfsOpenResult.Found) return ReadResult(found = false)
         result.stream.use { stream ->
@@ -107,6 +109,14 @@ internal class DeploymentInspector(
                 text = String(bytes, StandardCharsets.UTF_8),
             )
         }
+    }
+
+    private fun nativeRead(fileSystem: GameFileSystem, path: String): ByteArray? {
+        if (!io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.isAvailable()) return null
+        val file = fileSystem.absoluteFile(path) ?: return null
+        return runCatching {
+            io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.nativeReadFile(file.absolutePath)
+        }.getOrNull()
     }
 
     private fun isReliablePluginManifest(script: String?): Boolean {
@@ -222,6 +232,7 @@ internal object RuntimeProfileResolver {
                 put("steam", if (settings.modules.steamCompatibility) "enabled:setting+engine=${fingerprint.engine}" else "disabled:user-setting")
                 put("legacy", if (settings.legacyCompatibility) "enabled:setting+pixi=${fingerprint.pixiMajor}" else "disabled:user-setting")
                 put("performance", if (settings.modules.performanceOptimization) "enabled:setting+plugins=${fingerprint.plugins.size}" else "disabled:user-setting")
+                put("visual-boosts", if (settings.modules.visualBoosts) "enabled:user-setting" else "disabled:user-setting")
                 put("common-js", "${fingerprint.commonJs.name.lowercase()}:detected-commonjs")
                 put("nw-js", "${fingerprint.nwJs.name.lowercase()}:detected-nwjs")
                 put("native-addons", "${fingerprint.nativeAddons.name.lowercase()}:detected-native-addon")

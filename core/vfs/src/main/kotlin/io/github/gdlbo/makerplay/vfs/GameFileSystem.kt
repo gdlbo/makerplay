@@ -80,6 +80,14 @@ class GameFileSystem(
         }
     }
 
+    /** Absolute on-disk file for a non-codec asset, or null when missing/encrypted/unavailable. */
+    fun absoluteFile(rawPath: String): java.io.File? {
+        val asset = resolve(rawPath) ?: return null
+        if (asset.codecId != null) return null
+        val entry = index.exact(asset.storedPath) ?: index.folded(asset.storedPath) ?: return null
+        return index.file(entry)
+    }
+
     fun list(rawPath: String): List<String>? {
         val directory = if (rawPath.isBlank() || rawPath == "/") {
             ""

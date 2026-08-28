@@ -7,6 +7,7 @@ import android.webkit.WebStorage
 import androidx.core.content.edit
 import io.github.gdlbo.makerplay.diagnostics.AndroidRuntimeLogger
 import io.github.gdlbo.makerplay.diagnostics.PersistentRuntimeLogger
+import io.github.gdlbo.makerplay.feature.importer.CopiedGameExporter
 import io.github.gdlbo.makerplay.feature.importer.GameCatalogRepository
 import io.github.gdlbo.makerplay.feature.importer.GameInstallMode
 import io.github.gdlbo.makerplay.feature.importer.GameImportWorker
@@ -153,6 +154,25 @@ class AppGraph(context: Context) {
         return deleted
     }
 
+    fun canExportGame(gameId: String): Boolean =
+        !gameStore.isDirectGame(gameId) && gameStore.findIndexDirectory(gameId) != null
+
+    /**
+     * Zips the private COPY install plus that game's save store into cache/exports.
+     * Returns null for DIRECT/link games or when packaging fails.
+     */
+    fun exportCopiedGame(game: GameSummary): File? {
+        if (!canExportGame(game.id)) return null
+        val gameDirectory = gameStore.findIndexDirectory(game.id) ?: return null
+        val savesDirectory = File(appContext.filesDir, "saves/${game.id}")
+            .takeIf { it.isDirectory }
+        val exportRoot = File(appContext.cacheDir, EXPORT_CACHE_DIRECTORY).apply { mkdirs() }
+        val output = File(exportRoot, CopiedGameExporter.sanitizeFileName(game.title, game.id))
+        return runCatching {
+            CopiedGameExporter.packageZip(gameDirectory, savesDirectory, output)
+        }.getOrNull()
+    }
+
     private fun readRuntimeSettings(prefix: String = ""): RuntimeSettings = RuntimeSettings(
         orientation = preferences.enum(prefix + ORIENTATION, RuntimeOrientation.LANDSCAPE),
         scaleMode = preferences.enum(prefix + SCALE_MODE, RuntimeScaleMode.FIT),
@@ -172,6 +192,7 @@ class AppGraph(context: Context) {
             steamCompatibility = preferences.getBoolean(prefix + MODULE_STEAM, true),
             limitWorkerCount = preferences.getBoolean(prefix + LIMIT_BACKGROUND_LOAD, false),
             performanceOptimization = preferences.getBoolean(prefix + MODULE_PERFORMANCE, true),
+            visualBoosts = preferences.getBoolean(prefix + MODULE_VISUAL_BOOSTS, true),
             cheatBridge = preferences.getBoolean(prefix + MODULE_CHEATS, true),
             diagnosticsBridge = preferences.getBoolean(prefix + MODULE_DIAGNOSTICS, true),
         ),
@@ -199,6 +220,7 @@ class AppGraph(context: Context) {
             putBoolean(prefix + MODULE_STEAM, value.modules.steamCompatibility)
             putBoolean(prefix + LIMIT_BACKGROUND_LOAD, value.modules.limitWorkerCount)
             putBoolean(prefix + MODULE_PERFORMANCE, value.modules.performanceOptimization)
+            putBoolean(prefix + MODULE_VISUAL_BOOSTS, value.modules.visualBoosts)
             putBoolean(prefix + MODULE_CHEATS, value.modules.cheatBridge)
             putBoolean(prefix + MODULE_DIAGNOSTICS, value.modules.diagnosticsBridge)
             useCommonSettings?.let { putBoolean(prefix + USE_COMMON_SETTINGS, it) }
@@ -234,6 +256,7 @@ class AppGraph(context: Context) {
 
     private companion object {
         const val PREFERENCES_NAME = "makerplay_settings"
+        const val EXPORT_CACHE_DIRECTORY = "exports"
         const val DEFAULT_GAME_FOLDER = "default_game_folder"
         const val DEFAULT_INSTALL_MODE = "default_install_mode"
         const val THEME_MODE = "theme_mode"
@@ -253,6 +276,7 @@ class AppGraph(context: Context) {
         const val MODULE_STEAM = "runtime_module_steam"
         const val LIMIT_BACKGROUND_LOAD = "runtime_limit_background_load"
         const val MODULE_PERFORMANCE = "runtime_module_performance"
+        const val MODULE_VISUAL_BOOSTS = "runtime_module_visual_boosts"
         const val MODULE_CHEATS = "runtime_module_cheats"
         const val MODULE_DIAGNOSTICS = "runtime_module_diagnostics"
         const val USE_COMMON_SETTINGS = "use_common_settings"
@@ -274,6 +298,7 @@ class AppGraph(context: Context) {
             MODULE_STEAM,
             LIMIT_BACKGROUND_LOAD,
             MODULE_PERFORMANCE,
+            MODULE_VISUAL_BOOSTS,
             MODULE_CHEATS,
             MODULE_DIAGNOSTICS,
         )

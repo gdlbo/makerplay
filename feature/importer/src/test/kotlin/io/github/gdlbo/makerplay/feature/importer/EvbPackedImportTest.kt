@@ -1,7 +1,9 @@
 package io.github.gdlbo.makerplay.feature.importer
 
 import io.github.gdlbo.makerplay.model.GameEngine
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -90,6 +92,28 @@ class EvbPackedImportTest {
         val index = entries.filter { it.relativePath == "www/index.html" }
         assertEquals(1, index.size)
         assertEquals("<html>loose</html>", index[0].open().use { it.readBytes().decodeToString() })
+    }
+
+    @Test
+    fun `direct link falls back to copy when game files exist only inside packed exe`() = runBlocking {
+        val (dir, _) = packedDeployment()
+        val store = PrivateGameStore(tmp.newFolder("games-link-evb"))
+        val engine = GameImportEngine(evbSpoolDir = tmp.newFolder("spool-link-evb"))
+        val source = FileImportSource.forJvmTest(dir, listOf(dir))
+
+        val result = engine.link(
+            source = source,
+            sourceRoot = dir,
+            store = store,
+            importId = "evb-link-fallback",
+        )
+
+        // Fallback copy materializes unpacked files into private storage (no directSource).
+        assertTrue(!store.isDirectGame(result.game.id))
+        val installed = store.findInstalledGame(result.game.id)!!
+        assertTrue(File(installed, "index.html").isFile)
+        assertTrue(File(installed, "data/System.json").isFile)
+        assertEquals("Evb Packed Sample", result.game.title)
     }
 
     @Test

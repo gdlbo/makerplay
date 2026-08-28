@@ -3,12 +3,14 @@ plugins {
     id("makerplay.android.compose")
 }
 
+val ndkVersionValue = "28.2.13676358"
+
 android {
     namespace = "io.github.gdlbo.makerplay.runtime.wolf"
 
-
     defaultConfig {
-        ndkVersion = "28.2.13676358"
+        consumerProguardFiles("consumer-rules.pro")
+        ndkVersion = ndkVersionValue
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a", "x86_64")
         }

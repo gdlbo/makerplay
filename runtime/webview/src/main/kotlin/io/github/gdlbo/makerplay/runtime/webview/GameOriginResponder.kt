@@ -30,6 +30,7 @@ class GameOriginResponder(
     private val ignoreMissingFiles: Boolean = false,
     private val onMissingFileIgnored: (path: String, mimeType: String) -> Unit = { _, _ -> },
     private val overlayAsset: ((String) -> OverlayAsset)? = null,
+    private val prefetchLookup: ((String) -> ByteArray?)? = null,
 ) {
     init {
         require(HOST.matches(host)) { "Invalid runtime origin host" }
@@ -52,16 +53,75 @@ class GameOriginResponder(
         if (overlay is OverlayAsset.Deleted) return missing(path, method, requestedRange)
         return when (overlay) {
             is OverlayAsset.Present -> foundOverlay(method, path, requestedRange, overlay)
-            else -> when (val opened = fileSystem.open(path, requestedRange)) {
-                VfsOpenResult.Missing -> missing(path, method, requestedRange)
-                is VfsOpenResult.RequiresCodec,
-                is VfsOpenResult.InvalidAsset,
-                    -> error(500, "Invalid Asset")
+            else -> nativeFullFile(method, path, requestedRange)
+                ?: when (val opened = fileSystem.open(path, requestedRange)) {
+                    VfsOpenResult.Missing -> missing(path, method, requestedRange)
+                    is VfsOpenResult.RequiresCodec,
+                    is VfsOpenResult.InvalidAsset,
+                        -> error(500, "Invalid Asset")
 
-                is VfsOpenResult.RangeNotSatisfiable -> rangeError(opened.completeLength)
-                is VfsOpenResult.Found -> found(method, path, requestedRange, opened)
+                    is VfsOpenResult.RangeNotSatisfiable -> rangeError(opened.completeLength)
+                    is VfsOpenResult.Found -> found(method, path, requestedRange, opened)
+                }
+        }
+    }
+
+    /**
+     * Fast path for large plaintext assets (maps/CommonEvents JSON, audio, images):
+     * native fread of the absolute file when no byte-range and no JS rewrite is required.
+     */
+    private fun nativeFullFile(
+        method: String,
+        path: String,
+        requestedRange: ByteRange?,
+    ): OriginResponse? {
+        if (requestedRange != null) return null
+        if (path.endsWith(".js", ignoreCase = true)) return null
+        val asset = fileSystem.resolve(path) ?: return null
+        val startedAt = System.nanoTime()
+        val prefetched = prefetchLookup?.invoke(path)
+        val bytes = when {
+            prefetched != null -> {
+                android.util.Log.i(
+                    "MakerPlay",
+                    "native.io op=origin-cache-hit path=$path bytes=${prefetched.size}",
+                )
+                prefetched
+            }
+            !io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.isAvailable() -> return null
+            else -> {
+                val file = fileSystem.absoluteFile(path) ?: return null
+                runCatching {
+                    io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.nativeReadFile(file.absolutePath)
+                }.getOrNull() ?: return null
             }
         }
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
+        if (prefetched == null && (bytes.size >= 256 * 1024 || elapsedMs >= 5L)) {
+            android.util.Log.i(
+                "MakerPlay",
+                "native.io op=origin-read path=$path bytes=${bytes.size} ms=$elapsedMs",
+            )
+        }
+        val payload = if (path.equals("data/System.json", ignoreCase = true)) {
+            rewriteSystemJsonClearEncryption(ByteArrayInputStream(bytes))?.let { rewritten ->
+                rewritten.stream.use { it.readBytes() }
+            } ?: bytes
+        } else {
+            bytes
+        }
+        val headers = linkedMapOf(
+            "Accept-Ranges" to "bytes",
+            "Content-Length" to payload.size.toString(),
+            "ETag" to asset.entityTag,
+        )
+        return OriginResponse(
+            200,
+            "OK",
+            asset.mimeType,
+            headers,
+            if (method == "HEAD") EMPTY_BODY else ByteArrayInputStream(payload),
+        )
     }
 
     private fun foundOverlay(
@@ -109,13 +169,26 @@ class GameOriginResponder(
         requestedRange: ByteRange?,
         opened: VfsOpenResult.Found,
     ): OriginResponse {
-        val rewritten = if (requestedRange == null) {
-            rewriteBrowserIncompatibleJavaScript(path, opened.stream)
-        } else {
-            null
+        val rewrittenStream: InputStream?
+        val rewrittenLength: Long?
+        when {
+            requestedRange == null && path.equals("data/System.json", ignoreCase = true) -> {
+                val systemRewrite = rewriteSystemJsonClearEncryption(opened.stream)
+                rewrittenStream = systemRewrite?.stream
+                rewrittenLength = systemRewrite?.length
+            }
+            requestedRange == null -> {
+                val jsRewrite = rewriteBrowserIncompatibleJavaScript(path, opened.stream)
+                rewrittenStream = jsRewrite?.stream
+                rewrittenLength = jsRewrite?.length
+            }
+            else -> {
+                rewrittenStream = null
+                rewrittenLength = null
+            }
         }
-        val responseStream = rewritten?.stream ?: opened.stream
-        val responseLength = rewritten?.length ?: opened.contentLength
+        val responseStream = rewrittenStream ?: opened.stream
+        val responseLength = rewrittenLength ?: opened.contentLength
         val headers = linkedMapOf(
             "Accept-Ranges" to "bytes",
             "Content-Length" to responseLength.toString(),
@@ -136,6 +209,33 @@ class GameOriginResponder(
             body,
         )
     }
+
+    /**
+     * When native VFS codec owns decryption, clear RPG Maker JS Decrypter flags so assets
+     * are requested as logical .png/.ogg and decoded natively instead of dual-decrypting.
+     */
+    private fun rewriteSystemJsonClearEncryption(source: InputStream): RewrittenBody? {
+        if (!io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.isAvailable()) {
+            source.close()
+            return null
+        }
+        val original = source.use { it.readBytes() }
+        val text = original.toString(Charsets.UTF_8)
+        if (!text.contains("hasEncryptedImages") && !text.contains("hasEncryptedAudio")) {
+            return RewrittenBody(ByteArrayInputStream(original), original.size.toLong())
+        }
+        val rewritten = text
+            .replace(Regex("\"hasEncryptedImages\"\\s*:\\s*true"), "\"hasEncryptedImages\":false")
+            .replace(Regex("\"hasEncryptedAudio\"\\s*:\\s*true"), "\"hasEncryptedAudio\":false")
+        if (rewritten == text) {
+            return RewrittenBody(ByteArrayInputStream(original), original.size.toLong())
+        }
+        android.util.Log.i("MakerPlay", "native.io op=system-json-clear-encryption")
+        val bytes = rewritten.toByteArray(Charsets.UTF_8)
+        return RewrittenBody(ByteArrayInputStream(bytes), bytes.size.toLong())
+    }
+
+    private data class RewrittenBody(val stream: InputStream, val length: Long)
 
     private fun unsatisfied(path: String): OriginResponse = when (
         val probe = fileSystem.open(path, ByteRange(Long.MAX_VALUE))
@@ -215,6 +315,9 @@ class GameOriginResponder(
         requestedRange: ByteRange? = null,
     ): OriginResponse {
         if (!ignoreMissingFiles) return error(404, "Not Found")
+        // Empty 200 bodies make RPG Maker's JS Decrypter treat the response as a
+        // successful encrypted asset (status < 400) and throw "Header is wrong".
+        if (isEncryptedRpgMakerAsset(path)) return error(404, "Not Found")
         val mimeType = MimeTypes.forPath(GamePath.parse(path))
         onMissingFileIgnored(path, mimeType)
         if (mimeType.startsWith("font/")) {
@@ -244,6 +347,11 @@ class GameOriginResponder(
 
     private fun isFontFile(name: String): Boolean =
         name.substringAfterLast('.', "").lowercase(Locale.ROOT) in FONT_EXTENSIONS
+
+    private fun isEncryptedRpgMakerAsset(path: String): Boolean {
+        val lower = path.lowercase(Locale.ROOT)
+        return ENCRYPTED_ASSET_SUFFIXES.any(lower::endsWith)
+    }
 
     private fun error(status: Int, reason: String) = OriginResponse(
         status,
@@ -280,6 +388,14 @@ class GameOriginResponder(
         val PREFERRED_FONT_FALLBACKS = listOf(
             "fonts/mplus-1m-regular.woff",
             "fonts/mplus-2p-bold-sub.woff",
+        )
+        val ENCRYPTED_ASSET_SUFFIXES = listOf(
+            ".rpgmvp",
+            ".rpgmvo",
+            ".rpgmvm",
+            ".png_",
+            ".ogg_",
+            ".m4a_",
         )
         val EMPTY_BODY = ByteArrayInputStream(ByteArray(0))
     }

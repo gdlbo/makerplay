@@ -43,10 +43,12 @@ internal class RuntimeAudioFocusController(
                         -> controller.dispatchFocusChange(false)
                 }
             }
+            // USAGE_MEDIA matches Chromium WebView HTML5/WebAudio routing so side
+            // volume controls adjust the same stream the game actually plays on.
             val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
                 .setAudioAttributes(
                     AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_GAME)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
                         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build(),
                 )

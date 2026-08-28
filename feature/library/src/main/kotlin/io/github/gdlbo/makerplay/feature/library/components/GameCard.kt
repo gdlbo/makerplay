@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -57,6 +58,8 @@ internal fun GameCard(
     onSettings: () -> Unit,
     onDelete: () -> Unit,
     onClearWebData: () -> Unit,
+    canExport: Boolean = false,
+    onExport: () -> Unit = {},
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmClearWebData by remember { mutableStateOf(false) }
@@ -158,6 +161,8 @@ internal fun GameCard(
                     expanded = menuExpanded,
                     onExpandedChange = { menuExpanded = it },
                     onSettings = onSettings,
+                    canExport = canExport,
+                    onExport = onExport,
                     onClearWebData = { confirmClearWebData = true },
                     onDelete = { confirmDelete = true },
                     modifier = Modifier
@@ -235,6 +240,8 @@ private fun GameActionsMenu(
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
     onSettings: () -> Unit,
+    canExport: Boolean,
+    onExport: () -> Unit,
     onClearWebData: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
@@ -263,6 +270,16 @@ private fun GameActionsMenu(
                     onSettings()
                 },
             )
+            if (canExport) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.export_game)) },
+                    leadingIcon = { Icon(Icons.Default.Share, contentDescription = null) },
+                    onClick = {
+                        onExpandedChange(false)
+                        onExport()
+                    },
+                )
+            }
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.clear_web_data)) },
                 leadingIcon = { Icon(Icons.Default.DeleteSweep, contentDescription = null) },

@@ -5,6 +5,7 @@ import io.github.gdlbo.makerplay.feature.player.controller.ui.circularControlSid
 import io.github.gdlbo.makerplay.feature.player.controller.ui.controlsFitViewport
 import io.github.gdlbo.makerplay.feature.player.controller.ui.dPadActionsForPosition
 import io.github.gdlbo.makerplay.feature.player.controller.ui.moveVirtualControl
+import io.github.gdlbo.makerplay.feature.player.controller.ui.normalizeOverlayPointer
 import io.github.gdlbo.makerplay.input.GameAction
 import io.github.gdlbo.makerplay.input.VirtualControlShape
 import io.github.gdlbo.makerplay.input.VirtualControlType
@@ -54,6 +55,39 @@ class VirtualControllerOverlayTest {
                 DefaultGamepadProfile,
                 canvasWidthPx = 2400f,
                 canvasHeightPx = 1080f,
+            ),
+        )
+    }
+
+    @Test
+    fun `overlay pointers normalize to the true surface fraction`() {
+        assertEquals(
+            0.5f to 0.25f,
+            normalizeOverlayPointer(
+                localX = 960f,
+                localY = 270f,
+                overlayWidthPx = 1920,
+                overlayHeightPx = 1080,
+            ),
+        )
+        assertEquals(
+            0.25f to 0.5f,
+            normalizeOverlayPointer(
+                localX = 400f,
+                localY = 540f,
+                overlayWidthPx = 1920,
+                overlayHeightPx = 1080,
+                pageOffsetXPx = 80f,
+                pageOffsetYPx = 0f,
+            ),
+        )
+        assertEquals(
+            0f to 1f,
+            normalizeOverlayPointer(
+                localX = -20f,
+                localY = 2000f,
+                overlayWidthPx = 800,
+                overlayHeightPx = 600,
             ),
         )
     }

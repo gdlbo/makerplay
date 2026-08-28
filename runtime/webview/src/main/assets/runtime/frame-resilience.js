@@ -8,6 +8,19 @@
   if (globalThis.__makerplayFrameResilience) return;
   globalThis.__makerplayFrameResilience = true;
 
+  // Chrome/WebView logs and can disrupt UX when rmmz_core / plugins call
+  // preventDefault() on non-cancelable touchstart (e.g. during scroll).
+  // Options gauges (volume, window opacity, button border) rely on these paths.
+  if (!Event.prototype.preventDefault.__makerplayCancelableGuard) {
+    const nativePreventDefault = Event.prototype.preventDefault;
+    const guarded = function () {
+      if (this && this.cancelable === false) return;
+      return nativePreventDefault.apply(this, arguments);
+    };
+    guarded.__makerplayCancelableGuard = true;
+    Event.prototype.preventDefault = guarded;
+  }
+
   let attempts = 0;
   const timer = setInterval(() => {
     attempts += 1;

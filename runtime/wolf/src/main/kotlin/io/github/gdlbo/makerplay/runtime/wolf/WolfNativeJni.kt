@@ -5,8 +5,7 @@ import io.github.gdlbo.makerplay.runtime.api.WolfNativeDiagnostics
 import io.github.gdlbo.makerplay.runtime.api.WolfNativeLoadException
 
 /**
- * Loads `libwolf_native.so` and exposes the JNI surface declared by
- * `runtime/wolf/src/main/cpp/wolf_jni.cpp`.
+ * Loads `libwolf_native.so` (Rust core + vendored SDL3).
  *
  * [isAvailable] is checked once at construction so the backend descriptor can
  * report NOT_INSTALLED on builds where the native library is absent instead of

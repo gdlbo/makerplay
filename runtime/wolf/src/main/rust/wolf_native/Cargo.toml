@@ -1,0 +1,18 @@
+[package]
+name = "wolf_native"
+version = "0.2.0"
+edition = "2021"
+publish = false
+
+[lib]
+# Linked whole-archive into CMake `libwolf_native.so` (with SDL3).
+crate-type = ["staticlib"]
+
+[dependencies]
+once_cell = "1.19"
+jni = { version = "0.21", default-features = false }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"

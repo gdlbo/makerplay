@@ -48,6 +48,8 @@ fun LibraryScreen(
     onGameSettings: (GameSummary) -> Unit,
     onDelete: (GameSummary) -> Unit,
     onClearWebData: (GameSummary) -> Unit,
+    canExport: (GameSummary) -> Boolean = { false },
+    onExport: (GameSummary) -> Unit = {},
     onReorderGames: (List<String>) -> Unit,
     onRunSmokeTest: () -> Unit,
     onSettings: () -> Unit,
@@ -224,6 +226,8 @@ fun LibraryScreen(
                         onSettings = { onGameSettings(game) },
                         onDelete = { onDelete(game) },
                         onClearWebData = { onClearWebData(game) },
+                        canExport = canExport(game),
+                        onExport = { onExport(game) },
                     )
                     }
                 }

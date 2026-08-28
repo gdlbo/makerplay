@@ -124,35 +124,26 @@ internal fun VirtualControllerOverlay(
                     }
                     val source = "virtual:game-touch"
                     // Normalized 0..1 overlay coords. input-bridge.js maps these
-                    // through the CSS viewport so density/DPR cannot drift.
-                    fun normX(localX: Float): Float {
-                        val width = canvasSize.width.coerceAtLeast(1)
-                        return ((localX + latestPointerPageOffsetX.value) / width)
-                            .coerceIn(0f, 1f)
-                    }
-                    fun normY(localY: Float): Float {
-                        val height = canvasSize.height.coerceAtLeast(1)
-                        return ((localY + latestPointerPageOffsetY.value) / height)
-                            .coerceIn(0f, 1f)
-                    }
-                    reducer.pointerDown(
-                        source,
-                        down.id.value,
-                        normX(down.position.x),
-                        normY(down.position.y),
-                    )
+                    // through the CSS viewport / GameCanvas client rect.
+                    fun normalized(localX: Float, localY: Float): Pair<Float, Float> =
+                        normalizeOverlayPointer(
+                            localX = localX,
+                            localY = localY,
+                            overlayWidthPx = canvasSize.width,
+                            overlayHeightPx = canvasSize.height,
+                            pageOffsetXPx = latestPointerPageOffsetX.value,
+                            pageOffsetYPx = latestPointerPageOffsetY.value,
+                        )
+                    val (downX, downY) = normalized(down.position.x, down.position.y)
+                    reducer.pointerDown(source, down.id.value, downX, downY)
                     onSnapshotChanged(reducer.snapshot())
                     try {
                         while (true) {
                             val event = awaitPointerEvent()
                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
                             if (!change.pressed) break
-                            reducer.pointerMove(
-                                source,
-                                down.id.value,
-                                normX(change.position.x),
-                                normY(change.position.y),
-                            )
+                            val (moveX, moveY) = normalized(change.position.x, change.position.y)
+                            reducer.pointerMove(source, down.id.value, moveX, moveY)
                             onSnapshotChanged(reducer.snapshot())
                         }
                     } finally {
@@ -352,17 +343,18 @@ private fun VirtualDPad(
     var activeActions by remember(control.id) { mutableStateOf(emptySet<GameAction>()) }
 
     if (editMode) {
+        val editAlpha = control.opacity.coerceIn(.2f, 1f)
         Surface(
             modifier = editModifier,
             shape = CircleShape,
-            color = Color(0xF012141C),
-            contentColor = Color.White,
+            color = Color(0xFF12141C).copy(alpha = editAlpha),
+            contentColor = Color.White.copy(alpha = editAlpha.coerceAtLeast(0.55f)),
             border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                     else BorderStroke(1.dp, Color.White.copy(alpha = 0.12f)),
+                     else BorderStroke(1.dp, Color.White.copy(alpha = 0.12f * editAlpha)),
             tonalElevation = 2.dp,
             shadowElevation = 6.dp,
         ) {
-            DPadFace(activeActions = emptySet())
+            DPadFace(activeActions = emptySet(), opacity = editAlpha)
         }
         return
     }
@@ -471,32 +463,37 @@ private fun VirtualDPad(
                 }
             },
     ) {
+        val playAlpha = control.opacity.coerceIn(.2f, 1f)
         Surface(
             modifier = Modifier
                 .offset(x = placement.x - touchLeft, y = placement.y - touchTop)
                 .size(dPadSize),
             shape = CircleShape,
-            color = Color(0xF012141C),
-            contentColor = Color.White,
+            color = Color(0xFF12141C).copy(alpha = playAlpha),
+            contentColor = Color.White.copy(alpha = playAlpha.coerceAtLeast(0.55f)),
             border = BorderStroke(
                 1.dp,
-                if (activeActions.isNotEmpty()) Color(0xFF38BDF8).copy(alpha = 0.6f)
-                else Color.White.copy(alpha = 0.12f),
+                if (activeActions.isNotEmpty()) Color(0xFF38BDF8).copy(alpha = 0.6f * playAlpha)
+                else Color.White.copy(alpha = 0.12f * playAlpha),
             ),
             tonalElevation = 2.dp,
             shadowElevation = 6.dp,
         ) {
-            DPadFace(activeActions = activeActions)
+            DPadFace(activeActions = activeActions, opacity = playAlpha)
         }
     }
 }
 
 @Composable
-private fun DPadFace(activeActions: Set<GameAction>) {
-    val idleButtonColor = Color.White.copy(alpha = 0.09f)
-    val idleBorderColor = Color.White.copy(alpha = 0.18f)
-    val activeButtonColor = Color(0xFF0284C7).copy(alpha = 0.92f)
-    val activeGlowColor = Color(0xFF38BDF8)
+private fun DPadFace(
+    activeActions: Set<GameAction>,
+    opacity: Float = 1f,
+) {
+    val faceAlpha = opacity.coerceIn(.2f, 1f)
+    val idleButtonColor = Color.White.copy(alpha = 0.09f * faceAlpha)
+    val idleBorderColor = Color.White.copy(alpha = 0.18f * faceAlpha)
+    val activeButtonColor = Color(0xFF0284C7).copy(alpha = 0.92f * faceAlpha)
+    val activeGlowColor = Color(0xFF38BDF8).copy(alpha = faceAlpha)
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
@@ -512,7 +509,7 @@ private fun DPadFace(activeActions: Set<GameAction>) {
                 val dotX = cx + (diagDist * kotlin.math.cos(rad)).toFloat()
                 val dotY = cy + (diagDist * kotlin.math.sin(rad)).toFloat()
                 drawCircle(
-                    color = Color.White.copy(alpha = 0.22f),
+                    color = Color.White.copy(alpha = 0.22f * faceAlpha),
                     radius = dotRadius,
                     center = Offset(dotX, dotY),
                 )
@@ -796,6 +793,25 @@ internal fun gameActionLabel(action: GameAction): String = stringResource(
         GameAction.POINTER_DOWN, GameAction.POINTER_MOVE, GameAction.POINTER_UP -> R.string.action_pointer
     },
 )
+
+/**
+ * Maps an overlay-local touch into a 0..1 fraction of the shared runtime surface.
+ * [pageOffsetXPx]/[pageOffsetYPx] correct Popup/window origin drift versus the WebView.
+ */
+internal fun normalizeOverlayPointer(
+    localX: Float,
+    localY: Float,
+    overlayWidthPx: Int,
+    overlayHeightPx: Int,
+    pageOffsetXPx: Float = 0f,
+    pageOffsetYPx: Float = 0f,
+): Pair<Float, Float> {
+    val width = overlayWidthPx.coerceAtLeast(1).toFloat()
+    val height = overlayHeightPx.coerceAtLeast(1).toFloat()
+    val x = ((localX + pageOffsetXPx) / width).coerceIn(0f, 1f)
+    val y = ((localY + pageOffsetYPx) / height).coerceIn(0f, 1f)
+    return x to y
+}
 
 internal fun moveVirtualControl(
     profile: VirtualControllerProfile,

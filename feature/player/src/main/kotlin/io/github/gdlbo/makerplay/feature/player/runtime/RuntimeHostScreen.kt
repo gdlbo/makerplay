@@ -1,11 +1,14 @@
 package io.github.gdlbo.makerplay.feature.player.runtime
 
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -38,7 +41,6 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
@@ -132,6 +134,7 @@ fun RuntimeHostScreen(
     val logsUnavailable = stringResource(R.string.logs_unavailable)
 
     RuntimeDisplayEffect(request.settings, enabled = session != null)
+    RuntimeMediaVolumeEffect(enabled = session != null)
 
     fun handleBack() {
         when {
@@ -236,7 +239,6 @@ fun RuntimeHostScreen(
     val focusRequester = remember { FocusRequester() }
     var runtimeViewport by remember { mutableStateOf(IntSize.Zero) }
     val density = LocalDensity.current
-    val configuration = LocalConfiguration.current
     LaunchedEffect(gameReady, session?.sessionId) {
         if (gameReady && session != null) {
             runCatching { focusRequester.requestFocus() }
@@ -249,6 +251,15 @@ fun RuntimeHostScreen(
         .focusTarget()
         .onKeyEvent { event ->
             val keyCode = event.nativeKeyEvent.keyCode
+            // Never consume volume keys — returning true here blocked STREAM_MUSIC
+            // adjustments from the side volume gesture / rocker.
+            if (
+                keyCode == AndroidKeyEvent.KEYCODE_VOLUME_UP ||
+                keyCode == AndroidKeyEvent.KEYCODE_VOLUME_DOWN ||
+                keyCode == AndroidKeyEvent.KEYCODE_VOLUME_MUTE
+            ) {
+                return@onKeyEvent false
+            }
             val action = PhysicalInputNormalizer.keyMap[keyCode]
             when (event.type) {
                 KeyEventType.KeyDown -> {
@@ -272,6 +283,10 @@ fun RuntimeHostScreen(
         }
     BoxWithConstraints(modifier = runtimeModifier.onSizeChanged { runtimeViewport = it }) {
         val compactHeight = maxHeight < 480.dp
+        // Hide the touch-capturing gamepad while the system IME is up so soft-keyboard
+        // taps are not stolen by the always-on-top overlay Popup.
+        val imeBottomPx = WindowInsets.ime.getBottom(density)
+        val imeVisible = imeBottomPx > 0
         // Overlay Popup is anchored at the window origin and must share the same
         // client coordinate space as the WebView canvas mapping in input-bridge.js.
         when {
@@ -354,7 +369,19 @@ fun RuntimeHostScreen(
         if (session != null && !gameReady) {
             RuntimePreparing(modifier = Modifier.align(Alignment.Center))
         }
-        if (session != null && gameReady && runtimeViewport != IntSize.Zero) {
+        LaunchedEffect(imeVisible) {
+            if (imeVisible) {
+                editControls = false
+                virtualInput = LogicalInputSnapshot(
+                    pressedActions = emptySet(),
+                    pointers = emptySet(),
+                    pressedKeyCodes = virtualInput.pressedKeyCodes,
+                )
+            }
+        }
+        // Drop the always-on-top Popup while the system IME is visible so soft-keyboard
+        // and focused text fields receive taps instead of the virtual gamepad layer.
+        if (session != null && shouldHostRuntimeOverlayPopup(gameReady, runtimeViewport, imeVisible)) {
             // The WOLF game surface is an opaque GLSurfaceView (ZOrderOnTop),
             // which covers every Compose sibling in this window. Host the
             // controller chrome in its own always-on-top window so buttons are
@@ -362,22 +389,17 @@ fun RuntimeHostScreen(
             Popup(
                 alignment = Alignment.TopStart,
                 onDismissRequest = {},
-                properties = PopupProperties(focusable = false),
+                // Sliders (opacity/size) and shape toggles need a focusable window;
+                // non-focusable popups drop drag gestures on many WebView/GL hosts.
+                properties = PopupProperties(focusable = editControls),
             ) {
-                // A Popup is measured in its own window. Its WindowManager app
-                // frame can be smaller than the requested surface (for example,
-                // a landscape cutout inset), so clamp to the client bounds used
-                // for both rendering and hit testing.
+                // Match the runtime surface pixel-for-pixel. Clamping to screenWidthDp
+                // previously made the overlay wider/narrower than the WebView and shifted
+                // normalized taps left of the real canvas hit point.
                 Box(
                     Modifier.requiredSize(
-                        minOf(
-                            with(density) { runtimeViewport.width.toDp() },
-                            configuration.screenWidthDp.dp,
-                        ),
-                        minOf(
-                            with(density) { runtimeViewport.height.toDp() },
-                            configuration.screenHeightDp.dp,
-                        ),
+                        with(density) { runtimeViewport.width.toDp() },
+                        with(density) { runtimeViewport.height.toDp() },
                     ),
                 ) {
         if (session != null && gameReady && showControls && layoutLoaded && !showCheats) {
@@ -542,3 +564,10 @@ fun RuntimeHostScreen(
         )
     }
 }
+
+/** Overlay Popup must not cover the system IME or an unready/zero-sized surface. */
+internal fun shouldHostRuntimeOverlayPopup(
+    gameReady: Boolean,
+    runtimeViewport: IntSize,
+    imeVisible: Boolean,
+): Boolean = gameReady && runtimeViewport != IntSize.Zero && !imeVisible

@@ -439,6 +439,18 @@ private fun ColumnScope.RuntimeSettingsOptions(
                     )
                 },
             )
+            ToggleSetting(
+                title = stringResource(R.string.module_visual_boosts),
+                description = stringResource(R.string.module_visual_boosts_description),
+                checked = runtimeSettings.modules.visualBoosts,
+                onCheckedChange = {
+                    onRuntimeSettingsChange(
+                        runtimeSettings.copy(
+                            modules = runtimeSettings.modules.copy(visualBoosts = it),
+                        ),
+                    )
+                },
+            )
         }
         ToggleSetting(
             title = stringResource(R.string.module_cheats),

@@ -21,7 +21,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.net.toUri
+import android.widget.Toast
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -132,6 +134,50 @@ fun MakerPlayApp(graph: AppGraph) {
                             scope.launch(Dispatchers.IO) { graph.deleteGame(game.id) }
                         },
                         onClearWebData = { game -> graph.clearGameWebData(game.id) },
+                        canExport = { game -> graph.canExportGame(game.id) },
+                        onExport = { game ->
+                            scope.launch(Dispatchers.IO) {
+                                val archive = graph.exportCopiedGame(game)
+                                launch(Dispatchers.Main) {
+                                    if (archive == null) {
+                                        Toast.makeText(
+                                            context,
+                                            context.getString(
+                                                io.github.gdlbo.makerplay.feature.library.R.string.export_game_failed,
+                                            ),
+                                            Toast.LENGTH_SHORT,
+                                        ).show()
+                                        return@launch
+                                    }
+                                    val uri = FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.export",
+                                        archive,
+                                    )
+                                    val share = Intent(Intent.ACTION_SEND).apply {
+                                        type = "application/zip"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        putExtra(
+                                            Intent.EXTRA_SUBJECT,
+                                            context.getString(
+                                                io.github.gdlbo.makerplay.feature.library.R.string.export_game_share_title,
+                                                game.title,
+                                            ),
+                                        )
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(
+                                        Intent.createChooser(
+                                            share,
+                                            context.getString(
+                                                io.github.gdlbo.makerplay.feature.library.R.string.export_game_share_title,
+                                                game.title,
+                                            ),
+                                        ),
+                                    )
+                                }
+                            }
+                        },
                         onReorderGames = graph.catalog::reorderGames,
                         onRunSmokeTest = { navController.navigate("runtime-smoke") },
                         onSettings = { navController.navigate("settings") },

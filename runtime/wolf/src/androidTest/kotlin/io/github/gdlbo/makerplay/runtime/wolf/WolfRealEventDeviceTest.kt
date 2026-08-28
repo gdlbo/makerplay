@@ -35,7 +35,11 @@ class WolfRealEventDeviceTest {
 
             val seen = mutableListOf<String>()
             val host = object : WolfInterpreter.Host {
-                override fun onMessage(text: String) = seen.add(text)
+                override fun onMessage(text: String) {
+                    seen.add(text)
+                }
+
+                override fun onChoices(options: List<String>) = Unit
             }
             val interpreter = WolfInterpreter(host, commonEvents = byId)
             interpreter.start(messageEvent.commands)

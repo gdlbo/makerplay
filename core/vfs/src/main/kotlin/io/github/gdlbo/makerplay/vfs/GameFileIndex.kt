@@ -113,15 +113,40 @@ class GameFileIndex private constructor(
             CONTROLLER_LAYOUT_FILE.lowercase(Locale.ROOT),
         )
 
-        fun loadOrBuild(root: File, indexRoot: File = root): GameFileIndex = try {
-            read(root, indexRoot)
-        } catch (_: Exception) {
-            build(root).also { it.write(indexRoot) }
+        /** Runtime/log/save noise that would invalidate a persisted index on every launch. */
+        fun isVolatileGamePath(path: String): Boolean {
+            val lower = path.lowercase(Locale.ROOT)
+            if (lower == "logs.txt" || lower == "debug.log") return true
+            if (lower == "save" || lower.startsWith("save/")) return true
+            if (lower.endsWith(".rpgsave") || lower.endsWith(".rmmzsave")) return true
+            return false
         }
 
-        fun build(root: File): GameFileIndex {
+        fun loadOrBuild(
+            root: File,
+            indexRoot: File = root,
+            entryScanner: (() -> List<IndexedGameFile>?)? = null,
+        ): GameFileIndex = try {
+            read(root, indexRoot)
+        } catch (_: Exception) {
+            build(root, entryScanner?.invoke()).also { it.write(indexRoot) }
+        }
+
+        fun build(root: File, preScanned: List<IndexedGameFile>? = null): GameFileIndex {
             val canonicalRoot = root.canonicalFile
             require(canonicalRoot.isDirectory) { "Game root is not a directory" }
+            if (preScanned != null) {
+                val filtered = preScanned.filterNot { entry ->
+                    val value = entry.path.value
+                    val parent = value.substringBeforeLast('/', missingDelimiterValue = "")
+                    isVolatileGamePath(value) ||
+                        (parent.isEmpty() && (
+                            value.lowercase(Locale.ROOT) in RESERVED_FILE_NAMES ||
+                                value.equals(PRIVATE_METADATA_FILE, ignoreCase = true)
+                            ))
+                }
+                return GameFileIndex(canonicalRoot, filtered)
+            }
             val entries = ArrayList<IndexedGameFile>()
 
             fun walk(directory: File, depth: Int) {
@@ -135,8 +160,14 @@ class GameFileIndex private constructor(
                             "Game file escaped game root"
                         }
                         when {
-                            canonicalChild.isDirectory -> walk(canonicalChild, depth + 1)
+                            canonicalChild.isDirectory -> {
+                                val relativeDir = canonicalChild.relativeTo(canonicalRoot).invariantSeparatorsPath
+                                if (!isVolatileGamePath(relativeDir)) {
+                                    walk(canonicalChild, depth + 1)
+                                }
+                            }
                             canonicalChild.isFile -> {
+                                val relative = canonicalChild.relativeTo(canonicalRoot).invariantSeparatorsPath
                                 val isRootIndexFile = canonicalChild.parentFile == canonicalRoot &&
                                         canonicalChild.name.lowercase(Locale.ROOT) in RESERVED_FILE_NAMES
                                 val isRootMetadata = canonicalChild.parentFile == canonicalRoot &&
@@ -144,11 +175,9 @@ class GameFileIndex private constructor(
                                             PRIVATE_METADATA_FILE,
                                             ignoreCase = true
                                         )
-                                if (!isRootIndexFile && !isRootMetadata) {
+                                if (!isRootIndexFile && !isRootMetadata && !isVolatileGamePath(relative)) {
                                     entries += IndexedGameFile(
-                                        path = GamePath.parse(
-                                            canonicalChild.relativeTo(canonicalRoot).invariantSeparatorsPath,
-                                        ),
+                                        path = GamePath.parse(relative),
                                         size = canonicalChild.length(),
                                         lastModifiedMillis = canonicalChild.lastModified(),
                                     )
