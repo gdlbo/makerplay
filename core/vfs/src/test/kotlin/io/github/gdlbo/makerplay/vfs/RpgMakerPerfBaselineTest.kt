@@ -2,6 +2,7 @@ package io.github.gdlbo.makerplay.vfs
 
 import io.github.gdlbo.makerplay.codec.RpgMakerAssetCodec
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 import kotlin.system.measureNanoTime
@@ -17,7 +18,9 @@ class RpgMakerPerfBaselineTest {
             GameSpec("Lico", "Lico's Mysterious Errand_Full", encryptedSample = "img/animations/Absorb.png"),
             GameSpec("Mallow", "Mallow & The Street of the Fallen/www", encryptedSample = "img/animations/Absorb.png"),
         )
-        games.forEach { spec ->
+        val availableGames = games.filter { example(it.relativeRoot).isDirectory }
+        assumeTrue("No example RPGM games present under example/rpgm", availableGames.isNotEmpty())
+        availableGames.forEach { spec ->
             val root = example(spec.relativeRoot)
             assertTrue("${spec.name} missing at $root", root.isDirectory)
             val indexRoot = File.createTempFile("perf-idx-", null).apply { delete(); mkdirs() }

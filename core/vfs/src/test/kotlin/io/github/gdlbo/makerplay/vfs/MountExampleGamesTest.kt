@@ -1,6 +1,7 @@
 package io.github.gdlbo.makerplay.vfs
 
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import java.io.File
 
@@ -53,7 +54,7 @@ class MountExampleGamesTest {
         }
         // gradle test cwd is module dir core/vfs
         val fromModule = File("../..", "example/rpgm/$relative").canonicalFile
-        require(fromModule.isDirectory) { "missing $relative under ${File("").absoluteFile}" }
+        assumeTrue("missing $relative under ${File("").absoluteFile}", fromModule.isDirectory)
         return fromModule
     }
 }

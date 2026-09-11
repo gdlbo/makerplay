@@ -26,20 +26,26 @@ tasks.register("cargoNdkRpgmNative") {
     inputs.file(rustCrateDir.resolve("Cargo.toml"))
     outputs.dir(rustJniLibsDir)
     notCompatibleWithConfigurationCache("cargo-ndk uses local NDK path from local.properties")
+
+    val crateDir = rustCrateDir
+    val jniLibsDir = rustJniLibsDir
+    val sdkDir = androidSdkDir
+    val ndkVer = ndkVersionValue
+
     doLast {
-        val sdk = androidSdkDir ?: error("Android SDK not found (local.properties sdk.dir)")
-        val ndk = file("$sdk/ndk/$ndkVersionValue")
-        require(ndk.exists()) { "NDK $ndkVersionValue missing at ${ndk.absolutePath}" }
-        rustJniLibsDir.mkdirs()
+        val sdk = sdkDir ?: error("Android SDK not found (local.properties sdk.dir)")
+        val ndk = File(sdk, "ndk/$ndkVer")
+        require(ndk.exists()) { "NDK $ndkVer missing at ${ndk.absolutePath}" }
+        jniLibsDir.mkdirs()
         val builder = ProcessBuilder(
             "cargo", "ndk",
             "-t", "arm64-v8a",
             "-t", "armeabi-v7a",
             "-t", "x86_64",
-            "-o", rustJniLibsDir.absolutePath,
+            "-o", jniLibsDir.absolutePath,
             "build", "--release",
         )
-        builder.directory(rustCrateDir)
+        builder.directory(crateDir)
         builder.redirectErrorStream(true)
         builder.environment()["ANDROID_NDK_HOME"] = ndk.absolutePath
         val process = builder.start()
