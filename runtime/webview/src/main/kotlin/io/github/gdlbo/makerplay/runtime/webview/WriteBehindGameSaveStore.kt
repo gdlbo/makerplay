@@ -114,6 +114,13 @@ internal class WriteBehindGameSaveStore(
         }
         executor.submit { }.get()
         executor.shutdown()
+        synchronized(lock) {
+            cache.clear()
+            cachedBytes = 0
+            pending.clear()
+            inFlight.clear()
+            knownKeys.clear()
+        }
     }
 
     private fun scheduleDrain() {

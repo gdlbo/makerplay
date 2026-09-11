@@ -4,6 +4,7 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import io.github.gdlbo.makerplay.feature.importer.GameImportWorker
+import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
 import io.github.gdlbo.makerplay.runtime.webview.WebViewRuntimeStartup
 
 class MakerPlayApplication : Application() {
@@ -33,5 +34,12 @@ class MakerPlayApplication : Application() {
                 NotificationManager.IMPORTANCE_LOW,
             ),
         )
+    }
+
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        if (level >= TRIM_MEMORY_BACKGROUND) {
+            RuntimeMemoryCleaner.cleanUpMemory()
+        }
     }
 }

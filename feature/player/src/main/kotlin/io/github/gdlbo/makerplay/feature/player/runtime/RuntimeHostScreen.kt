@@ -21,6 +21,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -75,6 +76,7 @@ import io.github.gdlbo.makerplay.runtime.api.GameRuntimeBackend
 import io.github.gdlbo.makerplay.runtime.api.LaunchRequest
 import io.github.gdlbo.makerplay.runtime.api.PreparedSession
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEvent
+import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -139,6 +141,12 @@ fun RuntimeHostScreen(
 
     RuntimeDisplayEffect(request.settings, enabled = session != null)
     RuntimeMediaVolumeEffect(enabled = session != null)
+
+    DisposableEffect(Unit) {
+        onDispose {
+            RuntimeMemoryCleaner.cleanUpMemory()
+        }
+    }
 
     fun handleBack() {
         when {
@@ -209,6 +217,7 @@ fun RuntimeHostScreen(
                 if (failure?.sessionId == prepared.sessionId) {
                     failureLogsReady = true
                 }
+                RuntimeMemoryCleaner.cleanUpMemory()
             }
         }
     }

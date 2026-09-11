@@ -35,6 +35,7 @@ import io.github.gdlbo.makerplay.runtime.api.PreparedSession
 import io.github.gdlbo.makerplay.runtime.api.RuntimeBackendCapability
 import io.github.gdlbo.makerplay.runtime.api.RuntimeBackendDescriptor
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEvent
+import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
 import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.runtime.api.WolfNativeBridge
 import io.github.gdlbo.makerplay.wolfformat.EventCommand
@@ -97,6 +98,10 @@ class WolfRuntimeBackend(
     /** Directions held via GL-surface key events (adb / hardware). */
     private val keyDirections =
         AtomicReference<Set<WolfGameEngine.Direction>>(emptySet())
+    init {
+        RuntimeMemoryCleaner.register(WolfSceneLoader::clearCache)
+    }
+
     /** Frames to keep a released direction pressed so short keyevents register. */
     private val keyDirectionHoldTtl =
         AtomicReference<Map<WolfGameEngine.Direction, Int>>(emptyMap())
@@ -362,6 +367,7 @@ class WolfRuntimeBackend(
     ): kotlinx.coroutines.Job? {
         val project = stored.project ?: return null
         val job = gameLoopScope.launch {
+            var activeAudio: WolfAudioPlayer? = null
             try {
             // Clear host input latches left over from a prior session.
             currentDirections.set(emptySet())
@@ -423,7 +429,7 @@ class WolfRuntimeBackend(
                 val pictures = WolfPictureState()
                 val savesRoot = File(stored.gameRoot, "MakerPlaySaves")
                 val saveManager = WolfGameSaveManager(savesRoot)
-                val audio = WolfAudioPlayer()
+                val audio = WolfAudioPlayer().also { activeAudio = it }
                 // Load databases lazily: full user DB files are multi-megabyte
                 // and must not block the first rendered frames.
                 var database: WolfDatabase? = null
@@ -1154,6 +1160,7 @@ class WolfRuntimeBackend(
                 stored.logger ?: logger
                 logger.error("runtime.loop_crashed", mapOf("error" to (e.message ?: "unknown")))
             } finally {
+                activeAudio?.release()
                 stored.loopJob = null
             }
         }
@@ -1311,10 +1318,12 @@ class WolfRuntimeBackend(
         session.loopJob = null
         bridge.get()?.destroySession(session.nativeHandle)
         session.nativeHandle = 0L
+        WolfSceneLoader.clearCache()
         logger.info(
             "runtime.destroy",
             mapOf("backend" to descriptor.id, "gameId" to session.gameId),
         )
+        RuntimeMemoryCleaner.cleanUpMemory()
     }
 
     /** Picks the right data source: plain files, or encrypted .wolf archives. */

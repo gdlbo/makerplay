@@ -20,4 +20,10 @@ class WolfSceneLoaderTest {
     fun startingHeroGraphicBlankIsSkipped() {
         // Covered indirectly: blank names must not attempt image loads.
     }
+
+    @Test
+    fun clearCacheCanBeCalledSafelyMultipleTimes() {
+        WolfSceneLoader.clearCache()
+        WolfSceneLoader.clearCache()
+    }
 }

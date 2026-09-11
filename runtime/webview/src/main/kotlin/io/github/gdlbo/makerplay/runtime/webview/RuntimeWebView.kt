@@ -312,6 +312,13 @@ fun RuntimeWebView(
                             RuntimeCheatBridge.uninstall(this)
                             commonJsAttachment?.let { RuntimeCommonJsBridge.uninstall(this, it) }
                             saveBridgeAttachment?.let { RuntimeSaveBridge.uninstall(this, it) }
+                            settings.javaScriptEnabled = false
+                            clearHistory()
+                            clearCache(true)
+                            loadUrl("about:blank")
+                            onPause()
+                            (parent as? android.view.ViewGroup)?.removeView(this)
+                            removeAllViews()
                             webViewClient = WebViewClient()
                             webChromeClient = WebChromeClient()
                             destroy()

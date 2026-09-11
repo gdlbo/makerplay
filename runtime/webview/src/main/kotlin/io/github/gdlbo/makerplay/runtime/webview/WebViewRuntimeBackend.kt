@@ -15,6 +15,8 @@ import io.github.gdlbo.makerplay.runtime.api.RuntimeBackendCapability
 import io.github.gdlbo.makerplay.runtime.api.RuntimeBackendDescriptor
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEngineMode
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEvent
+import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
+import io.github.gdlbo.makerplay.runtime.webview.nativebridge.NativeAssetPrefetch
 import io.github.gdlbo.makerplay.vfs.GameFileSystem
 import io.github.gdlbo.makerplay.vfs.RpgMakerGameMount
 import io.github.gdlbo.makerplay.vfs.VfsOpenResult
@@ -178,7 +180,7 @@ class WebViewRuntimeBackend(
                     saveStore = writeBehindStore,
                 )
             }
-            val prefetch = io.github.gdlbo.makerplay.runtime.webview.nativebridge.NativeAssetPrefetch()
+            val prefetch = NativeAssetPrefetch()
             if (rpgmNative.isAvailable()) {
                 val plans = io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmBootPrefetchPlans
                 val hotPaths = plans.plaintextHotPaths(fileSystem)
@@ -241,6 +243,7 @@ class WebViewRuntimeBackend(
                 saveBridge = saveBridge,
                 writeBehindStore = writeBehindStore,
                 logger = gameLogger,
+                prefetch = prefetch,
             )
             synchronized(sessions) {
                 check(sessions.size < MAX_ACTIVE_SESSIONS) { "Too many active runtime sessions" }
@@ -341,6 +344,7 @@ class WebViewRuntimeBackend(
             removed to orphanedStore
         }
         storeToClose?.close()
+        session?.prefetch?.clear()
         val sessionLogger = session?.logger ?: logger
         sessionLogger.info(
             "runtime.destroy",
@@ -353,6 +357,7 @@ class WebViewRuntimeBackend(
         if (sessionLogger !== logger) {
             (sessionLogger as? AutoCloseable)?.close()
         }
+        RuntimeMemoryCleaner.cleanUpMemory()
     }
 
     companion object {
@@ -378,6 +383,7 @@ class WebViewRuntimeBackend(
         val saveBridge: RuntimeSaveBridgeConfiguration?,
         val writeBehindStore: WriteBehindGameSaveStore?,
         val logger: RuntimeLogger,
+        val prefetch: NativeAssetPrefetch? = null,
     )
 }
 

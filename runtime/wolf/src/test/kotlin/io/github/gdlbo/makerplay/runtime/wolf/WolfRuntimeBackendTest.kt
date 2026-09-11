@@ -150,6 +150,25 @@ class WolfRuntimeBackendTest {
         backendWithoutBridge().destroySession("unknown")
     }
 
+    @Test
+    fun destroySessionTriggersMemoryCleanup() = runBlocking {
+        val root = temporaryFolder.newFolder("wolf-cleanup-test")
+        root.resolve("Game.exe").writeBytes(ByteArray(0))
+        root.resolve("Game.dat").writeBytes(minimalGameDat())
+        val callbackInvoked = java.util.concurrent.atomic.AtomicBoolean(false)
+        val registration = io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner.register {
+            callbackInvoked.set(true)
+        }
+        try {
+            val backend = WolfRuntimeBackend(logger = logger, gameDirectory = { root })
+            val session = backend.prepare(LaunchRequest("wolf-1", settings = RuntimeSettings()))
+            backend.destroySession(session.sessionId)
+            assertTrue(callbackInvoked.get())
+        } finally {
+            registration.close()
+        }
+    }
+
     private object NoopWolfNativeBridge : io.github.gdlbo.makerplay.runtime.api.WolfNativeBridge {
         override fun loadGame(gameId: String, gameRoot: String): Long = 1L
         override fun destroySession(handle: Long) = Unit

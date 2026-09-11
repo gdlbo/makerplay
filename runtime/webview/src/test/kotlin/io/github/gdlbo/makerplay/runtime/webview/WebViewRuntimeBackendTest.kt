@@ -5,6 +5,7 @@ import io.github.gdlbo.makerplay.fixtures.RpgMakerFixtureGenerator
 import io.github.gdlbo.makerplay.runtime.api.FileGameSaveStore
 import io.github.gdlbo.makerplay.runtime.api.LaunchRequest
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEngineMode
+import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
 import io.github.gdlbo.makerplay.runtime.api.RuntimeScaleMode
 import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.vfs.GameFileIndex
@@ -18,6 +19,7 @@ import org.junit.Test
 import java.io.File
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.startCoroutine
@@ -292,6 +294,24 @@ class WebViewRuntimeBackendTest {
                 runSuspend { backend.destroySession(session.sessionId) }
             }
         } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun destroySessionTriggersMemoryCleanup() {
+        val root = fixtureRoot(RpgMakerFixtureGenerator.mz())
+        val callbackInvoked = AtomicBoolean(false)
+        val registration = RuntimeMemoryCleaner.register {
+            callbackInvoked.set(true)
+        }
+        try {
+            val backend = WebViewRuntimeBackend(NoOpLogger) { root }
+            val session = runSuspend { backend.prepare(LaunchRequest("game-1")) }
+            runSuspend { backend.destroySession(session.sessionId) }
+            assertTrue(callbackInvoked.get())
+        } finally {
+            registration.close()
             root.deleteRecursively()
         }
     }

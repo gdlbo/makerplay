@@ -14,6 +14,11 @@ internal class NativeAssetPrefetch {
 
     fun get(path: String): ByteArray? = plaintext[path]
 
+    fun clear() {
+        plaintext.clear()
+        completed.set(0)
+    }
+
     fun prefetchPlaintext(fileSystem: GameFileSystem, logicalPaths: List<String>) {
         if (!RpgmNative.isAvailable()) return
         logicalPaths.forEach { logical ->
