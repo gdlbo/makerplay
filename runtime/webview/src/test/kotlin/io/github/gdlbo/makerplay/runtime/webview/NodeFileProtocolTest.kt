@@ -10,6 +10,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
@@ -296,6 +297,191 @@ class NodeFileProtocolTest {
         assertTrue(persistent.isFile)
     }
 
+    @Test
+    fun reportsNodeCompatibleErrorReasonsForMissingAndNonDirectoryPaths() {
+        val gameRoot = temporaryFolder.newFolder("game")
+        File(gameRoot, "js/base.js").apply {
+            requireNotNull(parentFile).mkdirs()
+            writeText("base")
+        }
+        val protocol = protocol(gameRoot)
+
+        listOf(
+            "stat" to "/game/js/missing.js",
+            "readdir" to "/game/js/missing",
+            "readdirStat" to "/game/js/missing",
+        ).forEach { (op, path) ->
+            assertEquals(
+                "missing",
+                response(protocol, op, path).jsonObject.getValue("error").jsonPrimitive.content,
+            )
+        }
+        listOf("readdir" to "/game/js/base.js", "readdirStat" to "/game/js/base.js")
+            .forEach { (op, path) ->
+                assertEquals(
+                    "notdir",
+                    response(protocol, op, path).jsonObject.getValue("error").jsonPrimitive.content,
+                )
+            }
+        assertEquals(
+            "isdir",
+            response(protocol, "read", "/game/js").jsonObject
+                .getValue("error").jsonPrimitive.content,
+        )
+
+        assertTrue(response(protocol, "unlink", "/game/js/base.js").ok())
+        assertEquals(
+            "missing",
+            response(protocol, "stat", "/game/js/base.js").jsonObject
+                .getValue("error").jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun resolvesWwwPrefixedPathsForGamesMountedFromTheWwwDirectory() {
+        val packageRoot = temporaryFolder.newFolder("package")
+        val contentRoot = File(packageRoot, "www").apply { mkdirs() }
+        File(contentRoot, "index.html").writeText("<html></html>")
+        File(contentRoot, "img/pictures/scenes").apply { mkdirs() }
+        File(contentRoot, "img/pictures/hero.rpgmvp").writeBytes("encrypted".toByteArray())
+        File(contentRoot, "img/pictures/scenes/one.png").writeBytes("png".toByteArray())
+
+        // MakerPlay mounts `www/` as the game root, while NW.js plugins address it through the
+        // package root (`process.cwd()`), so both forms have to resolve.
+        val protocol = protocol(contentRoot)
+
+        assertTrue(response(protocol, "exists", "/game/www/index.html").dataBoolean())
+        assertEquals("<html></html>", readText(protocol, "/game/www/index.html"))
+        assertEquals("<html></html>", readText(protocol, "/game/index.html"))
+
+        val entries = response(protocol, "readdirStat", "/game/www/img/pictures").jsonObject
+            .getValue("data").toString()
+        assertTrue(entries.contains("\"name\":\"hero.rpgmvp\""))
+        assertTrue(entries.contains("\"name\":\"scenes\""))
+        assertTrue(entries.contains("\"directory\":true"))
+
+        val nested = response(protocol, "readdirStat", "/game/www/img/pictures/scenes/").jsonObject
+            .getValue("data").toString()
+        assertTrue(nested.contains("one.png"))
+
+        val encoded = Base64.getEncoder().encodeToString("settings".encodeToByteArray())
+        assertTrue(response(protocol, "write", "/game/www/img/pictures/added.bin", encoded).ok())
+        assertEquals("settings", readText(protocol, "/game/img/pictures/added.bin"))
+
+        val stat = response(protocol, "stat", "/game/www/img/pictures").jsonObject
+            .getValue("data").jsonObject
+        assertTrue(stat.getValue("directory").jsonPrimitive.content.toBoolean())
+    }
+
+    @Test
+    fun prefersARealWwwDirectoryOverThePackageRootAlias() {
+        val gameRoot = temporaryFolder.newFolder("game")
+        File(gameRoot, "index.html").writeText("<html></html>")
+        File(gameRoot, "www/real.txt").apply {
+            requireNotNull(parentFile).mkdirs()
+            writeText("real")
+        }
+        val protocol = protocol(gameRoot)
+
+        assertEquals("real", readText(protocol, "/game/www/real.txt"))
+        assertEquals(
+            "missing",
+            response(protocol, "readdirStat", "/game/www/img/pictures").jsonObject
+                .getValue("error").jsonPrimitive.content,
+        )
+    }
+
+    @Test
+    fun hashesCompressesAndRejectsMalformedStreams() {
+        val protocol = protocol(temporaryFolder.newFolder("game"))
+
+        assertEquals(
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+            hex(decoded(protocol, "hash", base64("abc"), algo = "sha256")),
+        )
+        assertEquals("900150983cd24fb0d6963f7d28e17f72", hex(decoded(protocol, "hash", base64("abc"), algo = "md5")))
+        assertEquals(
+            "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8",
+            hex(
+                decoded(
+                    protocol,
+                    "hmac",
+                    base64("The quick brown fox jumps over the lazy dog"),
+                    algo = "sha256",
+                    key = base64("key"),
+                ),
+            ),
+        )
+
+        val payload = ByteArray(8 * 1024) { index -> (index % 251).toByte() }
+        listOf(
+            "deflate" to "inflate",
+            "deflateRaw" to "inflateRaw",
+            "gzip" to "gunzip",
+        ).forEach { (compress, decompress) ->
+            val compressed = decoded(protocol, "zlib", base64(payload), format = compress, level = 6)
+            assertTrue(compress, compressed.size < payload.size)
+            assertArrayEquals(payload, decoded(protocol, "zlib", base64(compressed), format = decompress))
+        }
+        assertEquals(
+            payload.decodeToString(),
+            decoded(protocol, "zlib", base64(payload), format = "gzip").let {
+                decoded(protocol, "zlib", base64(it), format = "gunzip")
+            }.decodeToString(),
+        )
+
+        assertEquals("zdata", failureReason(protocol, "zlib", base64(ByteArray(32) { 7 }), format = "inflate"))
+        assertEquals("zdata", failureReason(protocol, "zlib", base64("plain"), format = "gunzip"))
+        assertEquals("invalid", failureReason(protocol, "hash", base64("abc"), algo = "nope"))
+        assertEquals("invalid", failureReason(protocol, "zlib", base64("abc"), format = "nope"))
+    }
+
+    private fun base64(value: String): String = base64(value.encodeToByteArray())
+
+    private fun base64(value: ByteArray): String = Base64.getEncoder().encodeToString(value)
+
+    private fun hex(value: ByteArray): String = value.joinToString("") { byte -> "%02x".format(byte) }
+
+    private fun decoded(
+        protocol: NodeFileProtocol,
+        op: String,
+        data: String,
+        algo: String? = null,
+        format: String? = null,
+        level: Int? = null,
+        key: String? = null,
+    ): ByteArray = Base64.getDecoder().decode(
+        response(
+            protocol,
+            op,
+            "",
+            data = data,
+            algo = algo,
+            format = format,
+            level = level,
+            key = key,
+        ).jsonObject.getValue("data").jsonPrimitive.content,
+    )
+
+    private fun failureReason(
+        protocol: NodeFileProtocol,
+        op: String,
+        data: String,
+        algo: String? = null,
+        format: String? = null,
+        level: Int? = null,
+        key: String? = null,
+    ): String = response(
+        protocol,
+        op,
+        "",
+        data = data,
+        algo = algo,
+        format = format,
+        level = level,
+        key = key,
+    ).jsonObject.getValue("error").jsonPrimitive.content
+
     private fun protocol(
         gameRoot: File,
         dataRoot: File = temporaryFolder.newFolder("data"),
@@ -317,6 +503,10 @@ class NodeFileProtocolTest {
         append: Boolean? = null,
         recursive: Boolean? = null,
         force: Boolean? = null,
+        algo: String? = null,
+        format: String? = null,
+        level: Int? = null,
+        key: String? = null,
     ): String = buildJsonObject {
         put("v", JsonPrimitive(1))
         put("id", JsonPrimitive("test-1"))
@@ -329,6 +519,10 @@ class NodeFileProtocolTest {
         append?.let { put("append", JsonPrimitive(it)) }
         recursive?.let { put("recursive", JsonPrimitive(it)) }
         force?.let { put("force", JsonPrimitive(it)) }
+        algo?.let { put("algo", JsonPrimitive(it)) }
+        format?.let { put("format", JsonPrimitive(it)) }
+        level?.let { put("level", JsonPrimitive(it)) }
+        key?.let { put("key", JsonPrimitive(it)) }
     }.toString()
 
     private fun response(
@@ -342,8 +536,16 @@ class NodeFileProtocolTest {
         append: Boolean? = null,
         recursive: Boolean? = null,
         force: Boolean? = null,
+        algo: String? = null,
+        format: String? = null,
+        level: Int? = null,
+        key: String? = null,
     ) = Json.parseToJsonElement(
-        protocol.handle(request(op, path, data, target, size, position, append, recursive, force)),
+        protocol.handle(
+            request(
+                op, path, data, target, size, position, append, recursive, force, algo, format, level, key,
+            ),
+        ),
     )
 
     private fun readText(protocol: NodeFileProtocol, path: String): String = Base64.getDecoder()

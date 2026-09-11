@@ -13,6 +13,8 @@ once_cell = "1.19"
 jni = { version = "0.21", default-features = false }
 
 [profile.release]
+opt-level = "z"
 lto = true
+strip = true
 codegen-units = 1
-strip = "symbols"
+panic = "abort"

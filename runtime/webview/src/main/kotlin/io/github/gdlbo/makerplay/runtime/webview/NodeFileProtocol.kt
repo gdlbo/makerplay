@@ -81,6 +81,7 @@ internal class NodeFileProtocol(
     private val gameDeletedPath: File
     private val gameOverlayRoot: File
     private val gameDeletedRoot: File
+    private val contentRootAlias: String?
     private val lock = Any()
 
     init {
@@ -131,6 +132,17 @@ internal class NodeFileProtocol(
         }
         require(gameDeletedRoot.toPath().startsWith(this.dataRoot.toPath())) {
             "Game deletion index escapes the data root"
+        }
+        // NW.js resolves relative paths against the package root, so games whose content lives in
+        // `www/` keep addressing it as `www/...` (their `process.cwd()` is the package root).
+        // A real `www` folder inside the mounted root always wins over this alias.
+        contentRootAlias = if (
+            gameFileSystem.list(WWW_DIRECTORY) == null &&
+            !File(gameOverlayRoot, WWW_DIRECTORY).isDirectory
+        ) {
+            WWW_DIRECTORY
+        } else {
+            null
         }
         cleanupManagedGarbage()
     }
@@ -214,6 +226,9 @@ internal class NodeFileProtocol(
 
                 "mkdir" -> {
                     val directory = writableFile(request.string("path"), allowRoot = true)
+                    if (!directory.isDirectory && directory.exists()) {
+                        throw ProtocolFailure("exists")
+                    }
                     require(directory.mkdirs() || directory.isDirectory) { "Unable to create directory" }
                     success(requestId)
                 }
@@ -226,7 +241,9 @@ internal class NodeFileProtocol(
                 "rmdir" -> {
                     val path = request.string("path")
                     val value = stat(path)
-                    require(value.getValue("directory").jsonPrimitive.booleanOrNull == true) { "Not a directory" }
+                    if (value.getValue("directory").jsonPrimitive.booleanOrNull != true) {
+                        notDirectory()
+                    }
                     remove(path, recursive = false, force = false)
                     success(requestId)
                 }
@@ -298,6 +315,44 @@ internal class NodeFileProtocol(
                 }
 
                 "stat" -> success(requestId, stat(request.string("path")))
+
+                // Synchronous Crypto/zlib support: the browser only offers async SubtleCrypto, but
+                // games hash and (de)compress synchronously. Both run on the platform providers,
+                // so no extra native payload is required.
+                "hash" -> success(
+                    requestId,
+                    JsonPrimitive(
+                        Base64.getEncoder()
+                            .encodeToString(NodeHashSupport.digest(request.string("algo"), request.payload())),
+                    ),
+                )
+
+                "hmac" -> success(
+                    requestId,
+                    JsonPrimitive(
+                        Base64.getEncoder().encodeToString(
+                            NodeHashSupport.hmac(
+                                request.string("algo"),
+                                request.base64("key"),
+                                request.payload(),
+                            ),
+                        ),
+                    ),
+                )
+
+                "zlib" -> success(
+                    requestId,
+                    JsonPrimitive(
+                        Base64.getEncoder().encodeToString(
+                            NodeZlibSupport.transform(
+                                format = request.string("format"),
+                                level = request.intOr("level", -1),
+                                payload = request.payload(),
+                            ),
+                        ),
+                    ),
+                )
+
                 else -> failure(requestId, "unsupported")
             }
         } catch (error: ProtocolFailure) {
@@ -342,27 +397,34 @@ internal class NodeFileProtocol(
 
         is VirtualPath.Game -> {
             val overlay = gameOverlayFile(path, allowRoot = false)
-            if (overlay.exists()) {
-                require(overlay.isDirectory && !Files.isSymbolicLink(overlay.toPath())) {
-                    "Not a directory"
-                }
+            if (overlay.exists() && (!overlay.isDirectory || Files.isSymbolicLink(overlay.toPath()))) {
+                notDirectory()
             }
+            val indexed = gameFileSystem.list(path.path)
             val entries = mergedEntries(
-                gameFileSystem.list(path.path).orEmpty() + nativeSaveEntries(path),
+                indexed.orEmpty() + nativeSaveEntries(path),
                 overlay.takeIf(File::isDirectory),
                 deletedEntries(path),
             )
-            if (entries.isNotEmpty() || exists(rawPath)) entries else throw IllegalArgumentException(
-                "Not a directory"
-            )
+            when {
+                overlay.isDirectory || entries.isNotEmpty() -> entries
+                indexed != null && !isGameDeleted(path) -> entries
+                isGameDeleted(path) -> missing()
+                gameFileSystem.resolve(path.path) != null -> notDirectory()
+                else -> missing()
+            }
         }
 
         VirtualPath.DataRoot -> dataRoot.entries().filterNot(::isReservedDataEntry)
-        is VirtualPath.Data -> writableFile(path, allowRoot = true).entries()
+        is VirtualPath.Data -> {
+            val directory = writableFile(path, allowRoot = true)
+            if (!directory.exists()) missing()
+            directory.entries()
+        }
     }
 
     private fun File.entries(): List<String> {
-        require(isDirectory && !Files.isSymbolicLink(toPath())) { "Not a directory" }
+        if (!isDirectory || Files.isSymbolicLink(toPath())) notDirectory()
         return listFiles().orEmpty().map(File::getName).sorted()
     }
 
@@ -376,19 +438,23 @@ internal class NodeFileProtocol(
         .sorted()
 
     private fun read(rawPath: String): ByteArray = when (val path = virtualPath(rawPath)) {
-        VirtualPath.GameRoot, VirtualPath.DataRoot -> throw IllegalArgumentException("Cannot read a directory")
+        VirtualPath.GameRoot, VirtualPath.DataRoot -> isDirectory()
         is VirtualPath.Game -> {
             nativeSaveKey(path)?.let { key ->
                 nativeSaveRead(key)?.let { return it }
             }
             val overlay = gameOverlayFile(path, allowRoot = false)
             if (overlay.exists()) {
-                require(overlay.isFile && !Files.isSymbolicLink(overlay.toPath())) { "File not found" }
+                if (overlay.isDirectory) isDirectory()
+                if (!overlay.isFile || Files.isSymbolicLink(overlay.toPath())) missing()
                 require(overlay.length() <= MAX_PAYLOAD_BYTES) { "File is too large" }
                 overlay.readBytes()
             } else {
                 if (isGameDeleted(path)) missing()
                 nativeGameBytes(path.path)?.let { return it }
+                if (gameFileSystem.resolve(path.path) == null && gameFileSystem.list(path.path) != null) {
+                    isDirectory()
+                }
                 when (val opened = gameFileSystem.open(path.path)) {
                     is VfsOpenResult.Found -> opened.stream.use { stream ->
                         require(opened.contentLength <= MAX_PAYLOAD_BYTES) { "File is too large" }
@@ -403,7 +469,8 @@ internal class NodeFileProtocol(
         is VirtualPath.Data -> {
             val file = writableFile(path, allowRoot = false)
             if (!file.exists()) missing()
-            require(file.isFile && !Files.isSymbolicLink(file.toPath())) { "File not found" }
+            if (file.isDirectory) isDirectory()
+            if (!file.isFile || Files.isSymbolicLink(file.toPath())) missing()
             require(file.length() <= MAX_PAYLOAD_BYTES) { "File is too large" }
             file.readBytes()
         }
@@ -420,6 +487,12 @@ internal class NodeFileProtocol(
     }
 
     private fun missing(): Nothing = throw ProtocolFailure("missing")
+
+    private fun notDirectory(): Nothing = throw ProtocolFailure("notdir")
+
+    private fun isDirectory(): Nothing = throw ProtocolFailure("isdir")
+
+    private fun notEmpty(): Nothing = throw ProtocolFailure("notempty")
 
     private fun write(rawPath: String, payload: ByteArray, append: Boolean) {
         require(payload.size <= MAX_PAYLOAD_BYTES) { "File is too large" }
@@ -444,6 +517,7 @@ internal class NodeFileProtocol(
             require(parent.mkdirs() || parent.isDirectory) { "Unable to create parent directory" }
             require(!Files.isSymbolicLink(parent.toPath())) { "Symbolic links are not allowed" }
         }
+        if (file.exists() && file.isDirectory) isDirectory()
         require(!file.exists() || file.isFile && !Files.isSymbolicLink(file.toPath())) { "Not a file" }
         if (append && !file.exists() && virtualPath is VirtualPath.Game && !isGameDeleted(
                 virtualPath
@@ -500,7 +574,8 @@ internal class NodeFileProtocol(
             val payload = read(rawPath)
             write(rawPath, payload, append = false)
         }
-        require(file.isFile && !Files.isSymbolicLink(file.toPath())) { "File not found" }
+        if (!file.exists() || Files.isSymbolicLink(file.toPath())) missing()
+        if (file.isDirectory) isDirectory()
         RandomAccessFile(file, "rw").use { it.setLength(size.toLong()) }
     }
 
@@ -539,6 +614,7 @@ internal class NodeFileProtocol(
             val immutable = gameFileSystem.resolve(path.path)
             if (immutable != null) write(rawPath, read(rawPath), append = false)
         }
+        if (file.exists() && file.isDirectory) isDirectory()
         require(!file.exists() || file.isFile && !Files.isSymbolicLink(file.toPath())) { "Not a file" }
         if (path is VirtualPath.Game) clearGameDeleted(path)
         RandomAccessFile(file, "rw").use { output ->
@@ -552,10 +628,11 @@ internal class NodeFileProtocol(
 
     private fun unlink(rawPath: String) {
         when (val path = virtualPath(rawPath)) {
-            VirtualPath.GameRoot, VirtualPath.DataRoot -> throw IllegalArgumentException("Not a file")
+            VirtualPath.GameRoot, VirtualPath.DataRoot -> isDirectory()
             is VirtualPath.Data -> {
                 val file = writableFile(path, allowRoot = false)
-                require(file.isFile && !Files.isSymbolicLink(file.toPath())) { "Not a file" }
+                if (!file.exists() || Files.isSymbolicLink(file.toPath())) missing()
+                if (file.isDirectory) isDirectory()
                 check(file.delete()) { "Unable to delete file" }
             }
 
@@ -563,7 +640,7 @@ internal class NodeFileProtocol(
                 nativeSaveKey(path)?.let { key ->
                     val overlay = gameOverlayFile(path, allowRoot = false)
                     val existed = nativeSaveStore().delete(nativeGameId(), key) || overlay.isFile
-                    require(existed) { "Not a file" }
+                    if (!existed) missing()
                     if (overlay.exists()) {
                         require(overlay.isFile && !Files.isSymbolicLink(overlay.toPath())) { "Not a file" }
                         check(overlay.delete()) { "Unable to delete file" }
@@ -608,6 +685,7 @@ internal class NodeFileProtocol(
         }
         val source = writableFile(rawPath, allowRoot = false)
         val target = writableFile(rawTarget, allowRoot = false)
+        if (!source.exists()) missing()
         require(source.isFile && !Files.isSymbolicLink(source.toPath())) { "Not a file" }
         target.parentFile?.let { parent ->
             require(parent.mkdirs() || parent.isDirectory) { "Unable to create target directory" }
@@ -622,7 +700,7 @@ internal class NodeFileProtocol(
         val path = virtualPath(rawPath)
         if (path is VirtualPath.Game && nativeSaveKey(path) != null) {
             if (!exists(rawPath)) {
-                require(force) { "Missing path" }
+                if (!force) missing()
                 return
             }
             unlink(rawPath)
@@ -630,14 +708,12 @@ internal class NodeFileProtocol(
         }
         if (path is VirtualPath.Game) {
             if (!exists(rawPath)) {
-                require(force) { "Missing path" }
+                if (!force) missing()
                 return
             }
             val value = stat(rawPath)
             val directory = value.getValue("directory").jsonPrimitive.booleanOrNull == true
-            if (directory && !recursive) {
-                require(list(rawPath).isEmpty()) { "Directory is not empty" }
-            }
+            if (directory && !recursive && list(rawPath).isNotEmpty()) notEmpty()
             val overlay = gameOverlayFile(path, allowRoot = false)
             if (overlay.exists()) {
                 val deleted = if (overlay.isDirectory) deleteTree(overlay) else overlay.delete()
@@ -648,12 +724,12 @@ internal class NodeFileProtocol(
         }
         val file = writableFile(rawPath, allowRoot = false)
         if (!file.exists()) {
-            require(force) { "Missing path" }
+            if (!force) missing()
             return
         }
         require(!Files.isSymbolicLink(file.toPath())) { "Symbolic links are not allowed" }
         if (file.isDirectory) {
-            require(recursive || file.listFiles().orEmpty().isEmpty()) { "Directory is not empty" }
+            if (!recursive && !file.listFiles().orEmpty().isEmpty()) notEmpty()
             val deleted = if (recursive) deleteTree(file) else file.delete()
             check(deleted && !file.exists()) { "Unable to remove directory" }
         } else {
@@ -665,7 +741,8 @@ internal class NodeFileProtocol(
         VirtualPath.GameRoot, VirtualPath.DataRoot -> statResult(
             isFile = false,
             isDirectory = true,
-            size = 0
+            size = 0,
+            modifiedMillis = dataRoot.lastModified(),
         )
 
         is VirtualPath.Game -> {
@@ -674,22 +751,28 @@ internal class NodeFileProtocol(
                     return statResult(
                         isFile = true,
                         isDirectory = false,
-                        size = payload.size.toLong()
+                        size = payload.size.toLong(),
                     )
                 }
             }
             val overlay = gameOverlayFile(path, allowRoot = false)
             if (overlay.exists()) {
-                require(!Files.isSymbolicLink(overlay.toPath())) { "Missing path" }
-                statResult(overlay.isFile, overlay.isDirectory, overlay.length())
+                if (Files.isSymbolicLink(overlay.toPath())) missing()
+                statResult(
+                    overlay.isFile,
+                    overlay.isDirectory,
+                    overlay.length(),
+                    overlay.lastModified(),
+                )
             } else {
-                require(!isGameDeleted(path)) { "Missing path" }
+                if (isGameDeleted(path)) missing()
                 val asset = gameFileSystem.resolve(path.path)
                 when {
                     asset != null -> statResult(
                         isFile = true,
                         isDirectory = false,
-                        size = asset.storedSize
+                        size = asset.storedSize,
+                        modifiedMillis = asset.lastModifiedMillis,
                     )
 
                     gameFileSystem.list(path.path) != null -> statResult(
@@ -698,22 +781,28 @@ internal class NodeFileProtocol(
                         size = 0,
                     )
 
-                    else -> throw IllegalArgumentException("Missing path")
+                    else -> missing()
                 }
             }
         }
 
         is VirtualPath.Data -> {
             val file = writableFile(path, allowRoot = false)
-            require(file.exists() && !Files.isSymbolicLink(file.toPath())) { "Missing path" }
-            statResult(file.isFile, file.isDirectory, file.length())
+            if (!file.exists() || Files.isSymbolicLink(file.toPath())) missing()
+            statResult(file.isFile, file.isDirectory, file.length(), file.lastModified())
         }
     }
 
-    private fun statResult(isFile: Boolean, isDirectory: Boolean, size: Long) = buildJsonObject {
+    private fun statResult(
+        isFile: Boolean,
+        isDirectory: Boolean,
+        size: Long,
+        modifiedMillis: Long = 0L,
+    ) = buildJsonObject {
         put("file", JsonPrimitive(isFile))
         put("directory", JsonPrimitive(isDirectory))
         put("size", JsonPrimitive(size))
+        put("mtimeMs", JsonPrimitive(modifiedMillis.coerceAtLeast(0L)))
     }
 
     private fun nativeSaveKey(path: VirtualPath.Game): String? {
@@ -817,10 +906,17 @@ internal class NodeFileProtocol(
     }
 
     private fun isGameDeleted(path: VirtualPath.Game): Boolean {
-        val segments = path.path.split('/')
-        return segments.indices.any { index ->
-            gameDeletedFile(VirtualPath.Game(segments.take(index + 1).joinToString("/"))).isFile
+        // Checking the lexical marker first keeps the common no-deletion case at one stat per
+        // path segment; the hardened lookup only runs for a marker that actually exists.
+        var prefix = ""
+        path.path.split('/').forEach { segment ->
+            prefix = if (prefix.isEmpty()) segment else "$prefix/$segment"
+            val marker = File(gameDeletedRoot, prefix + DELETED_SUFFIX)
+            if (Files.isRegularFile(marker.toPath(), LinkOption.NOFOLLOW_LINKS)) {
+                return gameDeletedFile(VirtualPath.Game(prefix)).isFile
+            }
         }
+        return false
     }
 
     private fun markGameDeleted(path: VirtualPath.Game) {
@@ -915,7 +1011,7 @@ internal class NodeFileProtocol(
         require(rawPath.length <= MAX_PATH_CHARS && rawPath.none { it.code < 0x20 }) {
             "Invalid path"
         }
-        val normalized = rawPath.replace('\\', '/').ifBlank { "/game" }
+        val normalized = stripContentRootAlias(rawPath.replace('\\', '/').ifBlank { "/game" })
         return when {
             normalized == "/game" -> VirtualPath.GameRoot
             normalized.startsWith("/game/") -> VirtualPath.Game(
@@ -937,6 +1033,21 @@ internal class NodeFileProtocol(
         }
     }
 
+    /**
+     * A game whose content lives in a `www/` directory is addressed by NW.js plugins through the
+     * package root, because that is their `process.cwd()`. Exposing the mounted directory as an
+     * alias prefix keeps paths such as `www/img/pictures` resolvable.
+     */
+    private fun stripContentRootAlias(normalized: String): String {
+        val alias = contentRootAlias ?: return normalized
+        val prefix = "/game/$alias"
+        return when {
+            normalized == prefix -> "/game"
+            normalized.startsWith("$prefix/") -> "/game/" + normalized.removePrefix("$prefix/")
+            else -> normalized
+        }
+    }
+
     private fun JsonObject.string(name: String): String =
         get(name)?.jsonPrimitive?.takeIf { it.isString }?.content
             ?: throw IllegalArgumentException("Missing field")
@@ -944,11 +1055,16 @@ internal class NodeFileProtocol(
     private fun JsonObject.int(name: String): Int =
         get(name)?.jsonPrimitive?.intOrNull ?: throw IllegalArgumentException("Missing field")
 
+    private fun JsonObject.intOr(name: String, fallback: Int): Int =
+        get(name)?.jsonPrimitive?.intOrNull ?: fallback
+
     private fun JsonObject.boolean(name: String, fallback: Boolean): Boolean =
         get(name)?.jsonPrimitive?.booleanOrNull ?: fallback
 
-    private fun JsonObject.payload(): ByteArray {
-        val value = string("data")
+    private fun JsonObject.payload(): ByteArray = base64("data")
+
+    private fun JsonObject.base64(name: String): ByteArray {
+        val value = string(name)
         require(value.length <= MAX_BASE64_CHARS && value.length % 4 == 0) { "Invalid payload" }
         return Base64.getDecoder().decode(value).also {
             require(it.size <= MAX_PAYLOAD_BYTES) { "File is too large" }
@@ -1032,12 +1148,11 @@ internal class NodeFileProtocol(
         data class Data(val path: String) : VirtualPath
     }
 
-    private class ProtocolFailure(val reason: String) : RuntimeException()
-
     private companion object {
         const val GAME_OVERLAY_DIRECTORY = "game-overlay"
         const val GAME_DELETED_DIRECTORY = "game-deleted"
         const val DELETED_SUFFIX = ".deleted"
+        const val WWW_DIRECTORY = "www"
         const val VERSION = 1
         const val MAX_PAYLOAD_BYTES = 16 * 1024 * 1024
         const val MAX_BASE64_CHARS = ((MAX_PAYLOAD_BYTES + 2) / 3) * 4

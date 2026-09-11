@@ -65,12 +65,25 @@ internal object RuntimeScriptAssets {
     private fun AssetManager.readUtf8(path: String): String =
         open(path).bufferedReader(Charsets.UTF_8).use { it.readText() }
 
+    // Concatenated into a single IIFE in this exact order: bootstrap.js opens the scope and
+    // loader.js closes it, and every entry before a user of a `var`-initialised module
+    // (bootstrap -> registry, process -> loader, ...) must come first.
     private val COMMON_JS_PARTS = listOf(
-        "runtime/commonjs/00-bridge-buffer-path.js",
-        "runtime/commonjs/10-events-process.js",
-        "runtime/commonjs/20-fs.js",
-        "runtime/commonjs/30-builtins-nw.js",
-        "runtime/commonjs/40-loader.js",
+        "runtime/commonjs/bootstrap.js",
+        "runtime/commonjs/buffer.js",
+        "runtime/commonjs/path.js",
+        "runtime/commonjs/events.js",
+        "runtime/commonjs/process.js",
+        "runtime/commonjs/util.js",
+        "runtime/commonjs/stream.js",
+        "runtime/commonjs/fs.js",
+        "runtime/commonjs/crypto.js",
+        "runtime/commonjs/zlib.js",
+        "runtime/commonjs/assert.js",
+        "runtime/commonjs/host.js",
+        "runtime/commonjs/unsupported.js",
+        "runtime/commonjs/nw.js",
+        "runtime/commonjs/loader.js",
     )
 
     private val NETWORK_FALLBACK_ASSETS = listOf(

@@ -1,5 +1,10 @@
+  // --- CommonJS loader + globals (closes the shared IIFE) ----------------------------------
+  // require()/module resolution for game plugins, the global Node-ish surface, uncaught error
+  // forwarding and teardown of the native bridge queues.
+  // Module cache keyed by resolved /game path.
   var cache = Object.create(null);
   function readText(path) { return fsModule.readFileSync(path, "utf8"); }
+  // Resolve a request: exact name, .js/.json, package main, then index.
   function fileCandidate(path) {
     var candidates = [path, path + ".js", path + ".json"];
     for (var i = 0; i < candidates.length; i++) if (fsModule.existsSync(candidates[i])) return candidates[i];
@@ -16,6 +21,7 @@
     return null;
   }
 
+  // Builtin -> node: id; absolute -> /game; relative -> parent; else walk node_modules.
   function resolveRequest(id, parentFilename) {
     id = String(id);
     if (id.indexOf("node:") === 0) id = id.slice(5);
@@ -39,6 +45,7 @@
     return resolved;
   }
 
+  // Compile and run a module in the shared scope, caching it before execution.
   function load(id, parent) {
     var filename = resolveRequest(id, parent && parent.filename);
     if (filename.indexOf("node:") === 0) return builtins[filename.slice(5)];
@@ -63,6 +70,7 @@
     }
   }
 
+  // Build a require() bound to a module, with resolve/cache/main like Node.
   function makeRequire(parent) {
     function require(id) { return load(id, parent); }
     require.resolve = function(id) { return resolveRequest(id, parent && parent.filename); };
@@ -81,6 +89,7 @@
     require.__makerplayCommonJs = true;
     return require;
   }
+  // The document itself plays the entry-module role (index.html).
   var mainModule = { id: ".", filename: "/game/index.html", exports: {}, loaded: true, parent: null, children: [], paths: ["/game/node_modules"] };
   processModule.mainModule = mainModule;
   var globalRequire = makeRequire(mainModule);
@@ -88,7 +97,7 @@
   // Browser scripts are not the CommonJS entry module. This keeps CLI-only
   // plugin branches such as `require.main === module` from running in WebView.
   globalRequire.main = undefined;
-  builtin("module", { createRequire: function(filename) { return makeRequire({ id: filename, filename: filename, exports: {}, loaded: true, parent: null, children: [] }); }, builtinModules: Object.keys(builtins) });
+  defineBuiltin("module", { createRequire: function(filename) { return makeRequire({ id: filename, filename: filename, exports: {}, loaded: true, parent: null, children: [] }); }, builtinModules: Object.keys(builtins) });
 
   root.require = globalRequire;
   root.process = root.process || processModule;
@@ -99,10 +108,23 @@
   root.__filename = root.__filename || "/game/index.html";
   root.setImmediate = root.setImmediate || function(callback) { var args = Array.prototype.slice.call(arguments, 1); return setTimeout(function() { callback.apply(null, args); }, 0); };
   root.clearImmediate = root.clearImmediate || clearTimeout;
+  // NW.js surfaces page failures as Node process events so game-side crash handlers run.
+  root.addEventListener("error", function(event) {
+    var reason = event && event.error
+      ? event.error
+      : new Error(String((event && event.message) || "Uncaught error"));
+    processModule.emit("uncaughtException", reason);
+  }, true);
+  root.addEventListener("unhandledrejection", function(event) {
+    processModule.emit("unhandledRejection", event && event.reason, event && event.promise);
+  });
+  // Reject in-flight bridge calls and drop cached modules when the document goes away.
   root.addEventListener("pagehide", function(event) {
     if (event.persisted) return;
     pendingAsync.forEach(function(call) { call.reject(nodeError(call.op, call.path, "closed")); });
     pendingAsync.clear();
+    pendingAsyncChars = 0;
+    queuedAsync.length = 0;
     fileDescriptors = Object.create(null);
     Object.keys(cache).forEach(function(key) { delete cache[key]; });
     mainModule.children.length = 0;
