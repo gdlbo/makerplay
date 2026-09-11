@@ -1,9 +1,7 @@
 //! Letterbox GLES2 frame presenter.
 
 use std::ffi::CString;
-use std::sync::Mutex;
-
-use once_cell::sync::Lazy;
+use std::sync::{LazyLock, Mutex};
 
 use crate::gles::*;
 
@@ -29,21 +27,32 @@ void main() {
 }
 "#;
 
+const ATTR_POS: &str = "aPos";
+const UNIFORM_SCALE: &str = "uScale";
+const UNIFORM_TEXTURE: &str = "uTex";
+
 struct RendererState {
     initialized: bool,
     program: GLuint,
     texture: GLuint,
     u_scale: GLint,
+    u_tex: GLint,
     uploaded_version: u64,
+    /// Dimensions the texture storage was allocated with, or 0 when unallocated.
+    texture_width: i32,
+    texture_height: i32,
 }
 
-static STATE: Lazy<Mutex<RendererState>> = Lazy::new(|| {
+static STATE: LazyLock<Mutex<RendererState>> = LazyLock::new(|| {
     Mutex::new(RendererState {
         initialized: false,
         program: 0,
         texture: 0,
         u_scale: -1,
+        u_tex: -1,
         uploaded_version: 0,
+        texture_width: 0,
+        texture_height: 0,
     })
 });
 
@@ -60,6 +69,13 @@ unsafe fn compile(shader_type: GLenum, source: &str) -> GLuint {
         return 0;
     }
     shader
+}
+
+unsafe fn uniform_location(program: GLuint, name: &str) -> GLint {
+    match CString::new(name) {
+        Ok(name) => glGetUniformLocation(program, name.as_ptr()),
+        Err(_) => -1,
+    }
 }
 
 unsafe fn ensure_initialized(state: &mut RendererState) -> bool {
@@ -80,8 +96,9 @@ unsafe fn ensure_initialized(state: &mut RendererState) -> bool {
     let program = glCreateProgram();
     glAttachShader(program, vs);
     glAttachShader(program, fs);
-    let attr = CString::new("aPos").unwrap();
-    glBindAttribLocation(program, 0, attr.as_ptr());
+    if let Ok(attr) = CString::new(ATTR_POS) {
+        glBindAttribLocation(program, 0, attr.as_ptr());
+    }
     glLinkProgram(program);
     glDeleteShader(vs);
     glDeleteShader(fs);
@@ -92,16 +109,27 @@ unsafe fn ensure_initialized(state: &mut RendererState) -> bool {
         return false;
     }
     state.program = program;
+    // Sampler and scale locations are stable for the life of the program, so resolve
+    // them once here instead of issuing a GL lookup on every frame.
+    state.u_scale = uniform_location(program, UNIFORM_SCALE);
+    state.u_tex = uniform_location(program, UNIFORM_TEXTURE);
+
     glGenTextures(1, &mut state.texture);
     glBindTexture(GL_TEXTURE_2D, state.texture);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    let u_scale = CString::new("uScale").unwrap();
-    state.u_scale = glGetUniformLocation(program, u_scale.as_ptr());
+    state.texture_width = 0;
+    state.texture_height = 0;
+    state.uploaded_version = 0;
     state.initialized = true;
     true
+}
+
+unsafe fn clear_black() {
+    glClearColor(0.0, 0.0, 0.0, 1.0);
+    glClear(GL_COLOR_BUFFER_BIT);
 }
 
 pub fn draw_frame(
@@ -113,31 +141,59 @@ pub fn draw_frame(
     frame_version: u64,
     new_frame: bool,
 ) {
-    let mut state = STATE.lock().expect("renderer poisoned");
+    let mut state = STATE
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     unsafe {
-        if !ensure_initialized(&mut state)
-            || rgba.is_none()
-            || frame_width <= 0
-            || frame_height <= 0
-        {
-            glClearColor(0.0, 0.0, 0.0, 1.0);
-            glClear(GL_COLOR_BUFFER_BIT);
+        let ready = ensure_initialized(&mut state);
+        let (Some(rgba), true) = (rgba, ready && frame_width > 0 && frame_height > 0) else {
+            clear_black();
+            return;
+        };
+        // Bounds check before handing the slice to GL: `glTexImage2D` reads
+        // `width * height * 4` bytes unconditionally. Saturating so absurd dimensions
+        // cannot wrap the requirement back down to a satisfiable value.
+        let needed = (frame_width as u64)
+            .saturating_mul(frame_height as u64)
+            .saturating_mul(4);
+        if (rgba.len() as u64) < needed {
+            clear_black();
             return;
         }
-        let rgba = rgba.unwrap();
+
         glBindTexture(GL_TEXTURE_2D, state.texture);
-        if state.uploaded_version != frame_version || new_frame {
-            glTexImage2D(
-                GL_TEXTURE_2D,
-                0,
-                GL_RGBA as GLint,
-                frame_width,
-                frame_height,
-                0,
-                GL_RGBA,
-                GL_UNSIGNED_BYTE,
-                rgba.as_ptr().cast(),
-            );
+        let size_changed =
+            state.texture_width != frame_width || state.texture_height != frame_height;
+        if size_changed || new_frame || state.uploaded_version != frame_version {
+            if size_changed {
+                glTexImage2D(
+                    GL_TEXTURE_2D,
+                    0,
+                    GL_RGBA as GLint,
+                    frame_width,
+                    frame_height,
+                    0,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    rgba.as_ptr().cast(),
+                );
+                state.texture_width = frame_width;
+                state.texture_height = frame_height;
+            } else {
+                // Same dimensions: refresh the existing storage instead of asking the
+                // driver to allocate a new texture every frame.
+                glTexSubImage2D(
+                    GL_TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    frame_width,
+                    frame_height,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    rgba.as_ptr().cast(),
+                );
+            }
             state.uploaded_version = frame_version;
         }
 
@@ -161,8 +217,7 @@ pub fn draw_frame(
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, QUAD.as_ptr().cast());
         glEnableVertexAttribArray(0);
         glActiveTexture(GL_TEXTURE0);
-        let u_tex = CString::new("uTex").unwrap();
-        glUniform1i(glGetUniformLocation(state.program, u_tex.as_ptr()), 0);
+        glUniform1i(state.u_tex, 0);
         glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
     }
 }

@@ -9,7 +9,7 @@ publish = false
 crate-type = ["staticlib"]
 
 [dependencies]
-once_cell = "1.19"
+
 jni = { version = "0.21", default-features = false }
 
 [profile.release]

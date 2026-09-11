@@ -2,17 +2,22 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 
-use crate::codec::{decode_asset, read_file_fully, DecodeError, KEY_SIZE};
+use crate::codec::{decode_asset, read_file_fully, DecodeError, DecodedAsset, KEY_SIZE};
+
+/// Completion callbacks. Read jobs hand back owned bytes; decode jobs hand back a
+/// [`DecodedAsset`] whose plaintext view skips the header in place.
+type ReadCallback = Box<dyn FnOnce(Result<Vec<u8>, DecodeError>) + Send>;
+type DecodeCallback = Box<dyn FnOnce(Result<DecodedAsset, DecodeError>) + Send>;
 
 enum Job {
     Read {
         path: String,
-        done: Box<dyn FnOnce(Result<Vec<u8>, DecodeError>) + Send>,
+        done: ReadCallback,
     },
     Decode {
         key: [u8; KEY_SIZE],
         stored: Vec<u8>,
-        done: Box<dyn FnOnce(Result<Vec<u8>, DecodeError>) + Send>,
+        done: DecodeCallback,
     },
 }
 
@@ -41,7 +46,7 @@ fn pool_tx() -> &'static Sender<Job> {
                 };
                 match job {
                     Job::Read { path, done } => done(read_file_fully(&path)),
-                    Job::Decode { key, stored, done } => done(decode_asset(&key, &stored)),
+                    Job::Decode { key, stored, done } => done(decode_asset(&key, stored)),
                 }
             });
         }
@@ -49,7 +54,10 @@ fn pool_tx() -> &'static Sender<Job> {
     })
 }
 
-pub fn read_file_async(path: String, done: impl FnOnce(Result<Vec<u8>, DecodeError>) + Send + 'static) {
+pub fn read_file_async(
+    path: String,
+    done: impl FnOnce(Result<Vec<u8>, DecodeError>) + Send + 'static,
+) {
     let _ = pool_tx().send(Job::Read {
         path,
         done: Box::new(done),
@@ -59,7 +67,7 @@ pub fn read_file_async(path: String, done: impl FnOnce(Result<Vec<u8>, DecodeErr
 pub fn decode_asset_async(
     key: [u8; KEY_SIZE],
     stored: Vec<u8>,
-    done: impl FnOnce(Result<Vec<u8>, DecodeError>) + Send + 'static,
+    done: impl FnOnce(Result<DecodedAsset, DecodeError>) + Send + 'static,
 ) {
     let _ = pool_tx().send(Job::Decode {
         key,

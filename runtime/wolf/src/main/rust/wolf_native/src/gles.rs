@@ -62,6 +62,17 @@ extern "C" {
         pixels: *const c_void,
     );
     pub fn glViewport(x: GLint, y: GLint, width: GLsizei, height: GLsizei);
+    pub fn glTexSubImage2D(
+        target: GLenum,
+        level: GLint,
+        xoffset: GLint,
+        yoffset: GLint,
+        width: GLsizei,
+        height: GLsizei,
+        format: GLenum,
+        type_: GLenum,
+        pixels: *const c_void,
+    );
     pub fn glUseProgram(program: GLuint);
     pub fn glUniform4f(location: GLint, v0: c_float, v1: c_float, v2: c_float, v3: c_float);
     pub fn glUniform1i(location: GLint, v0: GLint);

@@ -26,7 +26,7 @@ object WolfSceneLoader {
 
     data class StaticFrame(val rgba: ByteArray, val width: Int, val height: Int)
 
-    private const val MAX_FRAME_PIXELS = 4096L * 4096
+    private const val MAX_FRAME_PIXELS = 2048L * 2048
 
     fun loadStaticFrame(source: GameDataSource, project: GameDat): StaticFrame {
         val map = loadInitialMap(source)
@@ -60,8 +60,8 @@ object WolfSceneLoader {
             ?: throw WolfFormatException("Map references unknown tileset ${map.tilesetId}")
 
         val tileSize = project.tileSize
-        val width = project.screenWidth.takeIf { it > 0 } ?: (map.width * tileSize)
-        val height = project.screenHeight.takeIf { it > 0 } ?: (map.height * tileSize)
+        val width = (project.screenWidth.takeIf { it > 0 } ?: (map.width * tileSize)).coerceIn(1, 2048)
+        val height = (project.screenHeight.takeIf { it > 0 } ?: (map.height * tileSize)).coerceIn(1, 2048)
         if (width.toLong() * height > MAX_FRAME_PIXELS) {
             throw WolfFormatException("Map frame $width x $height exceeds limit")
         }
@@ -641,8 +641,22 @@ object WolfSceneLoader {
     /** Positive + negative picture path lookups; misses are expensive on Direct mode. */
     private val picturePathCache = HashMap<String, String?>()
 
+    fun clearCache() {
+        synchronized(bitmapCache) {
+            for (bitmap in bitmapCache.values) {
+                if (!bitmap.isRecycled) {
+                    bitmap.recycle()
+                }
+            }
+            bitmapCache.clear()
+        }
+        synchronized(picturePathCache) {
+            picturePathCache.clear()
+        }
+    }
+
     private fun cachedDecode(source: GameDataSource, path: String): Bitmap =
-        synchronized(bitmapCache) { bitmapCache[path] } ?: run {
+        synchronized(bitmapCache) { bitmapCache[path]?.takeUnless { it.isRecycled } } ?: run {
             val bmp = decodeBitmap(source, path)
             synchronized(bitmapCache) { bitmapCache[path] = bmp }
             bmp

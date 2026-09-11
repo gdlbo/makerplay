@@ -1,14 +1,18 @@
 //! Wolf session registry.
 
-use std::collections::HashMap;
-use std::sync::Mutex;
+// The JNI module that consumes this API is excluded from test builds, so the registry
+// surface looks unused when the test harness compiles the crate.
+#![cfg_attr(test, allow(dead_code))]
 
-use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
 
 const ACTION_COUNT: usize = 17;
 
 struct FrameBlob {
-    rgba: Vec<u8>,
+    /// Shared with the renderer, so handing a frame over is a refcount bump rather than
+    /// a multi-megabyte copy of the RGBA buffer.
+    rgba: Arc<Vec<u8>>,
     width: i32,
     height: i32,
     version: u64,
@@ -27,8 +31,8 @@ struct Session {
     events_executed: u64,
     audio_streams_active: i32,
     last_error: String,
-    actions_pressed: Vec<bool>,
-    analog_axes: Vec<f32>,
+    actions_pressed: [bool; ACTION_COUNT],
+    analog_axes: [f32; ACTION_COUNT],
     static_frame: Option<FrameBlob>,
 }
 
@@ -37,7 +41,7 @@ struct Registry {
     sessions: HashMap<u64, Session>,
 }
 
-static REGISTRY: Lazy<Mutex<Registry>> = Lazy::new(|| {
+static REGISTRY: LazyLock<Mutex<Registry>> = LazyLock::new(|| {
     Mutex::new(Registry {
         next_handle: 1,
         sessions: HashMap::new(),
@@ -45,7 +49,9 @@ static REGISTRY: Lazy<Mutex<Registry>> = Lazy::new(|| {
 });
 
 fn with_registry<T>(f: impl FnOnce(&mut Registry) -> T) -> T {
-    let mut guard = REGISTRY.lock().expect("wolf registry poisoned");
+    let mut guard = REGISTRY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     f(&mut guard)
 }
 
@@ -66,8 +72,8 @@ pub fn load_game(game_id: &str, game_root: &str) -> u64 {
                 events_executed: 0,
                 audio_streams_active: 0,
                 last_error: String::new(),
-                actions_pressed: vec![false; ACTION_COUNT],
-                analog_axes: vec![0.0; ACTION_COUNT],
+                actions_pressed: [false; ACTION_COUNT],
+                analog_axes: [0.0; ACTION_COUNT],
                 static_frame: None,
             },
         );
@@ -97,14 +103,22 @@ pub fn request_exit(handle: u64) {
     });
 }
 
-pub fn set_static_frame(handle: u64, rgba: &[u8], width: i32, height: i32) {
+pub fn set_static_frame(handle: u64, mut rgba: Vec<u8>, width: i32, height: i32) {
     if width <= 0 || height <= 0 {
         return;
     }
-    let need = (width as usize).saturating_mul(height as usize).saturating_mul(4);
+    let Some(need) = (width as usize)
+        .checked_mul(height as usize)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
+        return;
+    };
     if rgba.len() < need {
         return;
     }
+    // The JNI buffer is already exactly this size in the common case, and truncating
+    // keeps the allocation, so wrapping it in an Arc copies nothing.
+    rgba.truncate(need);
     with_registry(|reg| {
         let Some(session) = reg.sessions.get_mut(&handle) else {
             return;
@@ -115,7 +129,7 @@ pub fn set_static_frame(handle: u64, rgba: &[u8], width: i32, height: i32) {
             .map(|f| f.version + 1)
             .unwrap_or(1);
         session.static_frame = Some(FrameBlob {
-            rgba: rgba[..need].to_vec(),
+            rgba: Arc::new(rgba),
             width,
             height,
             version,
@@ -128,19 +142,23 @@ pub fn set_input_state(handle: u64, actions: &[i32], axes: &[f32]) {
         let Some(session) = reg.sessions.get_mut(&handle) else {
             return;
         };
-        for (i, value) in actions.iter().enumerate().take(session.actions_pressed.len()) {
-            session.actions_pressed[i] = *value != 0;
+        let actions_len = actions.len().min(session.actions_pressed.len());
+        for (slot, value) in session.actions_pressed[..actions_len]
+            .iter_mut()
+            .zip(&actions[..actions_len])
+        {
+            *slot = *value != 0;
         }
-        for (i, value) in axes.iter().enumerate().take(session.analog_axes.len()) {
-            session.analog_axes[i] = *value;
-        }
+        let axes_len = axes.len().min(session.analog_axes.len());
+        session.analog_axes[..axes_len].copy_from_slice(&axes[..axes_len]);
     });
 }
 
+/// A frame handed to the renderer: shared RGBA bytes, width, height, version.
+pub type RenderFrame = Option<(Arc<Vec<u8>>, i32, i32, u64)>;
+
 /// `None` = unknown handle. `(false, _)` = paused/exiting. `(true, frame)` = draw.
-pub fn take_render_frame(
-    handle: u64,
-) -> Option<(bool /*draw*/, Option<(Vec<u8>, i32, i32, u64)>)> {
+pub fn take_render_frame(handle: u64) -> Option<(bool /*draw*/, RenderFrame)> {
     with_registry(|reg| {
         let session = reg.sessions.get_mut(&handle)?;
         let paused_or_exit = session.paused || session.exit_requested;
@@ -150,9 +168,10 @@ pub fn take_render_frame(
         if paused_or_exit {
             return Some((false, None));
         }
-        let frame = session.static_frame.as_ref().map(|f| {
-            (f.rgba.clone(), f.width, f.height, f.version)
-        });
+        let frame = session
+            .static_frame
+            .as_ref()
+            .map(|f| (Arc::clone(&f.rgba), f.width, f.height, f.version));
         Some((true, frame))
     })
 }
@@ -168,7 +187,12 @@ pub fn serialize_save(handle: u64) -> Result<Vec<u8>, String> {
 }
 
 pub fn restore_save(handle: u64, _payload: &[u8]) -> bool {
-    with_registry(|reg| reg.sessions.contains_key(&handle) && false)
+    // Restore is not implemented yet; the session lookup is kept so the handle is still
+    // validated against the registry, and the result is always `false`.
+    with_registry(|reg| {
+        let _known = reg.sessions.contains_key(&handle);
+        false
+    })
 }
 
 pub fn diagnostics_snapshot(handle: u64) -> (u64, f64, i32, u64, i32) {
@@ -223,8 +247,8 @@ pub fn smoke_test_registry() -> bool {
                 events_executed: 0,
                 audio_streams_active: 0,
                 last_error: String::new(),
-                actions_pressed: vec![false; ACTION_COUNT],
-                analog_axes: vec![0.0; ACTION_COUNT],
+                actions_pressed: [false; ACTION_COUNT],
+                analog_axes: [0.0; ACTION_COUNT],
                 static_frame: None,
             },
         );

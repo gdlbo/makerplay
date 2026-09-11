@@ -14,7 +14,7 @@ fn jstring_to_string(env: &mut JNIEnv, value: &JString) -> String {
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni_sdlVersion<'local>(
-    mut env: JNIEnv<'local>,
+    env: JNIEnv<'local>,
     _this: JObject<'local>,
 ) -> jstring {
     env.new_string(sdl::version_string())
@@ -84,7 +84,7 @@ pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni_nativeSetStaticFrame<'local>(
-    mut env: JNIEnv<'local>,
+    env: JNIEnv<'local>,
     _this: JObject<'local>,
     handle: jlong,
     rgba: JByteArray<'local>,
@@ -94,10 +94,11 @@ pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni
     if width <= 0 || height <= 0 {
         return;
     }
+    // Hand the JNI buffer straight to the session: no intermediate copy is needed.
     let Ok(bytes) = env.convert_byte_array(&rgba) else {
         return;
     };
-    session::set_static_frame(handle as u64, &bytes, width, height);
+    session::set_static_frame(handle as u64, bytes, width, height);
 }
 
 #[no_mangle]
@@ -116,7 +117,7 @@ pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni
     }
     match frame {
         Some((rgba, fw, fh, version)) => {
-            renderer::draw_frame(width, height, Some(&rgba), fw, fh, version, true);
+            renderer::draw_frame(width, height, Some(rgba.as_slice()), fw, fh, version, true);
         }
         None => {
             renderer::draw_frame(width, height, None, 0, 0, 0, false);
@@ -126,7 +127,7 @@ pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni_nativeSetInputState<'local>(
-    mut env: JNIEnv<'local>,
+    env: JNIEnv<'local>,
     _this: JObject<'local>,
     handle: jlong,
     actions: JIntArray<'local>,
@@ -151,7 +152,7 @@ pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni_nativeSerializeSave<'local>(
-    mut env: JNIEnv<'local>,
+    env: JNIEnv<'local>,
     _this: JObject<'local>,
     handle: jlong,
     _slot: JString<'local>,
@@ -167,7 +168,7 @@ pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni_nativeRestoreSave<'local>(
-    mut env: JNIEnv<'local>,
+    env: JNIEnv<'local>,
     _this: JObject<'local>,
     handle: jlong,
     _slot: JString<'local>,
@@ -206,7 +207,7 @@ pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni
 
 #[no_mangle]
 pub extern "system" fn Java_io_github_gdlbo_makerplay_runtime_wolf_WolfNativeJni_nativeLastError<'local>(
-    mut env: JNIEnv<'local>,
+    env: JNIEnv<'local>,
     _this: JObject<'local>,
     handle: jlong,
 ) -> jstring {
