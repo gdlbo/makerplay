@@ -38,6 +38,7 @@ import io.github.gdlbo.makerplay.feature.importer.StorageRoots
 import io.github.gdlbo.makerplay.feature.importer.GameInstallMode
 import io.github.gdlbo.makerplay.feature.importer.ui.StorageBrowserScreen
 import io.github.gdlbo.makerplay.feature.library.LibraryScreen
+import io.github.gdlbo.makerplay.feature.library.R
 import io.github.gdlbo.makerplay.feature.player.runtime.RuntimeHostScreen
 import io.github.gdlbo.makerplay.feature.settings.GameSettingsScreen
 import io.github.gdlbo.makerplay.feature.settings.SettingsScreen
@@ -138,12 +139,13 @@ fun MakerPlayApp(graph: AppGraph) {
                         onExport = { game ->
                             scope.launch(Dispatchers.IO) {
                                 val archive = graph.exportCopiedGame(game)
+                                val appContext = context.applicationContext
                                 launch(Dispatchers.Main) {
                                     if (archive == null) {
                                         Toast.makeText(
                                             context,
-                                            context.getString(
-                                                io.github.gdlbo.makerplay.feature.library.R.string.export_game_failed,
+                                            appContext.getString(
+                                                R.string.export_game_failed,
                                             ),
                                             Toast.LENGTH_SHORT,
                                         ).show()
@@ -159,8 +161,8 @@ fun MakerPlayApp(graph: AppGraph) {
                                         putExtra(Intent.EXTRA_STREAM, uri)
                                         putExtra(
                                             Intent.EXTRA_SUBJECT,
-                                            context.getString(
-                                                io.github.gdlbo.makerplay.feature.library.R.string.export_game_share_title,
+                                            appContext.getString(
+                                                R.string.export_game_share_title,
                                                 game.title,
                                             ),
                                         )
@@ -169,8 +171,8 @@ fun MakerPlayApp(graph: AppGraph) {
                                     context.startActivity(
                                         Intent.createChooser(
                                             share,
-                                            context.getString(
-                                                io.github.gdlbo.makerplay.feature.library.R.string.export_game_share_title,
+                                            appContext.getString(
+                                                R.string.export_game_share_title,
                                                 game.title,
                                             ),
                                         ),
