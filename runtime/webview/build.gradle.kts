@@ -8,6 +8,8 @@ plugins {
 val rustCrateDir = file("src/main/rust/rpgm_native")
 val rustJniLibsDir = file("src/main/jniLibs")
 val androidSdkDir: String? = (project.findProperty("android.sdk.dir") as String?)
+    ?: System.getenv("ANDROID_HOME")
+    ?: System.getenv("ANDROID_SDK_ROOT")
     ?: rootProject.file("local.properties").takeIf { it.exists() }?.let { propsFile ->
         propsFile.inputStream().use { stream ->
             val props = Properties()
