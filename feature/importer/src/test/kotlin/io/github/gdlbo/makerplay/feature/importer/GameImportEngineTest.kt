@@ -183,6 +183,31 @@ class GameImportEngineTest {
     }
 
     @Test
+    fun rejectsASecondImportFromTheSameSourceLocation() = runBlocking {
+        val source = RpgMakerFixtureGenerator.mz().asImportSource()
+        GameImportEngine().import(
+            source = source,
+            store = store,
+            importId = "first-copy",
+            sourceLocation = "/storage/games/Demo",
+        )
+
+        val error = assertThrows(ImportFailure::class.java) {
+            runBlocking {
+                GameImportEngine().import(
+                    source = source,
+                    store = store,
+                    importId = "second-copy",
+                    sourceLocation = "/storage/games/Demo",
+                )
+            }
+        }
+
+        assertTrue(error.userMessage.contains("already in your library"))
+        assertEquals("first-copy", store.findGameBySource("/storage/games/Demo")?.id)
+    }
+
+    @Test
     fun rejectsCaseFoldedDuplicatePaths() {
         val bytes = "x".toByteArray()
         val source = ImportSource {

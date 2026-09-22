@@ -34,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
@@ -41,11 +42,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.positionOnScreen
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -59,6 +64,7 @@ import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerMode
 import io.github.gdlbo.makerplay.feature.player.controller.ui.ControllerEditorPanel
 import io.github.gdlbo.makerplay.feature.player.controller.ui.VirtualControllerOverlay
 import io.github.gdlbo.makerplay.feature.player.controller.ui.moveVirtualControl
+import io.github.gdlbo.makerplay.feature.player.controller.ui.overlayPageOffsetPx
 import io.github.gdlbo.makerplay.feature.player.runtime.components.CheatOverlay
 import io.github.gdlbo.makerplay.feature.player.runtime.components.PlayerToolbar
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeFailureScreen
@@ -77,6 +83,7 @@ import io.github.gdlbo.makerplay.runtime.api.LaunchRequest
 import io.github.gdlbo.makerplay.runtime.api.PreparedSession
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEvent
 import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -91,6 +98,7 @@ fun RuntimeHostScreen(
     request: LaunchRequest,
     onBack: () -> Unit,
     layoutFile: File? = null,
+    defaultLayoutFile: File? = null,
     logFile: File? = null,
     loggingEnabled: Boolean = false,
     onToggleLogging: () -> Unit = {},
@@ -102,6 +110,7 @@ fun RuntimeHostScreen(
     var logsCopied by remember { mutableStateOf(false) }
     var stopCurrentSession by remember { mutableStateOf<(() -> Unit)?>(null) }
     var launchAttempt by remember { mutableIntStateOf(0) }
+    var bootRecoveries by remember { mutableIntStateOf(0) }
     var cheatFlags by remember(request.gameId) { mutableStateOf(CheatFlags()) }
     var cheatCommand by remember(request.gameId) { mutableStateOf<CheatCommand?>(null) }
     var cheatCatalog by remember(request.gameId) { mutableStateOf(CheatCatalog()) }
@@ -125,16 +134,33 @@ fun RuntimeHostScreen(
         )
     }
     val layoutStore = remember(layoutFile) { layoutFile?.let(::ControllerLayoutStore) }
+    val defaultStore = remember(defaultLayoutFile) { defaultLayoutFile?.let(::ControllerLayoutStore) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val savedAsDefaultMessage = stringResource(R.string.controller_saved_as_default)
+    fun persistGameLayouts(value: ControllerLayouts) {
+        scope.launch(Dispatchers.IO) {
+            val inherited = defaultStore?.load() ?: ControllerLayouts()
+            layoutStore?.saveOrClear(value, inherited)
+        }
+    }
+    fun persistDefaultLayouts(value: ControllerLayouts) {
+        scope.launch(Dispatchers.IO) {
+            defaultStore?.saveOrClear(value)
+        }
+    }
     val clipboard = LocalClipboardManager.current
     val preparationFailure = stringResource(R.string.runtime_preparation_failed)
     val rendererCrashed = stringResource(R.string.renderer_stopped_unexpectedly)
     val rendererStopped = stringResource(R.string.renderer_stopped_by_system)
+    val rendererUnresponsive = stringResource(R.string.renderer_became_unresponsive)
     val gameCouldNotStart = stringResource(R.string.game_could_not_start)
     val gameStopped = stringResource(R.string.game_stopped)
     val preparationFailureReason = stringResource(R.string.preparation_failure_reason)
+    val javascriptBootReason = stringResource(R.string.javascript_boot_failure_reason)
     val rendererCrashReason = stringResource(R.string.renderer_crash_reason)
     val rendererStoppedReason = stringResource(R.string.renderer_stopped_reason)
+    val rendererUnresponsiveReason = stringResource(R.string.renderer_unresponsive_reason)
     val technicalDetailsLabel = stringResource(R.string.technical_details)
     val runtimeLogsLabel = stringResource(R.string.runtime_logs)
     val logsUnavailable = stringResource(R.string.logs_unavailable)
@@ -155,7 +181,7 @@ fun RuntimeHostScreen(
             editControls -> {
                 editControls = false
                 virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                scope.launch(Dispatchers.IO) { layoutStore?.save(layouts) }
+                persistGameLayouts(layouts)
             }
 
             else -> confirmExit = true
@@ -184,13 +210,12 @@ fun RuntimeHostScreen(
         editControls = false
         virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
         layouts = ControllerLayouts()
-        layoutLoaded = layoutStore == null
+        layoutLoaded = false
         selectedControlId = null
-        if (layoutStore != null) {
-            layouts = withContext(Dispatchers.IO) { layoutStore.load() }
-            layoutLoaded = true
-            selectedControlId = layouts.activeProfile().controls.firstOrNull()?.id
-        }
+        val inherited = withContext(Dispatchers.IO) { defaultStore?.load() ?: ControllerLayouts() }
+        layouts = withContext(Dispatchers.IO) { layoutStore?.load(inherited) ?: inherited }
+        layoutLoaded = true
+        selectedControlId = layouts.activeProfile().controls.firstOrNull()?.id
         val prepared = runCatching {
             withContext(Dispatchers.IO) { backend.prepare(request) }
         }.getOrElse { cause ->
@@ -228,7 +253,6 @@ fun RuntimeHostScreen(
             val logs = withContext(Dispatchers.IO) {
                 runCatching {
                     logFile
-                        ?.takeIf { request.settings.recordLogs }
                         ?.takeIf { it.isFile && !Files.isSymbolicLink(it.toPath()) }
                         ?.readText()
                         .orEmpty()
@@ -251,6 +275,8 @@ fun RuntimeHostScreen(
 
     val focusRequester = remember { FocusRequester() }
     var runtimeViewport by remember { mutableStateOf(IntSize.Zero) }
+    var runtimeSurfacePositionOnScreen by remember { mutableStateOf(IntOffset.Zero) }
+    var overlayPositionOnScreen by remember { mutableStateOf(IntOffset.Zero) }
     val density = LocalDensity.current
     LaunchedEffect(gameReady, session?.sessionId) {
         if (gameReady && session != null) {
@@ -295,7 +321,7 @@ fun RuntimeHostScreen(
             }
         }
     BoxWithConstraints(modifier = runtimeModifier.onSizeChanged { runtimeViewport = it }) {
-        val compactHeight = maxHeight < 480.dp
+        val editorMaxHeight = (maxHeight - 96.dp).coerceIn(48.dp, 420.dp)
         // Hide the touch-capturing gamepad while the system IME is up so soft-keyboard
         // taps are not stolen by the always-on-top overlay Popup.
         val imeBottomPx = WindowInsets.ime.getBottom(density)
@@ -305,7 +331,15 @@ fun RuntimeHostScreen(
         when {
             session != null -> backend.RuntimeContent(
                 session = session!!,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onGloballyPositioned { coordinates ->
+                        val position = coordinates.positionOnScreen()
+                        val offset = IntOffset(position.x.roundToInt(), position.y.roundToInt())
+                        if (runtimeSurfacePositionOnScreen != offset) {
+                            runtimeSurfacePositionOnScreen = offset
+                        }
+                    },
                 inputEnabled = gameReady && !showCheats && !editControls,
                 // Always forward keyboard/gamepad keys. When the on-screen
                 // pad is hidden, drop only pointer hits — not key state.
@@ -324,8 +358,11 @@ fun RuntimeHostScreen(
                     if (cheatCommand?.sequence == sequence) cheatCommand = null
                 },
                 onCheatCatalogChanged = { cheatCatalog = it },
-                onReadyChanged = { gameReady = it },
-                onEvent = { event ->
+                onReadyChanged = {
+                    gameReady = it
+                    if (it) bootRecoveries = 0
+                },
+                onEvent = eventHandler@{ event ->
                     when (event) {
                         is RuntimeEvent.ExitRequested -> if (event.sessionId == session?.sessionId) {
                             onBack()
@@ -339,8 +376,55 @@ fun RuntimeHostScreen(
                             }
                         }
 
-                        else -> rendererFailure(session?.sessionId, event)?.let { rendererFailure ->
+                        is RuntimeEvent.JavaScriptError -> {
+                            val failedSessionId = session?.sessionId ?: return@eventHandler
+                            if (
+                                event.sessionId != failedSessionId ||
+                                gameReady ||
+                                !isFatalJavaScriptBootError(event.message)
+                            ) {
+                                return@eventHandler
+                            }
+                            session = null
+                            gameReady = false
+                            cheatCommand = null
+                            showCheats = false
+                            logsCopied = false
+                            failureLogsReady = false
+                            val location = buildString {
+                                if (event.source.isNotBlank()) append(event.source)
+                                if (event.line > 0) {
+                                    if (isNotEmpty()) append(':')
+                                    append(event.line)
+                                }
+                            }
+                            failure = RuntimeFailureUi(
+                                title = gameCouldNotStart,
+                                reason = javascriptBootReason,
+                                technicalDetails = listOfNotNull(
+                                    location.takeIf { it.isNotBlank() },
+                                    event.message.takeIf { it.isNotBlank() },
+                                ).joinToString("\n").ifBlank { event.message },
+                                sessionId = failedSessionId,
+                            )
+                            stopCurrentSession?.invoke()
+                        }
+
+                        else -> shouldFailRendererEvent(
+                            session?.sessionId,
+                            gameReady,
+                            event,
+                        )?.let { rendererFailure ->
                             val failedSessionId = session?.sessionId ?: return@let
+                            if (!gameReady && bootRecoveries < MAX_BOOT_RECOVERIES) {
+                                bootRecoveries += 1
+                                session = null
+                                cheatCommand = null
+                                showCheats = false
+                                stopCurrentSession?.invoke()
+                                launchAttempt++
+                                return@let
+                            }
                             session = null
                             gameReady = false
                             cheatCommand = null
@@ -348,16 +432,20 @@ fun RuntimeHostScreen(
                             logsCopied = false
                             failureLogsReady = false
                             failure = RuntimeFailureUi(
-                                title = gameStopped,
-                                reason = if (rendererFailure == RendererFailure.CRASHED) {
-                                    rendererCrashReason
+                                title = if (rendererFailure == RendererFailure.UNRESPONSIVE) {
+                                    gameCouldNotStart
                                 } else {
-                                    rendererStoppedReason
+                                    gameStopped
                                 },
-                                technicalDetails = if (rendererFailure == RendererFailure.CRASHED) {
-                                    rendererCrashed
-                                } else {
-                                    rendererStopped
+                                reason = when (rendererFailure) {
+                                    RendererFailure.CRASHED -> rendererCrashReason
+                                    RendererFailure.STOPPED -> rendererStoppedReason
+                                    RendererFailure.UNRESPONSIVE -> rendererUnresponsiveReason
+                                },
+                                technicalDetails = when (rendererFailure) {
+                                    RendererFailure.CRASHED -> rendererCrashed
+                                    RendererFailure.STOPPED -> rendererStopped
+                                    RendererFailure.UNRESPONSIVE -> rendererUnresponsive
                                 },
                                 sessionId = failedSessionId,
                             )
@@ -392,130 +480,182 @@ fun RuntimeHostScreen(
                 )
             }
         }
-        // Drop the always-on-top Popup while the system IME is visible so soft-keyboard
-        // and focused text fields receive taps instead of the virtual gamepad layer.
-        if (session != null && shouldHostRuntimeOverlayPopup(gameReady, runtimeViewport, imeVisible)) {
-            // The WOLF game surface is an opaque GLSurfaceView (ZOrderOnTop),
-            // which covers every Compose sibling in this window. Host the
-            // controller chrome in its own always-on-top window so buttons are
-            // visible above the surface and receive taps.
+        val overlayVisible = session != null &&
+            shouldHostRuntimeOverlay(gameReady, runtimeViewport, imeVisible)
+        val overlayNeedsPopup = overlayVisible &&
+            shouldHostRuntimeOverlayPopup(
+                backendId = backend.descriptor.id,
+                gameReady = gameReady,
+                runtimeViewport = runtimeViewport,
+                imeVisible = imeVisible,
+            )
+        @Composable
+        fun OverlayChrome(modifier: Modifier) {
+            Box(
+                modifier.onGloballyPositioned { coordinates ->
+                    val position = coordinates.positionOnScreen()
+                    val offset = IntOffset(position.x.roundToInt(), position.y.roundToInt())
+                    if (overlayPositionOnScreen != offset) overlayPositionOnScreen = offset
+                },
+            ) {
+                if (showControls && layoutLoaded && !showCheats) {
+                    val pageOffset = overlayPageOffsetPx(
+                        overlayPositionOnScreen = overlayPositionOnScreen,
+                        runtimeSurfacePositionOnScreen = runtimeSurfacePositionOnScreen,
+                    )
+                    VirtualControllerOverlay(
+                        profile = layouts.activeProfile(),
+                        editMode = editControls,
+                        selectedControlId = selectedControlId,
+                        onControlMoved = { controlId, deltaX, deltaY ->
+                            layouts = layouts.updateActive(
+                                moveVirtualControl(
+                                    layouts.activeProfile(),
+                                    controlId,
+                                    deltaX,
+                                    deltaY,
+                                )
+                            )
+                        },
+                        onControlSelected = { selectedControlId = it },
+                        onSnapshotChanged = { virtualInput = it },
+                        pointerPageOffsetX = pageOffset.first,
+                        pointerPageOffsetY = pageOffset.second,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    if (editControls) {
+                        RuntimeOverlayTheme {
+                            ControllerEditorPanel(
+                                profile = layouts.activeProfile(),
+                                selectedId = selectedControlId,
+                                onProfileChanged = { layouts = layouts.updateActive(it) },
+                                onSelected = { selectedControlId = it },
+                                onResetProfile = {
+                                    scope.launch {
+                                        val inherited = withContext(Dispatchers.IO) {
+                                            defaultStore?.load() ?: ControllerLayouts()
+                                        }
+                                        val resetLayouts = layouts.resetActive(inherited)
+                                        layouts = resetLayouts
+                                        selectedControlId =
+                                            resetLayouts.activeProfile().controls.firstOrNull()?.id
+                                        persistGameLayouts(resetLayouts)
+                                    }
+                                },
+                                onSaveAsDefault = defaultStore?.let {
+                                    {
+                                        persistDefaultLayouts(layouts)
+                                        android.widget.Toast.makeText(
+                                            context,
+                                            savedAsDefaultMessage,
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .safeDrawingPadding()
+                                    .padding(start = 12.dp, top = 76.dp, bottom = 12.dp, end = 12.dp)
+                                    .widthIn(max = 380.dp)
+                                    .heightIn(max = editorMaxHeight),
+                            )
+                        }
+                    }
+                }
+                if (!showCheats) {
+                    PlayerToolbar(
+                        showControls = showControls,
+                        editControls = editControls,
+                        cheatsAvailable = request.settings.modules.cheatBridge &&
+                            cheatsAvailable == true,
+                        layoutLoaded = layoutLoaded,
+                        controllerMode = layouts.mode,
+                        onToggleControls = {
+                            if (showControls && editControls) {
+                                persistGameLayouts(layouts)
+                            }
+                            showControls = !showControls
+                            editControls = false
+                            virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                        },
+                        onToggleEditing = {
+                            if (!showControls) showControls = true
+                            val enteringEditing = !editControls
+                            android.util.Log.i(
+                                "MakerPlay",
+                                "runtime.controls.edit entering=$enteringEditing",
+                            )
+                            editControls = enteringEditing
+                            if (enteringEditing &&
+                                layouts.activeProfile().controls.none { it.id == selectedControlId }
+                            ) {
+                                selectedControlId =
+                                    layouts.activeProfile().controls.firstOrNull()?.id
+                            }
+                            virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                            if (!editControls) {
+                                persistGameLayouts(layouts)
+                            }
+                        },
+                        onOpenCheats = {
+                            if (request.settings.modules.cheatBridge) {
+                                if (editControls) {
+                                    persistGameLayouts(layouts)
+                                }
+                                editControls = false
+                                virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                                showCheats = true
+                            }
+                        },
+                        onSwitchMode = {
+                            layouts = layouts.copy(
+                                mode = if (layouts.mode == ControllerMode.GAMEPAD) {
+                                    ControllerMode.KEYBOARD
+                                } else {
+                                    ControllerMode.GAMEPAD
+                                },
+                            )
+                            selectedControlId =
+                                layouts.activeProfile().controls.firstOrNull()?.id
+                            showControls = true
+                            virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                            persistGameLayouts(layouts)
+                        },
+                        onRestart = { showRestartConfirm = true },
+                        onBack = ::handleBack,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                    )
+                }
+            }
+        }
+        if (overlayNeedsPopup) {
+            // WOLF's GLSurfaceView is ZOrderOnTop and covers Compose siblings.
             Popup(
                 alignment = Alignment.TopStart,
                 onDismissRequest = {
                     if (editControls) {
                         editControls = false
                         virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                        scope.launch(Dispatchers.IO) { layoutStore?.save(layouts) }
+                        persistGameLayouts(layouts)
                     }
                 },
-                // Controller editor sliders need a focusable window; cheats use a Dialog.
                 properties = PopupProperties(
-                    focusable = editControls,
-                    dismissOnBackPress = true,
+                    // Never steal window focus from the game surface. Toggling
+                    // focusable here on Edit recreates the popup and deadlocks IME.
+                    focusable = false,
+                    dismissOnBackPress = false,
                     dismissOnClickOutside = false,
                 ),
             ) {
-                // Match the runtime surface pixel-for-pixel. Clamping to screenWidthDp
-                // previously made the overlay wider/narrower than the WebView and shifted
-                // normalized taps left of the real canvas hit point.
-                Box(
+                OverlayChrome(
                     Modifier.requiredSize(
                         with(density) { runtimeViewport.width.toDp() },
                         with(density) { runtimeViewport.height.toDp() },
                     ),
-                ) {
-        if (session != null && gameReady && showControls && layoutLoaded && !showCheats) {
-            VirtualControllerOverlay(
-                profile = layouts.activeProfile(),
-                editMode = editControls,
-                selectedControlId = selectedControlId,
-                onControlMoved = { controlId, deltaX, deltaY ->
-                    layouts = layouts.updateActive(
-                        moveVirtualControl(
-                            layouts.activeProfile(),
-                            controlId,
-                            deltaX,
-                            deltaY
-                        )
-                    )
-                },
-                onControlSelected = { selectedControlId = it },
-                onSnapshotChanged = { virtualInput = it },
-                modifier = Modifier.fillMaxSize(),
-            )
-            if (editControls) {
-                RuntimeOverlayTheme {
-                    ControllerEditorPanel(
-                        profile = layouts.activeProfile(),
-                        selectedId = selectedControlId,
-                        onProfileChanged = { layouts = layouts.updateActive(it) },
-                        onSelected = { selectedControlId = it },
-                        onResetProfile = {
-                            val resetLayouts = layouts.resetActive()
-                            layouts = resetLayouts
-                            selectedControlId = resetLayouts.activeProfile().controls.firstOrNull()?.id
-                            scope.launch(Dispatchers.IO) { layoutStore?.save(resetLayouts) }
-                        },
-                        modifier = Modifier
-                            .align(Alignment.BottomCenter)
-                            .safeDrawingPadding()
-                            .padding(start = 12.dp, bottom = 12.dp, end = 12.dp)
-                            .widthIn(max = 480.dp)
-                            .heightIn(max = if (compactHeight) 220.dp else 300.dp),
-                    )
-                }
+                )
             }
-        }
-        if (session != null && gameReady && !showCheats) {
-            PlayerToolbar(
-                showControls = showControls,
-                editControls = editControls,
-                cheatsAvailable = request.settings.modules.cheatBridge && cheatsAvailable == true,
-                layoutLoaded = layoutLoaded,
-                controllerMode = layouts.mode,
-                onToggleControls = {
-                    if (showControls && editControls) scope.launch(Dispatchers.IO) {
-                        layoutStore?.save(
-                            layouts
-                        )
-                    }
-                    showControls = !showControls
-                    editControls = false
-                    virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                },
-                onToggleEditing = {
-                    if (!showControls) showControls = true
-                    val enteringEditing = !editControls
-                    editControls = enteringEditing
-                    if (enteringEditing && layouts.activeProfile().controls.none { it.id == selectedControlId }) {
-                        selectedControlId = layouts.activeProfile().controls.firstOrNull()?.id
-                    }
-                    virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                    if (!editControls) scope.launch(Dispatchers.IO) { layoutStore?.save(layouts) }
-                },
-                onOpenCheats = {
-                    if (request.settings.modules.cheatBridge) {
-                        if (editControls) scope.launch(Dispatchers.IO) { layoutStore?.save(layouts) }
-                        editControls = false
-                        virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                        showCheats = true
-                    }
-                },
-                onSwitchMode = {
-                    layouts =
-                        layouts.copy(mode = if (layouts.mode == ControllerMode.GAMEPAD) ControllerMode.KEYBOARD else ControllerMode.GAMEPAD)
-                    selectedControlId = layouts.activeProfile().controls.firstOrNull()?.id
-                    showControls = true
-                    virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                    scope.launch(Dispatchers.IO) { layoutStore?.save(layouts) }
-                },
-                onRestart = { showRestartConfirm = true },
-                onBack = ::handleBack,
-                modifier = Modifier.align(Alignment.TopCenter),
-            )
-        }
-                }
-            }
+        } else if (overlayVisible) {
+            OverlayChrome(Modifier.fillMaxSize().zIndex(1f))
         }
 
         // Cheats need a real dialog window so IME insets/focus work. Keeping them inside
@@ -580,6 +720,7 @@ fun RuntimeHostScreen(
                 Button(
                     onClick = {
                         showRestartConfirm = false
+                        bootRecoveries = 0
                         virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
                         launchAttempt++
                     },
@@ -596,9 +737,19 @@ fun RuntimeHostScreen(
     }
 }
 
-/** Controller overlay Popup must not cover the system IME or an unready/zero-sized surface. */
-internal fun shouldHostRuntimeOverlayPopup(
+internal const val WEBVIEW_BACKEND_ID = "webview"
+internal const val MAX_BOOT_RECOVERIES = 2
+
+internal fun shouldHostRuntimeOverlay(
     gameReady: Boolean,
     runtimeViewport: IntSize,
     imeVisible: Boolean,
 ): Boolean = gameReady && runtimeViewport != IntSize.Zero && !imeVisible
+
+internal fun shouldHostRuntimeOverlayPopup(
+    backendId: String,
+    gameReady: Boolean,
+    runtimeViewport: IntSize,
+    imeVisible: Boolean,
+): Boolean = backendId != WEBVIEW_BACKEND_ID &&
+    shouldHostRuntimeOverlay(gameReady, runtimeViewport, imeVisible)

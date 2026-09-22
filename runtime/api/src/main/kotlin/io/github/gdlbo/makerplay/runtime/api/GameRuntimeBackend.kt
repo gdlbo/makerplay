@@ -126,6 +126,10 @@ sealed interface RuntimeEvent {
         val didCrash: Boolean,
     ) : RuntimeEvent
 
+    data class RendererUnresponsive(
+        val sessionId: String,
+    ) : RuntimeEvent
+
     data class WebGlContextChanged(
         val sessionId: String,
         val restored: Boolean,
@@ -134,6 +138,13 @@ sealed interface RuntimeEvent {
     data class CheatAvailabilityChanged(
         val sessionId: String,
         val available: Boolean,
+    ) : RuntimeEvent
+
+    data class JavaScriptError(
+        val sessionId: String,
+        val message: String,
+        val source: String,
+        val line: Int,
     ) : RuntimeEvent
 }
 

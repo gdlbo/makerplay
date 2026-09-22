@@ -316,6 +316,139 @@ class WebViewRuntimeBackendTest {
         }
     }
 
+    @Test
+    fun failedPrepareDoesNotLeakCachedWriteBehindSaveStore() {
+        val container = fixtureRoot(
+            RpgMakerFixtureGenerator.mvInWww() + ("www/js/rpg_managers.js" to byteArrayOf(1)),
+        )
+        val saveRoot = Files.createTempDirectory("makerplay-store-leak-test").toFile()
+        try {
+            val backend = WebViewRuntimeBackend(
+                logger = NoOpLogger,
+                saveStore = FileGameSaveStore(saveRoot),
+                gameDirectory = { container },
+            )
+            val sessions = List(8) { index ->
+                runSuspend { backend.prepare(LaunchRequest("game-$index")) }
+            }
+            assertEquals(8, backend.activeSaveStoreCount())
+
+            org.junit.Assert.assertThrows(IllegalStateException::class.java) {
+                runSuspend { backend.prepare(LaunchRequest("game-overflow")) }
+            }
+            // The rejected prepare created a store before the active-session cap fired; it must
+            // not stay cached without an owning session.
+            assertEquals(8, backend.activeSaveStoreCount())
+
+            sessions.forEach { session ->
+                runSuspend { backend.destroySession(session.sessionId) }
+            }
+            assertEquals(0, backend.activeSaveStoreCount())
+        } finally {
+            container.deleteRecursively()
+            saveRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun destroySessionIsIdempotentForSaveStoreOwnership() {
+        val container = fixtureRoot(
+            RpgMakerFixtureGenerator.mvInWww() + ("www/js/rpg_managers.js" to byteArrayOf(1)),
+        )
+        val saveRoot = Files.createTempDirectory("makerplay-store-idempotent-test").toFile()
+        try {
+            val backend = WebViewRuntimeBackend(
+                logger = NoOpLogger,
+                saveStore = FileGameSaveStore(saveRoot),
+                gameDirectory = { container },
+            )
+            val session = runSuspend { backend.prepare(LaunchRequest("game-1")) }
+            assertEquals(1, backend.activeSaveStoreCount())
+
+            runSuspend { backend.destroySession(session.sessionId) }
+            runSuspend { backend.destroySession(session.sessionId) }
+            assertEquals(0, backend.activeSaveStoreCount())
+        } finally {
+            container.deleteRecursively()
+            saveRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun destroySessionClearsNodeCachesAndKeepsOverlayData() {
+        val gameRoot = fixtureRoot(
+            RpgMakerFixtureGenerator.mz() + ("js/rmmz_managers.js" to byteArrayOf(1)),
+        )
+        val dataRoot = Files.createTempDirectory("makerplay-node-cache-test").toFile()
+        try {
+            val backend = WebViewRuntimeBackend(
+                logger = NoOpLogger,
+                commonJsDataDirectory = { dataRoot },
+                gameDirectory = { gameRoot },
+            )
+            val session = runSuspend { backend.prepare(LaunchRequest("game-1")) }
+            File(dataRoot, "tmp/scratch.bin").writeText("scratch")
+            File(dataRoot, "cache/blob.bin").writeText("cached")
+            File(dataRoot, "game-overlay/config").apply {
+                requireNotNull(parentFile).mkdirs()
+                writeText("settings")
+            }
+            // Pre-fix state: scratch output survives until the destroy path clears it.
+            assertTrue(File(dataRoot, "tmp/scratch.bin").isFile)
+            assertTrue(File(dataRoot, "cache/blob.bin").isFile)
+
+            runSuspend { backend.destroySession(session.sessionId) }
+
+            listOf("tmp", "cache", "logs").forEach { name ->
+                assertTrue(
+                    "$name must be empty after close",
+                    File(dataRoot, name).listFiles().orEmpty().isEmpty(),
+                )
+            }
+            assertEquals("settings", File(dataRoot, "game-overlay/config").readText())
+            assertEquals(0, backend.activeSessionCount())
+        } finally {
+            gameRoot.deleteRecursively()
+            dataRoot.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun repeatedSessionsDoNotAccumulateSessionDirectories() {
+        val gameRoot = fixtureRoot(
+            RpgMakerFixtureGenerator.mz() + ("js/rmmz_managers.js" to byteArrayOf(1)),
+        )
+        val dataRoot = Files.createTempDirectory("makerplay-node-cycle-test").toFile()
+        val uuidName = Regex(
+            "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+        )
+        try {
+            val backend = WebViewRuntimeBackend(
+                logger = NoOpLogger,
+                commonJsDataDirectory = { dataRoot },
+                gameDirectory = { gameRoot },
+            )
+
+            repeat(3) {
+                val session = runSuspend { backend.prepare(LaunchRequest("game-1")) }
+                File(dataRoot, "tmp/scratch.bin").writeText("scratch")
+                runSuspend { backend.destroySession(session.sessionId) }
+                assertEquals(0, backend.activeSessionCount())
+                assertTrue(File(dataRoot, "tmp").listFiles().orEmpty().isEmpty())
+            }
+
+            val names = dataRoot.listFiles().orEmpty().map(File::getName)
+            assertTrue("unexpected UUID-named entries: $names", names.none(uuidName::matches))
+            assertTrue(
+                "stable per-game directories missing: $names",
+                names.containsAll(listOf("tmp", "cache", "logs", "game-overlay", "game-deleted")),
+            )
+        } finally {
+            gameRoot.deleteRecursively()
+            dataRoot.deleteRecursively()
+        }
+    }
+
     private fun <T> runSuspend(block: suspend () -> T): T = runBlocking { block() }
 
     private fun fixtureRoot(files: Map<String, ByteArray>): File =

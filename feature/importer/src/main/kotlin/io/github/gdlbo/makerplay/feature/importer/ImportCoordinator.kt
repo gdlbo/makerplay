@@ -32,9 +32,11 @@ class ImportCoordinator(
     }
 
     fun enqueueSaf(sourceUri: Uri) {
+        val location = sourceUri.toString()
+        if (rejectDuplicate(location)) return
         enqueue(
             sourceKind = ImportSourceKind.SAF_TREE,
-            sourceLocation = sourceUri.toString(),
+            sourceLocation = location,
             persistedUri = sourceUri,
             installMode = GameInstallMode.COPY,
         )
@@ -43,6 +45,7 @@ class ImportCoordinator(
     fun enqueueFile(directory: File, installMode: GameInstallMode = GameInstallMode.COPY) {
         runCatching { directory.canonicalPath }
             .onSuccess { path ->
+                if (rejectDuplicate(path)) return
                 enqueue(
                     sourceKind = ImportSourceKind.FILE_DIRECTORY,
                     sourceLocation = path,
@@ -51,6 +54,15 @@ class ImportCoordinator(
                 )
             }
             .onFailure { reportFailure(appContext.getString(R.string.selected_folder_unavailable)) }
+    }
+
+    private fun rejectDuplicate(location: String): Boolean {
+        catalog.refresh()
+        val existing = catalog.findGameBySource(location) ?: return false
+        reportFailure(
+            appContext.getString(R.string.game_already_imported, existing.title),
+        )
+        return true
     }
 
     private fun enqueue(

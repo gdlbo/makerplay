@@ -20,12 +20,35 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.util.Base64
 
 class NodeFileProtocolTest {
     @get:Rule
     val temporaryFolder = TemporaryFolder()
+
+    @Test
+    fun malformedReadFieldsReturnProtocolFailures() {
+        val protocol = protocol(temporaryFolder.newFolder("game"))
+        listOf(
+            """{"v":1,"id":{},"op":"read","path":"/game/file"}""",
+            """{"v":1,"id":"1","op":"read","path":[]}""",
+            """{"v":1,"id":"1","op":"readRange","path":"/game/file","position":{},"size":1}""",
+        ).forEach { message ->
+            val result = Json.parseToJsonElement(protocol.handle(message)).jsonObject
+            assertEquals("false", result.getValue("ok").jsonPrimitive.content)
+        }
+    }
+
+    @Test
+    fun generatedOverlayHeadProbeReturnsOnlyMetadata() {
+        val protocol = protocol(temporaryFolder.newFolder("game"))
+        response(protocol, "write", "/game/generated.txt", data = base64("payload"))
+        val metadata = protocol.overlayMetadata("generated.txt") as OverlayAsset.Metadata
+        assertEquals(7L, metadata.length)
+        assertEquals("payload", (protocol.overlayAsset("generated.txt") as OverlayAsset.Present).bytes.decodeToString())
+    }
 
     @Test
     fun readsGameFilesAndRejectsPathsOutsideVirtualRoots() {
@@ -258,6 +281,43 @@ class NodeFileProtocolTest {
     }
 
     @Test
+    fun readsImmutableGameRangesWithoutLoadingTheWholeAsset() {
+        val gameRoot = temporaryFolder.newFolder("game")
+        val large = File(gameRoot, "audio/large.ogg").apply {
+            requireNotNull(parentFile).mkdirs()
+        }
+        val firstUnreadableOffset = 16 * 1024 * 1024
+        RandomAccessFile(large, "rw").use { output ->
+            output.setLength(firstUnreadableOffset.toLong() + 1L)
+            output.seek(firstUnreadableOffset.toLong())
+            output.write('Z'.code)
+        }
+        val protocol = protocol(gameRoot)
+
+        val range = response(
+            protocol,
+            "readRange",
+            "/game/audio/large.ogg",
+            position = firstUnreadableOffset,
+            size = 1,
+        ).jsonObject
+        assertTrue(range.ok())
+        assertEquals(
+            "Z",
+            Base64.getDecoder().decode(range.getValue("data").jsonPrimitive.content).decodeToString(),
+        )
+        val eof = response(
+            protocol,
+            "readRange",
+            "/game/audio/large.ogg",
+            position = firstUnreadableOffset + 1,
+            size = 1,
+        ).jsonObject
+        assertTrue(eof.ok())
+        assertArrayEquals(byteArrayOf(), Base64.getDecoder().decode(eof.getValue("data").jsonPrimitive.content))
+    }
+
+    @Test
     fun immutableGameFilesSupportAppendDeleteAndOverlayRecreation() {
         val gameRoot = temporaryFolder.newFolder("game")
         File(gameRoot, "js/base.js").apply {
@@ -295,6 +355,38 @@ class NodeFileProtocolTest {
         assertFalse(expired.exists())
         assertTrue(recent.isFile)
         assertTrue(persistent.isFile)
+    }
+
+    @Test
+    fun closeClearsTransientCachesButKeepsPersistentGameData() {
+        val gameRoot = temporaryFolder.newFolder("game")
+        val dataRoot = temporaryFolder.newFolder("data")
+        val protocol = protocol(gameRoot, dataRoot)
+        File(dataRoot, "tmp/nested/scratch.bin").apply {
+            requireNotNull(parentFile).mkdirs()
+            writeText("scratch")
+        }
+        File(dataRoot, "cache/blob.bin").writeText("cached")
+        File(dataRoot, "logs/session.log").writeText("log")
+        File(dataRoot, "game-overlay/config").apply {
+            requireNotNull(parentFile).mkdirs()
+            writeText("settings")
+        }
+        File(dataRoot, "player-data.bin").writeText("persistent")
+
+        // Pre-fix state: scratch output is present, so the emptiness assertions below can only
+        // pass once the close path actually clears it.
+        assertTrue(File(dataRoot, "tmp/nested/scratch.bin").isFile)
+        assertTrue(File(dataRoot, "cache/blob.bin").isFile)
+        assertTrue(File(dataRoot, "logs/session.log").isFile)
+
+        protocol.clearTransientCaches()
+
+        listOf("tmp", "cache", "logs").forEach { name ->
+            assertTrue("$name must be empty", File(dataRoot, name).listFiles().orEmpty().isEmpty())
+        }
+        assertEquals("settings", File(dataRoot, "game-overlay/config").readText())
+        assertEquals("persistent", File(dataRoot, "player-data.bin").readText())
     }
 
     @Test

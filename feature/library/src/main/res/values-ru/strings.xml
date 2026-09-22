@@ -7,6 +7,9 @@
     <string name="play">Играть</string>
     <string name="game_actions">Действия с игрой</string>
     <string name="game_settings">Настройки игры</string>
+    <string name="show_in_file_manager">Показать в файловом менеджере</string>
+    <string name="open_in_file_manager">Открыть в файлах</string>
+    <string name="open_folder_failed">Не удалось открыть эту папку</string>
     <string name="export_game">Экспорт игры</string>
     <string name="export_game_share_title">Экспорт %1$s</string>
     <string name="export_game_failed">Не удалось экспортировать игру</string>

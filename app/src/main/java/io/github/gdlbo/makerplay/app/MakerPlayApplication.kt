@@ -4,11 +4,25 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import io.github.gdlbo.makerplay.feature.importer.GameImportWorker
-import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
+import io.github.gdlbo.makerplay.runtime.api.MemorySampleReason
+import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryWatchdog
+import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryWatchdogOptions
 import io.github.gdlbo.makerplay.runtime.webview.WebViewRuntimeStartup
 
 class MakerPlayApplication : Application() {
     val graph: AppGraph by lazy { AppGraph(applicationContext) }
+
+    // Threshold-based sampler/evictor. Defaults stay disabled for unit tests; the app enables it
+    // explicitly and forwards lifecycle trim events into it.
+    private val memoryWatchdog: RuntimeMemoryWatchdog by lazy {
+        RuntimeMemoryWatchdog.create(
+            logger = graph.logger,
+            options = RuntimeMemoryWatchdogOptions(
+                enabled = true,
+                nativeTrimBytes = RuntimeMemoryWatchdogOptions.DEFAULT_NATIVE_TRIM_BYTES,
+            ),
+        )
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -34,12 +48,14 @@ class MakerPlayApplication : Application() {
                 NotificationManager.IMPORTANCE_LOW,
             ),
         )
+        memoryWatchdog.start()
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_BACKGROUND) {
-            RuntimeMemoryCleaner.cleanUpMemory()
-        }
+        memoryWatchdog.sampleNow(
+            MemorySampleReason.TRIM_MEMORY,
+            mapOf("level" to level.toString()),
+        )
     }
 }

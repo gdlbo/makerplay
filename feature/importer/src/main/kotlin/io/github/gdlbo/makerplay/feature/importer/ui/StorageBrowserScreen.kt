@@ -59,14 +59,20 @@ fun StorageBrowserScreen(
     onInstallDirectory: (File, GameInstallMode) -> Unit,
     onSelectDirectory: ((File) -> Unit)? = null,
     initialInstallMode: GameInstallMode = GameInstallMode.COPY,
+    extraRoots: List<File> = emptyList(),
+    browseOnly: Boolean = false,
+    onOpenExternally: ((File) -> Unit)? = null,
     onBack: () -> Unit,
 ) {
-    var currentPath by rememberSaveable(initialDirectoryPath, hasFullStorageAccess, roots) {
+    val effectiveRoots = remember(roots, extraRoots) {
+        (roots + extraRoots).mapNotNull { runCatching { it.canonicalFile }.getOrNull() }.distinctBy { it.path }
+    }
+    var currentPath by rememberSaveable(initialDirectoryPath, hasFullStorageAccess, effectiveRoots) {
         mutableStateOf(
             initialBrowserDirectory(
                 path = initialDirectoryPath,
-                roots = roots,
-                hasFullStorageAccess = hasFullStorageAccess,
+                roots = effectiveRoots,
+                canBrowse = hasFullStorageAccess || extraRoots.isNotEmpty(),
             )?.path,
         )
     }
@@ -76,19 +82,20 @@ fun StorageBrowserScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var gameDirectories by remember { mutableStateOf<Set<String>>(emptySet()) }
     val directoryReadError = stringResource(R.string.directory_read_error)
+    val canBrowse = hasFullStorageAccess || extraRoots.isNotEmpty()
 
-    LaunchedEffect(hasFullStorageAccess, currentPath, roots) {
+    LaunchedEffect(canBrowse, currentPath, effectiveRoots) {
         gameDirectories = emptySet()
-        if (!hasFullStorageAccess) {
+        if (!canBrowse) {
             directories = emptyList()
             gameDirectories = emptySet()
             error = null
             return@LaunchedEffect
         }
-        val result = current?.let { withContext(Dispatchers.IO) { listDirectories(it, roots) } }
+        val result = current?.let { withContext(Dispatchers.IO) { listDirectories(it, effectiveRoots) } }
         directories = result?.getOrElse { emptyList() }.orEmpty()
         gameDirectories = withContext(Dispatchers.IO) {
-            (if (current == null) roots else directories)
+            (if (current == null) effectiveRoots else directories)
                 .filter(::hasNwRuntime)
                 .mapTo(mutableSetOf()) { it.path }
         }
@@ -102,7 +109,7 @@ fun StorageBrowserScreen(
         }
         val parent = current.parentFile
         currentPath = parent?.takeIf { candidate ->
-            roots.any { root -> current.isInside(root) && candidate.isInside(root) }
+            effectiveRoots.any { root -> current.isInside(root) && candidate.isInside(root) }
         }?.path
     }
 
@@ -115,10 +122,10 @@ fun StorageBrowserScreen(
                 title = {
                     Text(
                         current?.name?.ifBlank { current.path } ?: stringResource(
-                            if (onSelectDirectory == null) {
-                                R.string.choose_game_folder
-                            } else {
-                                R.string.choose_default_folder
+                            when {
+                                browseOnly -> R.string.browse_game_folder
+                                onSelectDirectory == null -> R.string.choose_game_folder
+                                else -> R.string.choose_default_folder
                             },
                         ),
                         maxLines = 1,
@@ -145,7 +152,7 @@ fun StorageBrowserScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            if (!hasFullStorageAccess) {
+            if (!canBrowse) {
                 StoragePermissionContent(
                     onRequestAccess = onRequestFullStorageAccess,
                     onUseSystemPicker = onUseSystemPicker.takeIf { onSelectDirectory == null },
@@ -159,13 +166,26 @@ fun StorageBrowserScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall,
                     )
-                    if (onSelectDirectory == null) {
+                    if (!browseOnly && onSelectDirectory == null) {
                         InstallModeSelector(
                             installMode = installMode,
                             onModeChange = { installMode = it },
                         )
                     }
-                    Button(
+                    if (browseOnly) {
+                        if (onOpenExternally != null) {
+                            FilledTonalButton(
+                                onClick = { onOpenExternally.invoke(directory) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Default.FolderOpen, contentDescription = null)
+                                Text(
+                                    stringResource(R.string.open_in_file_manager),
+                                    Modifier.padding(start = 8.dp),
+                                )
+                            }
+                        }
+                    } else Button(
                         onClick = {
                             onSelectDirectory?.invoke(directory)
                                 ?: onInstallDirectory(directory, installMode)
@@ -193,7 +213,7 @@ fun StorageBrowserScreen(
                 )
 
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                val visibleDirectories = if (current == null) roots else directories
+                val visibleDirectories = if (current == null) effectiveRoots else directories
                 if (visibleDirectories.isEmpty()) {
                     EmptyDirectoryState(isRoot = current == null)
                 }
@@ -212,7 +232,7 @@ fun StorageBrowserScreen(
                         )
                     }
                 }
-                if (onSelectDirectory == null && installMode == GameInstallMode.COPY) {
+                if (!browseOnly && onSelectDirectory == null && installMode == GameInstallMode.COPY) {
                     FilledTonalButton(
                         onClick = onUseSystemPicker,
                         modifier = Modifier
@@ -235,9 +255,10 @@ fun StorageBrowserScreen(
 internal fun initialBrowserDirectory(
     path: String,
     roots: List<File>,
-    hasFullStorageAccess: Boolean,
+    hasFullStorageAccess: Boolean = false,
+    canBrowse: Boolean = hasFullStorageAccess,
 ): File? {
-    if (!hasFullStorageAccess || path.isBlank()) return null
+    if (!canBrowse || path.isBlank()) return null
     val directory = runCatching { File(path.trim()).canonicalFile }.getOrNull() ?: return null
     return directory.takeIf { candidate ->
         candidate.isDirectory && candidate.canRead() && roots.any(candidate::isInside)

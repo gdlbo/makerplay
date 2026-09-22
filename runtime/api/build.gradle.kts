@@ -6,6 +6,7 @@ plugins {
 android { namespace = "io.github.gdlbo.makerplay.runtime.api" }
 
 dependencies {
+    implementation(project(":core:diagnostics"))
     implementation(project(":core:input"))
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

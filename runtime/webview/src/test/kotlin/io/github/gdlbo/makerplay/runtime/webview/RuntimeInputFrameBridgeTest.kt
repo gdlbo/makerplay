@@ -43,12 +43,21 @@ class RuntimeInputFrameBridgeTest {
     }
 
     @Test
-    fun `document bridge defers input until game variables are initialized`() {
+    fun `document bridge confirms name input without sending enter to html fields`() {
+        val source = RuntimeInputFrameBridge.source(runtimeAsset("bridges/input-bridge.js"))
+
+        assertTrue(source.contains("Scene_KorName"))
+        assertTrue(source.contains("commandInput"))
+        assertTrue(source.contains("nameConfirmLatch"))
+        assertTrue(source.contains("getElementById(\"textBox\")"))
+    }
+
+    @Test
+    fun `document bridge applies the latest snapshot immediately`() {
         val source = RuntimeInputFrameBridge.source(runtimeAsset("bridges/input-bridge.js"))
 
         assertTrue(source.contains("state.current = payload"))
-        assertTrue(source.contains("${'$'}gameVariables"))
-        assertTrue(source.contains("typeof globalThis.${'$'}gameVariables.setValue !== \"function\""))
+        assertTrue(source.contains("Input._currentState"))
     }
 
     @Test

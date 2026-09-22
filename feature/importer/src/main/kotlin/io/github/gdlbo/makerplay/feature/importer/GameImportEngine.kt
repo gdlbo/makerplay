@@ -26,9 +26,17 @@ class GameImportEngine(
         store: PrivateGameStore,
         importId: String = UUID.randomUUID().toString(),
         onProgress: suspend (ImportProgress) -> Unit = {},
+        sourceLocation: String? = null,
     ): ImportResult = withContext(Dispatchers.IO) {
         expandEvb(source) { expandedSource ->
-            linkExpanded(expandedSource, sourceRoot, store, importId, onProgress)
+            linkExpanded(
+                expandedSource,
+                sourceRoot,
+                store,
+                importId,
+                onProgress,
+                sourceLocation ?: sourceRoot.canonicalPath,
+            )
         }
     }
 
@@ -48,6 +56,7 @@ class GameImportEngine(
         store: PrivateGameStore,
         importId: String,
         onProgress: suspend (ImportProgress) -> Unit,
+        sourceLocation: String?,
     ): ImportResult = withContext(Dispatchers.IO) {
         val entries = scanEntries(source, onProgress)
         val detected = detector.detect(entries, source.rootName ?: sourceRoot.name)
@@ -83,8 +92,9 @@ class GameImportEngine(
             !File(contentRoot, entry.relativePath).isFile
         }
         if (missingLooseFiles) {
-            return@withContext importExpanded(source, store, importId, onProgress)
+            return@withContext importExpanded(source, store, importId, onProgress, sourceLocation)
         }
+        store.requireUniqueSource(sourceLocation, contentRoot.canonicalPath)
 
         val totalBytes = selected.sumOf { it.size.coerceAtLeast(0L) }
         onProgress(
@@ -102,7 +112,12 @@ class GameImportEngine(
         try {
             val game = detected.toGameSummary(importId)
             GameFileIndex.build(contentRoot).write(staging)
-            store.writeMetadata(staging, game, directSource = contentRoot)
+            store.writeMetadata(
+                staging,
+                game,
+                directSource = contentRoot,
+                sourceLocation = sourceLocation,
+            )
             val installed = store.commit(staging, game.id)
             onProgress(
                 ImportProgress(
@@ -125,8 +140,9 @@ class GameImportEngine(
         store: PrivateGameStore,
         importId: String = UUID.randomUUID().toString(),
         onProgress: suspend (ImportProgress) -> Unit = {},
+        sourceLocation: String? = null,
     ): ImportResult = expandEvb(source) { expandedSource ->
-        importExpanded(expandedSource, store, importId, onProgress)
+        importExpanded(expandedSource, store, importId, onProgress, sourceLocation)
     }
 
     private suspend fun importExpanded(
@@ -134,7 +150,9 @@ class GameImportEngine(
         store: PrivateGameStore,
         importId: String,
         onProgress: suspend (ImportProgress) -> Unit,
+        sourceLocation: String?,
     ): ImportResult = withContext(Dispatchers.IO) {
+        store.requireUniqueSource(sourceLocation)
         val entries = scanEntries(source, onProgress)
         val fallbackTitle = source.rootName
         val sourceLayout = detector.detect(entries, fallbackTitle)
@@ -212,7 +230,7 @@ class GameImportEngine(
             val detected = detector.detect(staging.asImportSource().entries(), fallbackTitle)
             val game = detected.toGameSummary(importId)
             GameFileIndex.build(staging).write()
-            store.writeMetadata(staging, game)
+            store.writeMetadata(staging, game, sourceLocation = sourceLocation)
             val installed = store.commit(staging, game.id)
             ImportResult(game, installed.name)
         } catch (error: Throwable) {

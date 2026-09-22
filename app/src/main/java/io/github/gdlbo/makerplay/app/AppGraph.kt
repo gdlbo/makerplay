@@ -28,6 +28,7 @@ import io.github.gdlbo.makerplay.runtime.api.SUPPORTED_FPS_LIMITS
 import io.github.gdlbo.makerplay.runtime.wolf.WolfRuntimeBackend
 import io.github.gdlbo.makerplay.runtime.webview.WebViewRuntimeBackend
 import java.io.File
+import java.nio.file.Files
 
 class AppGraph(context: Context) {
     private val appContext = context.applicationContext
@@ -126,6 +127,16 @@ class AppGraph(context: Context) {
         return gameStore.controllerLayoutFile(gameId)
     }
 
+    fun defaultControllerLayoutFile(): File =
+        File(appContext.filesDir, DEFAULT_CONTROLLER_LAYOUT_DIRECTORY)
+            .resolve(DEFAULT_CONTROLLER_LAYOUT_FILE)
+
+    fun hasCustomDefaultControllerLayout(): Boolean = defaultControllerLayoutFile().isFile
+
+    fun clearDefaultControllerLayout() {
+        defaultControllerLayoutFile().delete()
+    }
+
     fun runtimeLogFile(gameId: String): File? {
         return resolveGameDirectory(gameId)?.let { File(it, PersistentRuntimeLogger.CURRENT_FILE) }
     }
@@ -156,6 +167,15 @@ class AppGraph(context: Context) {
 
     fun canExportGame(gameId: String): Boolean =
         !gameStore.isDirectGame(gameId) && gameStore.findIndexDirectory(gameId) != null
+
+    fun addedFromLocation(gameId: String): String? = catalog.addedFromLocation(gameId)
+
+    fun browseableGameFolder(gameId: String): File? {
+        val added = addedFromLocation(gameId)?.let(::File)?.takeIf { folder ->
+            !Files.isSymbolicLink(folder.toPath()) && folder.isDirectory && folder.canRead()
+        }
+        return added ?: resolveGameDirectory(gameId)
+    }
 
     /**
      * Zips the private COPY install plus that game's save store into cache/exports.
@@ -257,6 +277,8 @@ class AppGraph(context: Context) {
     private companion object {
         const val PREFERENCES_NAME = "makerplay_settings"
         const val EXPORT_CACHE_DIRECTORY = "exports"
+        const val DEFAULT_CONTROLLER_LAYOUT_DIRECTORY = "controller-defaults"
+        const val DEFAULT_CONTROLLER_LAYOUT_FILE = "gamepad.json"
         const val DEFAULT_GAME_FOLDER = "default_game_folder"
         const val DEFAULT_INSTALL_MODE = "default_install_mode"
         const val THEME_MODE = "theme_mode"

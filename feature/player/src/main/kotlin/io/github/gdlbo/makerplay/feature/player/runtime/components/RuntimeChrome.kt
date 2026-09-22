@@ -130,7 +130,8 @@ internal fun PlayerToolbar(
                     modifier = Modifier
                         .clip(CircleShape)
                         .clickable { expanded = true }
-                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                        .height(48.dp)
+                        .padding(horizontal = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -258,7 +259,7 @@ private fun ToolbarIconButton(
     IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = containerModifier.size(38.dp),
+        modifier = containerModifier.size(48.dp),
     ) {
         Icon(
             icon,
@@ -303,7 +304,7 @@ internal fun PlayerBackButton(
     ) {
         IconButton(
             onClick = onBack,
-            modifier = Modifier.size(38.dp),
+            modifier = Modifier.size(48.dp),
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowBack,

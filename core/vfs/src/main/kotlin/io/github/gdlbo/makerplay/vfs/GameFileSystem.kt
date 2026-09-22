@@ -377,6 +377,16 @@ private class SourceRangeInputStream(
     private var position = start
     private var remaining = length
 
+    override fun available(): Int = remaining.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+
+    override fun skip(n: Long): Long {
+        if (n <= 0L) return 0L
+        val skipped = minOf(n, remaining)
+        position += skipped
+        remaining -= skipped
+        return skipped
+    }
+
     override fun read(): Int {
         val single = ByteArray(1)
         return if (read(single, 0, 1) == -1) -1 else single[0].toInt() and 0xff

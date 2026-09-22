@@ -1,15 +1,12 @@
 package io.github.gdlbo.makerplay.runtime.webview.nativebridge
 
 import io.github.gdlbo.makerplay.codec.AssetCodec
-import io.github.gdlbo.makerplay.codec.AssetCodecException
 import io.github.gdlbo.makerplay.codec.RpgMakerAssetCodec
 import io.github.gdlbo.makerplay.codec.SeekableAssetSource
 import io.github.gdlbo.makerplay.vfs.GamePath
 import io.github.gdlbo.makerplay.vfs.IndexedGameFile
-import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
-import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
 internal object RpgmNative {
@@ -86,55 +83,12 @@ internal object RpgmNative {
     external fun nativeListFiles(rootPath: String): Array<String>
 }
 
-/**
- * Asset codec that decrypts the full stored blob via native code, then serves
- * ranged reads from the decoded buffer. Matches [RpgMakerAssetCodec] semantics.
- */
-internal class NativeRpgMakerAssetCodec(
-    private val hexKey: String,
-) : AssetCodec {
-    init {
-        require(hexKey.length == 32 && hexKey.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }) {
-            "RPG Maker encryption key must contain exactly 32 hexadecimal characters"
-        }
-    }
-
-    override val id: String = RpgMakerAssetCodec.ID
-    override val cacheTag: String = "rpgmaker-native-${UUID.randomUUID()}"
-
-    override fun logicalLength(storedLength: Long): Long {
-        if (storedLength < 32L) throw AssetCodecException("Encrypted asset is truncated")
-        return storedLength - 16L
-    }
-
-    override fun open(
-        source: SeekableAssetSource,
-        logicalOffset: Long,
-        length: Long,
-    ): InputStream {
-        try {
-            val storedLength = source.length
-            val logicalLength = logicalLength(storedLength)
-            if (logicalOffset < 0L || length < 0L || logicalOffset > logicalLength - length) {
-                throw AssetCodecException("Invalid decoded asset range")
-            }
-            require(storedLength <= Int.MAX_VALUE) { "Encrypted asset is too large" }
-            val stored = ByteArray(storedLength.toInt())
-            var total = 0
-            while (total < stored.size) {
-                val read = source.readAt(total.toLong(), stored, total, stored.size - total)
-                if (read <= 0) throw AssetCodecException("Encrypted asset cannot be opened")
-                total += read
-            }
-            val plain = RpgmNative.nativeDecodeAsset(hexKey, stored)
-            val start = logicalOffset.toInt()
-            val end = (logicalOffset + length).toInt()
-            return ByteArrayInputStream(plain, start, end - start)
-        } catch (error: Exception) {
-            if (error is AssetCodecException) throw error
-            throw AssetCodecException("Encrypted asset cannot be opened", error)
-        } finally {
-            runCatching(source::close)
-        }
-    }
+/** Compatibility wrapper using bounded streaming decryption, including byte-range reads. */
+internal class NativeRpgMakerAssetCodec(hexKey: String) : AssetCodec {
+    private val streaming = RpgMakerAssetCodec.fromHexKey(hexKey)
+    override val id: String get() = streaming.id
+    override val cacheTag: String get() = streaming.cacheTag
+    override fun logicalLength(storedLength: Long): Long = streaming.logicalLength(storedLength)
+    override fun open(source: SeekableAssetSource, logicalOffset: Long, length: Long): InputStream =
+        streaming.open(source, logicalOffset, length)
 }

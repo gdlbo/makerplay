@@ -24,9 +24,13 @@ internal class RuntimeWebViewLifecycle(
     }
 
     fun onRelease() {
-        if (!released) {
+        if (released) return
+        released = true
+        // Destroy the native view even if pausing fails; the pause failure is still reported to
+        // the caller after the release stage has run.
+        try {
             onPause()
-            released = true
+        } finally {
             release()
         }
     }

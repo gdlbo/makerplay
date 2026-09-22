@@ -16,10 +16,18 @@ object RuntimeMemoryCleaner {
         return AutoCloseable { callbacks.remove(callback) }
     }
 
-    fun cleanUpMemory() {
+    /**
+     * Evicts registered domain caches without asking the VM for a garbage collection pass.
+     * Safe to call from background samplers such as [RuntimeMemoryWatchdog].
+     */
+    fun evictRegisteredCaches() {
         for (callback in callbacks) {
             runCatching { callback() }
         }
+    }
+
+    fun cleanUpMemory() {
+        evictRegisteredCaches()
         runCatching {
             System.runFinalization()
             Runtime.getRuntime().gc()

@@ -50,13 +50,25 @@ class LegacyCompatibilityScriptTest {
               height: 1,
             });
             assert.equal(typeof globalThis.cordova.plugins.Keyboard.show, "function");
-            assert.equal(typeof globalThis.TouchInput.requestKeyboard, "function");
-            globalThis.prompt = (title, def) => "test_val";
-            const setValues = [];
-            globalThis.${'$'}gameVariables = { setValue: (id, val) => setValues.push({ id, val }) };
+            assert.equal(typeof globalThis.set_text_sound_name, "function");
+            globalThis.set_text_sound_name(null);
+            globalThis.Game_Interpreter = function Game_Interpreter() {};
+            globalThis.Game_Interpreter.prototype = {};
+            globalThis.__makerplayLegacyCompatibilityInstalled = true;
+            $compatibilityScript
+            assert.equal(typeof globalThis.Game_Interpreter.prototype.set_text_sound_name, "function");
+            globalThis.TouchInput = {};
+            globalThis.__makerplayLegacyCompatibilityInstalled = true;
+            $compatibilityScript
+            const requested = [];
+            globalThis.makerplayKeyboard = {
+              request(title, def, id) { requested.push({ title, def, id }); },
+            };
+            globalThis.TouchInput = {};
+            $compatibilityScript
             const res = globalThis.TouchInput.requestKeyboard(42, "Name:", "default");
-            assert.equal(res, "test_val");
-            assert.deepEqual(setValues, [{ id: 42, val: "test_val" }]);
+            assert.equal(res, "");
+            assert.deepEqual(requested, [{ title: "Name:", def: "default", id: "42" }]);
         """.trimIndent()
         val scriptFile = Files.createTempFile("legacy-compatibility", ".js")
         try {

@@ -1,6 +1,7 @@
 package io.github.gdlbo.makerplay.feature.player.controller.ui
 
 import android.view.KeyEvent
+import android.os.SystemClock
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -13,8 +14,8 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -54,9 +55,13 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -69,8 +74,10 @@ import io.github.gdlbo.makerplay.input.VirtualControlShape
 import io.github.gdlbo.makerplay.input.VirtualControlType
 import io.github.gdlbo.makerplay.input.VirtualControllerProfile
 import io.github.gdlbo.makerplay.input.VirtualControllerProfileValidator
-import kotlin.math.atan2
-import kotlin.math.floor
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
@@ -110,12 +117,21 @@ internal fun VirtualControllerOverlay(
         modifier = modifier
             .fillMaxSize()
             .onSizeChanged { canvasSize = it }
-            .pointerInput(profile.controls, canvasSize) {
+            .pointerInput(profile.controls, canvasSize, editMode) {
                 awaitEachGesture {
                     // Only forward taps the controls did not consume. Using
                     // requireUnconsumed=false here steals the gesture arena from
                     // D-pad/buttons and breaks virtual keyboard input.
                     val down = awaitFirstDown(requireUnconsumed = true)
+                    if (editMode) {
+                        // Editing must never send canvas taps to the running game.
+                        down.consume()
+                        do {
+                            val event = awaitPointerEvent()
+                            event.changes.forEach { it.consume() }
+                        } while (event.changes.any { it.pressed })
+                        return@awaitEachGesture
+                    }
                     if (canvasSize.width == 0 || canvasSize.height == 0 || profile.controls.any {
                             down.position.isInside(it, canvasSize)
                         }
@@ -171,9 +187,14 @@ internal fun VirtualControllerOverlay(
                     canvasWidth = maxWidth,
                     canvasHeight = maxHeight,
                 )
+                val controlLabel = controlDisplayLabel(control)
                 val interaction = Modifier
                     .offset(x = placement.x, y = placement.y)
-                    .size(placement.width, placement.height)
+                    .requiredSize(placement.width, placement.height)
+                    .semantics {
+                        contentDescription = controlLabel
+                        selected = editMode && selectedControlId == control.id
+                    }
                     .then(
                         if (editMode) {
                             Modifier
@@ -207,8 +228,6 @@ internal fun VirtualControllerOverlay(
                         reducer = reducer,
                         onSnapshotChanged = onSnapshotChanged,
                         placement = placement,
-                        canvasWidth = maxWidth,
-                        canvasHeight = maxHeight,
                         editModifier = interaction,
                     )
                 } else {
@@ -241,44 +260,53 @@ private fun VirtualButton(
     var pressed by remember(control.id) { mutableStateOf(false) }
     val isKey = control.keyCode != null
     val circular = control.shape == VirtualControlShape.CIRCLE
-    val keyShape = when {
-        circular -> CircleShape
-        isKey -> RoundedCornerShape(6.dp)
-        else -> RoundedCornerShape(10.dp)
-    }
+    val keyShape = if (isKey) RoundedCornerShape(6.dp) else RoundedCornerShape(10.dp)
     val isModifierKey = isKey && (control.keyCode in listOf(59, 60, 113, 114, 57, 58, 61, 115, 67, 111, 82))
     val isEnterKey = isKey && control.keyCode == 66
 
     val inputModifier = if (editMode) {
         Modifier
     } else {
-        Modifier.pointerInput(control.id) {
-            awaitEachGesture {
-                val down = awaitFirstDown(requireUnconsumed = false)
-                down.consume()
-                pressed = true
-                val keyCode = control.keyCode
-                if (keyCode != null) {
-                    reducer.pressKeyCode(source, keyCode)
-                } else {
-                    reducer.press(source, control.action)
+        Modifier.pointerInput(control) {
+            coroutineScope {
+                var releaseJob: Job? = null
+                fun release() {
+                    pressed = false
+                    reducer.clearSource(source)
+                    onSnapshotChanged(reducer.snapshot())
                 }
-                onSnapshotChanged(reducer.snapshot())
                 try {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        change.consume()
-                        if (!change.pressed) break
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        down.consume()
+                        releaseJob?.cancel()
+                        val pressedAt = SystemClock.uptimeMillis()
+                        pressed = true
+                        reducer.press(source, control.action)
+                        control.keyCode?.let { reducer.pressKeyCode(source, it) }
+                        onSnapshotChanged(reducer.snapshot())
+                        try {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                change.consume()
+                                if (!change.pressed) break
+                            }
+                        } finally {
+                            // A down/up pair can otherwise be conflated into one Compose
+                            // frame before the runtime sees it. Keep short taps observable.
+                            val remaining = minimumControlPressRemainingMillis(
+                                SystemClock.uptimeMillis() - pressedAt,
+                            )
+                            releaseJob = launch {
+                                if (remaining > 0) delay(remaining)
+                                release()
+                            }
+                        }
                     }
                 } finally {
-                    pressed = false
-                    if (keyCode != null) {
-                        reducer.releaseKeyCode(source, keyCode)
-                    } else {
-                        reducer.release(source, control.action)
-                    }
-                    onSnapshotChanged(reducer.snapshot())
+                    releaseJob?.cancel()
+                    release()
                 }
             }
         }
@@ -296,6 +324,40 @@ private fun VirtualButton(
         else -> controlColor.copy(alpha = fillAlpha)
     }
 
+    val label: @Composable () -> Unit = {
+        Text(
+            text = controlDisplayLabel(control),
+            color = if (pressed) Color.White else if (darkControl || isKey) Color.White else Color.Black,
+            style = MaterialTheme.typography.labelLarge.copy(
+                fontWeight = if (isKey) FontWeight.Medium else FontWeight.SemiBold,
+                fontSize = if (circular) 13.sp else if (isKey) 11.sp else 12.sp,
+                letterSpacing = 0.sp,
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+    if (circular) {
+        val border = controlBorder(editMode, selected, darkControl, pressed)
+        Box(
+            modifier = modifier.then(inputModifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(Modifier.fillMaxSize()) {
+                val stroke = border.width.toPx()
+                val radius = size.minDimension / 2f - stroke / 2f
+                if (radius <= 0f) return@Canvas
+                drawCircle(color = buttonColor, radius = radius)
+                drawCircle(
+                    brush = border.brush,
+                    radius = radius,
+                    style = Stroke(width = stroke),
+                )
+            }
+            label()
+        }
+        return
+    }
     Surface(
         modifier = modifier.then(inputModifier),
         shape = keyShape,
@@ -307,20 +369,9 @@ private fun VirtualButton(
     ) {
         Box(
             contentAlignment = Alignment.Center,
-            // Circles are already square-fitted; extra horizontal padding makes
-            // right-side face buttons look uneven on tall portrait canvases.
-            modifier = if (circular) Modifier else Modifier.padding(horizontal = if (isKey) 2.dp else 4.dp),
+            modifier = Modifier.padding(horizontal = if (isKey) 2.dp else 4.dp),
         ) {
-            Text(
-                text = controlDisplayLabel(control),
-                style = MaterialTheme.typography.labelLarge.copy(
-                    fontWeight = if (isKey) FontWeight.Medium else FontWeight.SemiBold,
-                    fontSize = if (circular) 13.sp else if (isKey) 11.sp else 12.sp,
-                    letterSpacing = 0.sp,
-                ),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            label()
         }
     }
 }
@@ -333,8 +384,6 @@ private fun VirtualDPad(
     reducer: InputStateReducer,
     onSnapshotChanged: (LogicalInputSnapshot) -> Unit,
     placement: ControlPlacement,
-    canvasWidth: Dp,
-    canvasHeight: Dp,
     editModifier: Modifier,
 ) {
     val source = "virtual:${control.id}"
@@ -344,31 +393,24 @@ private fun VirtualDPad(
 
     if (editMode) {
         val editAlpha = control.opacity.coerceIn(.2f, 1f)
-        Surface(
-            modifier = editModifier,
-            shape = CircleShape,
-            color = Color(0xFF12141C).copy(alpha = editAlpha),
-            contentColor = Color.White.copy(alpha = editAlpha.coerceAtLeast(0.55f)),
+        CircularPad(
+            fill = Color(0xFF12141C).copy(alpha = editAlpha),
             border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-                     else BorderStroke(1.dp, Color.White.copy(alpha = 0.12f * editAlpha)),
-            tonalElevation = 2.dp,
-            shadowElevation = 6.dp,
+            else BorderStroke(1.dp, Color.White.copy(alpha = 0.12f * editAlpha)),
+            modifier = editModifier,
         ) {
             DPadFace(activeActions = emptySet(), opacity = editAlpha)
         }
         return
     }
 
-    // Play mode: Expanded invisible touch zone so diagonal touches (e.g. left-down) never miss
-    // and touches never pass through to cause accidental walking on the game canvas!
+    // Touch starts inside the visible pad; captured drags may leave it without
+    // falling through to the game. No invisible area steals nearby canvas taps.
     val dPadSize = placement.width
-    val extraMargin = (dPadSize * 0.50f).coerceIn(40.dp, 90.dp)
-    val touchLeft = if (placement.x <= extraMargin * 1.5f) 0.dp else placement.x - extraMargin
-    val touchTop = maxOf(0.dp, placement.y - extraMargin)
-    val touchRight = minOf(canvasWidth, placement.x + dPadSize + extraMargin)
-    val touchBottom = if (canvasHeight - (placement.y + dPadSize) <= extraMargin * 1.5f) canvasHeight else placement.y + dPadSize + extraMargin
-    val touchWidth = touchRight - touchLeft
-    val touchHeight = touchBottom - touchTop
+    val touchLeft = placement.x
+    val touchTop = placement.y
+    val touchWidth = dPadSize
+    val touchHeight = dPadSize
 
     fun actionsForTouchInBox(
         boxX: Float,
@@ -376,108 +418,109 @@ private fun VirtualDPad(
         dPadLeftInBoxPx: Float,
         dPadTopInBoxPx: Float,
         dPadSizePx: Float,
-    ): Set<GameAction> {
-        val centerX = dPadLeftInBoxPx + dPadSizePx / 2f
-        val centerY = dPadTopInBoxPx + dPadSizePx / 2f
-        val deltaX = boxX - centerX
-        val deltaY = boxY - centerY
-        val radiusPx = dPadSizePx / 2f
-        val dist = kotlin.math.hypot(deltaX, deltaY)
-        if (dist < radiusPx * 0.16f) return emptySet()
+    ): Set<GameAction> = dPadActionsForPosition(
+        (boxX - dPadLeftInBoxPx) / dPadSizePx,
+        (boxY - dPadTopInBoxPx) / dPadSizePx,
+        captured = true,
+    )
 
-        val degrees = Math.toDegrees(atan2(deltaY.toDouble(), deltaX.toDouble()))
-        val octant = kotlin.math.floor((degrees + 22.5 + 360.0) % 360.0 / 45.0).toInt()
-        return when (octant) {
-            0 -> setOf(GameAction.RIGHT)
-            1 -> setOf(GameAction.DOWN, GameAction.RIGHT)
-            2 -> setOf(GameAction.DOWN)
-            3 -> setOf(GameAction.DOWN, GameAction.LEFT)
-            4 -> setOf(GameAction.LEFT)
-            5 -> setOf(GameAction.UP, GameAction.LEFT)
-            6 -> setOf(GameAction.UP)
-            else -> setOf(GameAction.UP, GameAction.RIGHT)
-        }
-    }
-
+    val padLabel = stringResource(R.string.controller_dpad)
     Box(
         modifier = Modifier
             .offset(x = touchLeft, y = touchTop)
             .size(width = touchWidth, height = touchHeight)
-            .pointerInput(control.id) {
-                awaitEachGesture {
-                    var currentActions = emptySet<GameAction>()
-
-                    fun updateActions(nextActions: Set<GameAction>) {
-                        if (nextActions == currentActions) return
-                        reducer.clearSource(source)
-                        nextActions.forEach { action ->
-                            reducer.press(source, action)
-                            when (action) {
-                                GameAction.UP -> reducer.pressKeyCode(source, 19)
-                                GameAction.DOWN -> reducer.pressKeyCode(source, 20)
-                                GameAction.LEFT -> reducer.pressKeyCode(source, 21)
-                                GameAction.RIGHT -> reducer.pressKeyCode(source, 22)
-                                else -> Unit
-                            }
-                        }
-                        currentActions = nextActions
-                        activeActions = nextActions
-                        onSnapshotChanged(reducer.snapshot())
-                    }
-
-                    try {
-                        val down = awaitFirstDown(requireUnconsumed = false)
-                        down.consume()
-                        val dPadLeftPx = (placement.x - touchLeft).toPx()
-                        val dPadTopPx = (placement.y - touchTop).toPx()
-                        val dPadSizePx = dPadSize.toPx()
-                        updateActions(
-                            actionsForTouchInBox(
-                                down.position.x,
-                                down.position.y,
-                                dPadLeftPx,
-                                dPadTopPx,
-                                dPadSizePx,
-                            )
-                        )
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            if (!change.pressed) break
-                            change.consume()
-                            updateActions(
-                                actionsForTouchInBox(
-                                    change.position.x,
-                                    change.position.y,
-                                    dPadLeftPx,
-                                    dPadTopPx,
-                                    dPadSizePx,
-                                )
-                            )
-                        }
-                    } finally {
+            .semantics { contentDescription = padLabel }
+            .pointerInput(control.id, placement) {
+                coroutineScope {
+                    var releaseJob: Job? = null
+                    fun release() {
                         reducer.clearSource(source)
                         activeActions = emptySet()
                         onSnapshotChanged(reducer.snapshot())
+                    }
+                    try {
+                        awaitEachGesture {
+                            var pressedAt = 0L
+                            var currentActions = emptySet<GameAction>()
+
+                            fun updateActions(nextActions: Set<GameAction>) {
+                                if (nextActions == currentActions) return
+                                reducer.clearSource(source)
+                                nextActions.forEach { action ->
+                                    reducer.press(source, action)
+                                    when (action) {
+                                        GameAction.UP -> reducer.pressKeyCode(source, 19)
+                                        GameAction.DOWN -> reducer.pressKeyCode(source, 20)
+                                        GameAction.LEFT -> reducer.pressKeyCode(source, 21)
+                                        GameAction.RIGHT -> reducer.pressKeyCode(source, 22)
+                                        else -> Unit
+                                    }
+                                }
+                                currentActions = nextActions
+                                activeActions = nextActions
+                                onSnapshotChanged(reducer.snapshot())
+                            }
+
+                            try {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                down.consume()
+                                releaseJob?.cancel()
+                                pressedAt = SystemClock.uptimeMillis()
+                                val dPadLeftPx = (placement.x - touchLeft).toPx()
+                                val dPadTopPx = (placement.y - touchTop).toPx()
+                                val dPadSizePx = dPadSize.toPx()
+                                updateActions(
+                                    actionsForTouchInBox(
+                                        down.position.x,
+                                        down.position.y,
+                                        dPadLeftPx,
+                                        dPadTopPx,
+                                        dPadSizePx,
+                                    )
+                                )
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) break
+                                    change.consume()
+                                    updateActions(
+                                        actionsForTouchInBox(
+                                            change.position.x,
+                                            change.position.y,
+                                            dPadLeftPx,
+                                            dPadTopPx,
+                                            dPadSizePx,
+                                        )
+                                    )
+                                }
+                            } finally {
+                                val remaining = minimumControlPressRemainingMillis(
+                                    SystemClock.uptimeMillis() - pressedAt,
+                                )
+                                releaseJob = launch {
+                                    if (remaining > 0) delay(remaining)
+                                    release()
+                                }
+                            }
+                        }
+                    } finally {
+                        releaseJob?.cancel()
+                        release()
                     }
                 }
             },
     ) {
         val playAlpha = control.opacity.coerceIn(.2f, 1f)
-        Surface(
-            modifier = Modifier
-                .offset(x = placement.x - touchLeft, y = placement.y - touchTop)
-                .size(dPadSize),
-            shape = CircleShape,
-            color = Color(0xFF12141C).copy(alpha = playAlpha),
-            contentColor = Color.White.copy(alpha = playAlpha.coerceAtLeast(0.55f)),
+        CircularPad(
+            fill = Color(0xFF12141C).copy(alpha = playAlpha),
             border = BorderStroke(
                 1.dp,
                 if (activeActions.isNotEmpty()) Color(0xFF38BDF8).copy(alpha = 0.6f * playAlpha)
                 else Color.White.copy(alpha = 0.12f * playAlpha),
             ),
-            tonalElevation = 2.dp,
-            shadowElevation = 6.dp,
+            modifier = Modifier
+                .offset(x = placement.x - touchLeft, y = placement.y - touchTop)
+                .requiredSize(dPadSize),
         ) {
             DPadFace(activeActions = activeActions, opacity = playAlpha)
         }
@@ -659,6 +702,29 @@ private data class KeyboardFrame(
     val height: Float,
 )
 
+@Composable
+private fun CircularPad(
+    fill: Color,
+    border: BorderStroke,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(modifier = modifier, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize()) {
+            val stroke = border.width.toPx()
+            val radius = size.minDimension / 2f - stroke / 2f
+            if (radius <= 0f) return@Canvas
+            drawCircle(color = fill, radius = radius)
+            drawCircle(
+                brush = border.brush,
+                radius = radius,
+                style = Stroke(width = stroke),
+            )
+        }
+        content()
+    }
+}
+
 private data class ControlPlacement(
     val x: Dp,
     val y: Dp,
@@ -722,22 +788,20 @@ private fun keyboardFrame(profile: VirtualControllerProfile): KeyboardFrame? {
     return KeyboardFrame(left, top, right - left, bottom - top)
 }
 
-internal fun dPadActionsForPosition(x: Float, y: Float): Set<GameAction> {
+internal fun dPadActionsForPosition(x: Float, y: Float, captured: Boolean = false): Set<GameAction> {
     val deltaX = x - .5f
     val deltaY = y - .5f
-    val ellipseDistance = (deltaX / .5f) * (deltaX / .5f) + (deltaY / .5f) * (deltaY / .5f)
-    if (ellipseDistance > 1f) return emptySet()
-    if (hypot(deltaX, deltaY) < .16f) return emptySet()
-    val degrees = Math.toDegrees(atan2(deltaY.toDouble(), deltaX.toDouble()))
-    return when (floor((degrees + 22.5 + 360.0) % 360.0 / 45.0).toInt()) {
-        0 -> setOf(GameAction.RIGHT)
-        1 -> setOf(GameAction.DOWN, GameAction.RIGHT)
-        2 -> setOf(GameAction.DOWN)
-        3 -> setOf(GameAction.DOWN, GameAction.LEFT)
-        4 -> setOf(GameAction.LEFT)
-        5 -> setOf(GameAction.UP, GameAction.LEFT)
-        6 -> setOf(GameAction.UP)
-        else -> setOf(GameAction.UP, GameAction.RIGHT)
+    val distance = hypot(deltaX, deltaY)
+    if (!captured && distance > .5f) return emptySet()
+    if (distance < .12f) return emptySet()
+    // Wider cardinal sectors reduce accidental diagonals while keeping all eight directions.
+    return buildSet {
+        if (kotlin.math.abs(deltaX) >= kotlin.math.abs(deltaY) * .6f) {
+            add(if (deltaX < 0f) GameAction.LEFT else GameAction.RIGHT)
+        }
+        if (kotlin.math.abs(deltaY) >= kotlin.math.abs(deltaX) * .6f) {
+            add(if (deltaY < 0f) GameAction.UP else GameAction.DOWN)
+        }
     }
 }
 
@@ -792,6 +856,22 @@ internal fun gameActionLabel(action: GameAction): String = stringResource(
         GameAction.DEBUG -> R.string.action_debug
         GameAction.POINTER_DOWN, GameAction.POINTER_MOVE, GameAction.POINTER_UP -> R.string.action_pointer
     },
+)
+
+/**
+ * Screen-space displacement of the overlay Popup origin relative to the runtime surface it mirrors.
+ *
+ * The overlay is hosted in its own window, so its local origin can differ from the WebView
+ * surface origin by a constant window-manager/inset offset. An overlay-local touch is physically
+ * at `local + offset` in the runtime surface's client space; supplying this to
+ * [normalizeOverlayPointer] keeps normalized pointers in that shared space.
+ */
+internal fun overlayPageOffsetPx(
+    overlayPositionOnScreen: IntOffset,
+    runtimeSurfacePositionOnScreen: IntOffset,
+): Pair<Float, Float> = Pair(
+    (overlayPositionOnScreen.x - runtimeSurfacePositionOnScreen.x).toFloat(),
+    (overlayPositionOnScreen.y - runtimeSurfacePositionOnScreen.y).toFloat(),
 )
 
 /**
@@ -855,3 +935,7 @@ internal fun controlsFitViewport(
             rawX + rawWidth <= canvasWidthPx && rawY + rawHeight <= canvasHeightPx
     }
 }
+
+/** Covers several display frames while adding no delay to a normal held press. */
+internal fun minimumControlPressRemainingMillis(elapsedMillis: Long): Long =
+    (64L - elapsedMillis.coerceAtLeast(0L)).coerceAtLeast(0L)

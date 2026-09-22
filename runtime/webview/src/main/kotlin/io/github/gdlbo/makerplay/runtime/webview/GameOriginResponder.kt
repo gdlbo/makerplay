@@ -31,6 +31,7 @@ class GameOriginResponder(
     private val onMissingFileIgnored: (path: String, mimeType: String) -> Unit = { _, _ -> },
     private val overlayAsset: ((String) -> OverlayAsset)? = null,
     private val prefetchLookup: ((String) -> ByteArray?)? = null,
+    private val overlayMetadata: ((String) -> OverlayAsset)? = null,
 ) {
     init {
         require(HOST.matches(host)) { "Invalid runtime origin host" }
@@ -49,11 +50,14 @@ class GameOriginResponder(
             ParsedRange.Invalid -> return unsatisfied(path)
             is ParsedRange.Valid -> parsed.range
         }
-        val overlay = overlayAsset?.invoke(path)
+        val overlay = if (method == "HEAD" && overlayMetadata != null) {
+            overlayMetadata.invoke(path)
+        } else overlayAsset?.invoke(path)
         if (overlay is OverlayAsset.Deleted) return missing(path, method, requestedRange)
         return when (overlay) {
-            is OverlayAsset.Present -> foundOverlay(method, path, requestedRange, overlay)
-            else -> nativeFullFile(method, path, requestedRange)
+            is OverlayAsset.Present -> foundOverlay(method, path, requestedRange, overlay.bytes, overlay.bytes.size.toLong(), overlay.lastModifiedMillis)
+            is OverlayAsset.Metadata -> foundOverlay(method, path, requestedRange, null, overlay.length, overlay.lastModifiedMillis)
+            else -> prefetchedFullFile(method, path, requestedRange)
                 ?: when (val opened = fileSystem.open(path, requestedRange)) {
                     VfsOpenResult.Missing -> missing(path, method, requestedRange)
                     is VfsOpenResult.RequiresCodec,
@@ -66,11 +70,8 @@ class GameOriginResponder(
         }
     }
 
-    /**
-     * Fast path for large plaintext assets (maps/CommonEvents JSON, audio, images):
-     * native fread of the absolute file when no byte-range and no JS rewrite is required.
-     */
-    private fun nativeFullFile(
+    /** Fast path for bytes already staged during boot prefetch. */
+    private fun prefetchedFullFile(
         method: String,
         path: String,
         requestedRange: ByteRange?,
@@ -78,31 +79,11 @@ class GameOriginResponder(
         if (requestedRange != null) return null
         if (path.endsWith(".js", ignoreCase = true)) return null
         val asset = fileSystem.resolve(path) ?: return null
-        val startedAt = System.nanoTime()
-        val prefetched = prefetchLookup?.invoke(path)
-        val bytes = when {
-            prefetched != null -> {
-                android.util.Log.i(
-                    "MakerPlay",
-                    "native.io op=origin-cache-hit path=$path bytes=${prefetched.size}",
-                )
-                prefetched
-            }
-            !io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.isAvailable() -> return null
-            else -> {
-                val file = fileSystem.absoluteFile(path) ?: return null
-                runCatching {
-                    io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.nativeReadFile(file.absolutePath)
-                }.getOrNull() ?: return null
-            }
-        }
-        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
-        if (prefetched == null && (bytes.size >= 256 * 1024 || elapsedMs >= 5L)) {
-            android.util.Log.i(
-                "MakerPlay",
-                "native.io op=origin-read path=$path bytes=${bytes.size} ms=$elapsedMs",
-            )
-        }
+        val bytes = prefetchLookup?.invoke(path) ?: return null
+        android.util.Log.i(
+            "MakerPlay",
+            "native.io op=origin-cache-hit path=$path bytes=${bytes.size}",
+        )
         val payload = if (path.equals("data/System.json", ignoreCase = true)) {
             rewriteSystemJsonClearEncryption(ByteArrayInputStream(bytes))?.let { rewritten ->
                 rewritten.stream.use { it.readBytes() }
@@ -128,9 +109,10 @@ class GameOriginResponder(
         method: String,
         path: String,
         requestedRange: ByteRange?,
-        asset: OverlayAsset.Present,
+        bytes: ByteArray?,
+        completeLength: Long,
+        lastModifiedMillis: Long,
     ): OriginResponse {
-        val completeLength = asset.bytes.size.toLong()
         val start = requestedRange?.startInclusive ?: 0L
         if (requestedRange != null && start >= completeLength) return rangeError(completeLength)
         val requestedEnd = requestedRange?.endInclusive
@@ -139,15 +121,11 @@ class GameOriginResponder(
             requestedEnd == null -> completeLength - 1
             else -> minOf(requestedEnd, completeLength - 1)
         }
-        val bodyBytes = if (completeLength == 0L) {
-            byteArrayOf()
-        } else {
-            asset.bytes.copyOfRange(start.toInt(), (end + 1).toInt())
-        }
+        val contentLength = if (completeLength == 0L) 0L else end - start + 1
         val headers = linkedMapOf(
             "Accept-Ranges" to "bytes",
-            "Content-Length" to bodyBytes.size.toString(),
-            "ETag" to "W/\"overlay-${asset.lastModifiedMillis.toString(16)}-${
+            "Content-Length" to contentLength.toString(),
+            "ETag" to "W/\"overlay-${lastModifiedMillis.toString(16)}-${
                 completeLength.toString(
                     16
                 )
@@ -159,7 +137,11 @@ class GameOriginResponder(
             if (requestedRange == null) "OK" else "Partial Content",
             MimeTypes.forPath(GamePath.parse(path)),
             headers,
-            if (method == "HEAD") EMPTY_BODY else ByteArrayInputStream(bodyBytes),
+            if (method == "HEAD") {
+                EMPTY_BODY
+            } else {
+                ByteArrayInputStream(requireNotNull(bytes), start.toInt(), contentLength.toInt())
+            },
         )
     }
 
@@ -216,7 +198,6 @@ class GameOriginResponder(
      */
     private fun rewriteSystemJsonClearEncryption(source: InputStream): RewrittenBody? {
         if (!io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.isAvailable()) {
-            source.close()
             return null
         }
         val original = source.use { it.readBytes() }
@@ -328,6 +309,17 @@ class GameOriginResponder(
                 }
             }
         }
+        // DataManager JSON.parse's empty XHR bodies ("Unexpected end of JSON input").
+        val jsonPlaceholder = missingJsonPlaceholder(path)?.toByteArray(Charsets.UTF_8)
+        if (jsonPlaceholder != null) {
+            return OriginResponse(
+                statusCode = 200,
+                reasonPhrase = "OK",
+                mimeType = mimeType,
+                headers = mapOf("Content-Length" to jsonPlaceholder.size.toString()),
+                body = if (method == "HEAD") EMPTY_BODY else ByteArrayInputStream(jsonPlaceholder),
+            )
+        }
         return OriginResponse(
             statusCode = 200,
             reasonPhrase = "OK",
@@ -335,6 +327,15 @@ class GameOriginResponder(
             headers = mapOf("Content-Length" to "0"),
             body = EMPTY_BODY,
         )
+    }
+
+    private fun missingJsonPlaceholder(path: String): String? {
+        if (!path.endsWith(".json", ignoreCase = true)) return null
+        val name = path.substringAfterLast('/').lowercase(Locale.ROOT)
+        return when {
+            name == "system.json" || MAP_OBJECT_JSON.matches(name) -> "{}"
+            else -> "[]"
+        }
     }
 
     private fun fallbackFontPaths(): Sequence<String> {
@@ -397,6 +398,7 @@ class GameOriginResponder(
             ".ogg_",
             ".m4a_",
         )
+        val MAP_OBJECT_JSON = Regex("map\\d+\\.json")
         val EMPTY_BODY = ByteArrayInputStream(ByteArray(0))
     }
 }

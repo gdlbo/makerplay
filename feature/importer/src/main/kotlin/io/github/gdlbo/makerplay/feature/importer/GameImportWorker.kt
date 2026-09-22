@@ -72,12 +72,25 @@ class GameImportWorker(
                 evbSpoolDir = File(applicationContext.cacheDir, "evb-spool"),
             )
             val result = when (installMode) {
-                GameInstallMode.COPY -> engine.import(source, store, importId, progressReporter)
+                GameInstallMode.COPY -> engine.import(
+                    source,
+                    store,
+                    importId,
+                    progressReporter,
+                    sourceLocation,
+                )
                 GameInstallMode.DIRECT -> {
                     if (sourceKind != ImportSourceKind.FILE_DIRECTORY) {
                         throw ImportFailure(applicationContext.getString(R.string.direct_mode_requires_file_access))
                     }
-                    engine.link(source, File(sourceLocation), store, importId, progressReporter)
+                    engine.link(
+                        source,
+                        File(sourceLocation),
+                        store,
+                        importId,
+                        progressReporter,
+                        sourceLocation,
+                    )
                 }
             }
             Result.success(workDataOf(KEY_GAME_ID to result.game.id))

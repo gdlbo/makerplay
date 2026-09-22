@@ -1,6 +1,7 @@
 package io.github.gdlbo.makerplay.runtime.webview
 
 import io.github.gdlbo.makerplay.runtime.api.GameSaveStore
+import io.github.gdlbo.makerplay.vfs.ByteRange
 import io.github.gdlbo.makerplay.vfs.GameFileSystem
 import io.github.gdlbo.makerplay.vfs.GamePath
 import io.github.gdlbo.makerplay.vfs.VfsOpenResult
@@ -32,6 +33,7 @@ import java.util.Locale
 sealed interface OverlayAsset {
     data object Missing : OverlayAsset
     data object Deleted : OverlayAsset
+    data class Metadata(val length: Long, val lastModifiedMillis: Long) : OverlayAsset
     data class Present(val bytes: ByteArray, val lastModifiedMillis: Long) : OverlayAsset {
         override fun equals(other: Any?): Boolean {
             if (this === other) return true
@@ -59,21 +61,26 @@ internal class NodeFileProtocol(
     private val gameId: String? = null,
     private val saveStore: GameSaveStore? = null,
 ) {
-    internal fun overlayAsset(rawPath: String): OverlayAsset =
+    internal fun overlayAsset(rawPath: String): OverlayAsset = overlayAsset(rawPath, metadataOnly = false)
+
+    internal fun overlayMetadata(rawPath: String): OverlayAsset = overlayAsset(rawPath, metadataOnly = true)
+
+    private fun overlayAsset(rawPath: String, metadataOnly: Boolean): OverlayAsset = synchronized(lock) {
         when (val path = virtualPath(rawPath)) {
             is VirtualPath.Game -> when {
                 isGameDeleted(path) -> OverlayAsset.Deleted
                 else -> gameOverlayFile(path, allowRoot = false).let { file ->
                     if (file.isFile && !Files.isSymbolicLink(file.toPath())) {
-                        OverlayAsset.Present(file.readBytes(), file.lastModified())
+                        if (metadataOnly) OverlayAsset.Metadata(file.length(), file.lastModified())
+                        else OverlayAsset.Present(file.readBytes(), file.lastModified())
                     } else {
                         OverlayAsset.Missing
                     }
                 }
             }
-
             else -> OverlayAsset.Missing
         }
+    }
 
     private val requestedDataRoot = dataRoot.absoluteFile
     private val dataRoot: File
@@ -172,31 +179,73 @@ internal class NodeFileProtocol(
             absolute,
             object : io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmNative.BytesCallback {
                 override fun onSuccess(bytes: ByteArray) {
-                    val response = synchronized(lock) {
-                        try {
-                            require(bytes.size <= MAX_PAYLOAD_BYTES) { "File is too large" }
-                            success(
-                                requestId,
-                                JsonPrimitive(Base64.getEncoder().encodeToString(bytes)),
-                            )
-                        } catch (error: Throwable) {
-                            failure(requestId, error.message ?: "native read failed")
-                        }
+                    val response = try {
+                        require(bytes.size <= MAX_PAYLOAD_BYTES) { "File is too large" }
+                        success(
+                            requestId,
+                            JsonPrimitive(Base64.getEncoder().encodeToString(bytes)),
+                        )
+                    } catch (error: Throwable) {
+                        failure(requestId, error.message ?: "native read failed")
                     }
                     onResult(response)
                 }
 
                 override fun onError(message: String) {
-                    onResult(synchronized(lock) { failure(requestId, message) })
+                    onResult(failure(requestId, message))
                 }
             },
         )
         return true
     }
 
-    fun handle(message: String): String = synchronized(lock) {
+    fun handle(message: String): String {
+        runCatching { readOperation(message) }.getOrNull()?.let { operation ->
+            return handleReadOperation(operation)
+        }
+        return synchronized(lock) { handleLocked(message) }
+    }
+
+    /**
+     * Read snapshots need the lock while resolving overlays and opening their backing file, but
+     * Base64 and JSON response construction are pure CPU work and must not delay a pending write.
+     */
+    private fun handleReadOperation(operation: ReadOperation): String = try {
+        val payload = synchronized(lock) {
+            when (operation) {
+                is ReadOperation.File -> read(operation.path)
+                is ReadOperation.Range -> readRange(operation.path, operation.position, operation.size)
+            }
+        }
+        success(operation.id, JsonPrimitive(Base64.getEncoder().encodeToString(payload)))
+    } catch (error: ProtocolFailure) {
+        failure(operation.id, error.reason)
+    } catch (_: Exception) {
+        failure(operation.id, "invalid")
+    }
+
+    private fun readOperation(message: String): ReadOperation? {
+        if (message.length > MAX_MESSAGE_CHARS) return null
+        val request = runCatching { Json.parseToJsonElement(message).jsonObject }.getOrNull() ?: return null
+        val requestId = request["id"]?.jsonPrimitive?.takeIf { it.isString }?.content ?: return null
+        if (!ID.matches(requestId) || request["v"]?.jsonPrimitive?.intOrNull != VERSION) return null
+        return when (request["op"]?.jsonPrimitive?.takeIf { it.isString }?.content) {
+            "read" -> request["path"]?.jsonPrimitive?.takeIf { it.isString }?.content
+                ?.let { ReadOperation.File(requestId, it) }
+            "readRange" -> {
+                val path = request["path"]?.jsonPrimitive?.takeIf { it.isString }?.content ?: return null
+                val position = request["position"]?.jsonPrimitive?.intOrNull ?: return null
+                val size = request["size"]?.jsonPrimitive?.intOrNull ?: return null
+                ReadOperation.Range(requestId, path, position, size)
+            }
+
+            else -> null
+        }
+    }
+
+    private fun handleLocked(message: String): String {
         var requestId = INVALID_ID
-        try {
+        return try {
             require(message.length <= MAX_MESSAGE_CHARS) { "Message is too large" }
             val request = Json.parseToJsonElement(message).jsonObject
             requestId = request.string("id")
@@ -580,11 +629,56 @@ internal class NodeFileProtocol(
     }
 
     private fun readRange(rawPath: String, position: Int, size: Int): ByteArray {
-        require(position in 0..MAX_PAYLOAD_BYTES && size in 0..MAX_PAYLOAD_BYTES) {
+        require(position >= 0 && size in 0..MAX_PAYLOAD_BYTES) {
             "Invalid read range"
         }
-        val payload = read(rawPath)
-        if (position >= payload.size || size == 0) return byteArrayOf()
+        return when (val path = virtualPath(rawPath)) {
+            VirtualPath.GameRoot, VirtualPath.DataRoot -> isDirectory()
+            is VirtualPath.Game -> readGameRange(path, position, size)
+            is VirtualPath.Data -> readWritableRange(writableFile(path, allowRoot = false), position, size)
+        }
+    }
+
+    private fun readGameRange(path: VirtualPath.Game, position: Int, size: Int): ByteArray {
+        nativeSaveKey(path)?.let { key ->
+            nativeSaveRead(key)?.let { return rangeOf(it, position, size) }
+        }
+        val overlay = gameOverlayFile(path, allowRoot = false)
+        if (overlay.exists()) return readWritableRange(overlay, position, size)
+        if (isGameDeleted(path)) missing()
+        if (gameFileSystem.resolve(path.path) == null && gameFileSystem.list(path.path) != null) {
+            isDirectory()
+        }
+        val end = position.toLong() + maxOf(size - 1, 0)
+        return when (val opened = gameFileSystem.open(path.path, ByteRange(position.toLong(), end))) {
+            is VfsOpenResult.Found -> opened.stream.use { stream ->
+                if (size == 0) return@use byteArrayOf()
+                require(opened.contentLength <= size.toLong()) { "Invalid read range" }
+                stream.readBytes()
+            }
+
+            is VfsOpenResult.RangeNotSatisfiable -> byteArrayOf()
+            else -> missing()
+        }
+    }
+
+    private fun readWritableRange(file: File, position: Int, size: Int): ByteArray {
+        if (!file.exists()) missing()
+        if (file.isDirectory) isDirectory()
+        if (!file.isFile || Files.isSymbolicLink(file.toPath())) missing()
+        RandomAccessFile(file, "r").use { input ->
+            val available = input.length() - position.toLong()
+            if (size == 0 || available <= 0L) return byteArrayOf()
+            val count = minOf(available, size.toLong()).toInt()
+            return ByteArray(count).also { payload ->
+                input.seek(position.toLong())
+                input.readFully(payload)
+            }
+        }
+    }
+
+    private fun rangeOf(payload: ByteArray, position: Int, size: Int): ByteArray {
+        if (size == 0 || position >= payload.size) return byteArrayOf()
         return payload.copyOfRange(position, minOf(payload.size, position + size))
     }
 
@@ -1139,6 +1233,46 @@ internal class NodeFileProtocol(
         directories.asReversed()
             .filter { it != directory }
             .forEach { if (it.listFiles().orEmpty().isEmpty()) it.delete() }
+    }
+
+    /**
+     * Clears per-session scratch output (`tmp`, `cache`, `logs`) on close. The persistent game
+     * overlay, deletion index, and any other game-written files are preserved.
+     */
+    internal fun clearTransientCaches() {
+        synchronized(lock) {
+            MANAGED_GARBAGE.forEach { policy ->
+                runCatching { deleteDirectoryContents(File(dataRoot, policy.name)) }
+            }
+        }
+    }
+
+    private fun deleteDirectoryContents(directory: File) {
+        if (!directory.isDirectory || Files.isSymbolicLink(directory.toPath())) return
+        directory.listFiles().orEmpty().forEach(::deleteEntry)
+    }
+
+    private fun deleteEntry(entry: File) {
+        if (Files.isSymbolicLink(entry.toPath())) {
+            entry.delete()
+            return
+        }
+        if (entry.isDirectory) {
+            entry.listFiles().orEmpty().forEach(::deleteEntry)
+        }
+        entry.delete()
+    }
+
+    private sealed interface ReadOperation {
+        val id: String
+
+        data class File(override val id: String, val path: String) : ReadOperation
+        data class Range(
+            override val id: String,
+            val path: String,
+            val position: Int,
+            val size: Int,
+        ) : ReadOperation
     }
 
     private sealed interface VirtualPath {

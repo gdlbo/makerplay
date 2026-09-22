@@ -44,4 +44,19 @@ class RuntimeMemoryCleanerTest {
         RuntimeMemoryCleaner.cleanUpMemory()
         assertEquals(1, count.get())
     }
+
+    @Test
+    fun evictRegisteredCachesRunsCallbacksWithoutUnregistering() {
+        val count = AtomicInteger(0)
+        val registration = RuntimeMemoryCleaner.register { count.incrementAndGet() }
+
+        try {
+            RuntimeMemoryCleaner.evictRegisteredCaches()
+            assertEquals(1, count.get())
+            RuntimeMemoryCleaner.evictRegisteredCaches()
+            assertEquals(2, count.get())
+        } finally {
+            registration.close()
+        }
+    }
 }

@@ -6,6 +6,9 @@
     <string name="preparation_failure_reason">MakerPlay не смог подготовить среду выполнения игры</string>
     <string name="renderer_crash_reason">Android сообщил об аварии процесса WebView. Точная причина может находиться в скопированных логах</string>
     <string name="renderer_stopped_reason">Android остановил процесс WebView. Обычно это происходит из-за нехватки памяти или ресурсов устройства</string>
+    <string name="renderer_unresponsive_reason">Рендерер WebView перестал отвечать до завершения запуска игры</string>
+    <string name="renderer_boot_timeout_reason">Игра не успела запуститься за отведённое время</string>
+    <string name="javascript_boot_failure_reason">Ошибка JavaScript помешала загрузить игру. Ниже сведения из лога</string>
     <string name="technical_details">Технические сведения</string>
     <string name="runtime_logs">Логи среды выполнения</string>
     <string name="logs_unavailable">Запись логов была отключена или файл не создан. Сведения об ошибке выше всё равно включены</string>
@@ -165,6 +168,10 @@
     <string name="controller_action">Действие</string>
     <string name="controller_shape_round">Круглая кнопка</string>
     <string name="controller_shape_rectangle">Прямоугольная кнопка</string>
+    <string name="controller_save_as_default">Сохранить как раскладку по умолчанию</string>
+    <string name="controller_saved_as_default">Сохранено как раскладка по умолчанию</string>
+    <string name="default_controller_editor_title">Раскладка по умолчанию</string>
+    <string name="default_controller_back">Назад</string>
     <string name="controller_reset_layout">Сбросить раскладку</string>
     <string name="controller_reset_title">Сбросить раскладку кнопок?</string>
     <string name="controller_reset_message">Сбросить позиции, размеры, прозрачность и добавленные кнопки этой раскладки</string>
@@ -173,6 +180,7 @@
     <string name="controller_dpad">8-позиционная крестовина</string>
     <string name="renderer_stopped_unexpectedly">Рендерер игры неожиданно остановился</string>
     <string name="renderer_stopped_by_system">Рендерер игры остановлен системой</string>
+    <string name="renderer_became_unresponsive">Рендерер игры перестал отвечать</string>
     <string name="key_tab">Tab</string>
     <string name="key_caps">Caps</string>
     <string name="key_enter">Enter</string>
@@ -199,4 +207,14 @@
     <string name="action_pointer">Указатель</string>
     <string name="player_logging_enable">Включить запись логов игры</string>
     <string name="player_logging_disable">Отключить запись логов игры</string>
+    <string name="controller_drag_hint">Перетащите выбранную кнопку на игре или настройте положение ползунками ниже</string>
+    <string name="controller_editor_more_actions">Другие действия редактора</string>
+    <string name="controller_action_value">Действие: %1$s</string>
+    <string name="controller_keyboard_key_value">Клавиша: %1$s</string>
+    <string name="controller_choose_action">Выберите действие</string>
+    <string name="controller_delete_title">Удалить эту кнопку?</string>
+    <string name="controller_delete_message">Выбранная кнопка будет удалена из текущей раскладки</string>
+    <string name="controller_delete_confirm">Удалить</string>
+    <string name="controller_position_x">Положение по горизонтали</string>
+    <string name="controller_position_y">Положение по вертикали</string>
 </resources>

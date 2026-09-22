@@ -51,7 +51,23 @@ class GameCatalogRepositoryTest {
         assertEquals(true, File(testRoot, "games/copied").exists())
     }
 
-    private fun installGame(id: String, installedAt: Long, directSource: File? = null) {
+    @Test
+    fun findsExistingGameByRecordedSourceLocation() {
+        val source = File(testRoot, "original-folder").apply { mkdirs() }
+        installGame("linked", installedAt = 1L, directSource = source)
+        installGame("copied", installedAt = 2L, sourceLocation = "/storage/games/Other")
+
+        assertEquals("linked", store.findGameBySource(source.canonicalPath)?.id)
+        assertEquals("copied", store.findGameBySource("/storage/games/Other")?.id)
+        assertEquals("/storage/games/Other", store.addedFromLocation("copied"))
+    }
+
+    private fun installGame(
+        id: String,
+        installedAt: Long,
+        directSource: File? = null,
+        sourceLocation: String? = null,
+    ) {
         val game = GameSummary(
             id = id,
             title = id,
@@ -60,7 +76,7 @@ class GameCatalogRepositoryTest {
             installedAtEpochMillis = installedAt,
         )
         val staging = store.begin(id)
-        store.writeMetadata(staging, game, directSource)
+        store.writeMetadata(staging, game, directSource, sourceLocation)
         store.commit(staging, id)
     }
 }

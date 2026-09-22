@@ -13,7 +13,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
@@ -60,6 +62,9 @@ internal fun GameCard(
     onClearWebData: () -> Unit,
     canExport: Boolean = false,
     onExport: () -> Unit = {},
+    canShowFolder: Boolean = false,
+    onShowInFileManager: () -> Unit = {},
+    onOpenInExternalFileManager: () -> Unit = {},
 ) {
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmClearWebData by remember { mutableStateOf(false) }
@@ -163,6 +168,9 @@ internal fun GameCard(
                     onSettings = onSettings,
                     canExport = canExport,
                     onExport = onExport,
+                    canShowFolder = canShowFolder,
+                    onShowInFileManager = onShowInFileManager,
+                    onOpenInExternalFileManager = onOpenInExternalFileManager,
                     onClearWebData = { confirmClearWebData = true },
                     onDelete = { confirmDelete = true },
                     modifier = Modifier
@@ -242,6 +250,9 @@ private fun GameActionsMenu(
     onSettings: () -> Unit,
     canExport: Boolean,
     onExport: () -> Unit,
+    canShowFolder: Boolean,
+    onShowInFileManager: () -> Unit,
+    onOpenInExternalFileManager: () -> Unit,
     onClearWebData: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
@@ -270,6 +281,24 @@ private fun GameActionsMenu(
                     onSettings()
                 },
             )
+            if (canShowFolder) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.show_in_file_manager)) },
+                    leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
+                    onClick = {
+                        onExpandedChange(false)
+                        onShowInFileManager()
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.open_in_file_manager)) },
+                    leadingIcon = { Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null) },
+                    onClick = {
+                        onExpandedChange(false)
+                        onOpenInExternalFileManager()
+                    },
+                )
+            }
             if (canExport) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.export_game)) },

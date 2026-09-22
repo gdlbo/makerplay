@@ -1,16 +1,14 @@
 package io.github.gdlbo.makerplay.runtime.webview.internal.web
 
 import android.app.AlertDialog
-import android.content.Context
-import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
 import android.webkit.ConsoleMessage
 import android.webkit.JsPromptResult
 import android.webkit.JsResult
 import android.webkit.WebChromeClient
 import android.webkit.WebView
-import android.widget.EditText
-import android.widget.FrameLayout
+import io.github.gdlbo.makerplay.runtime.webview.internal.bridge.RuntimeKeyboardBridge
+
+private const val TAG = "MakerPlay"
 
 internal class RuntimeWebChromeClient(
     private val onRuntimeError: (String, Map<String, String>) -> Unit,
@@ -40,40 +38,22 @@ internal class RuntimeWebChromeClient(
         defaultValue: String?,
         result: JsPromptResult?,
     ): Boolean {
-        if (view == null || result == null) return false
-        val context = view.context ?: return false
-        val density = context.resources.displayMetrics.density
-        val editText = EditText(context).apply {
-            setText(defaultValue ?: "")
-            setSelection(text.length)
-            isSingleLine = true
-            imeOptions = EditorInfo.IME_ACTION_DONE
-        }
-        val container = FrameLayout(context).apply {
-            val horizontalPadding = (20 * density).toInt()
-            val verticalPadding = (10 * density).toInt()
-            setPadding(horizontalPadding, verticalPadding, horizontalPadding, verticalPadding)
-            addView(editText)
-        }
-        val dialog = AlertDialog.Builder(context)
-            .setTitle(message ?: "Input")
-            .setView(container)
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                result.confirm(editText.text.toString())
+        if (result == null) return false
+        android.util.Log.i(
+            TAG,
+            "runtime.js.prompt message=${message.orEmpty().take(80)} url=${url.orEmpty()}",
+        )
+        // Completing later while IME attaches deadlocks Chromium's editor request.
+        result.cancel()
+        val host = view ?: return true
+        host.post {
+            RuntimeKeyboardBridge.prompt(
+                host,
+                message.orEmpty().ifBlank { "Input" },
+                defaultValue.orEmpty(),
+            ) { value ->
+                RuntimeKeyboardBridge.deliver(host, "0", value)
             }
-            .setNegativeButton(android.R.string.cancel) { _, _ ->
-                result.cancel()
-            }
-            .setOnCancelListener {
-                result.cancel()
-            }
-            .create()
-
-        dialog.show()
-        editText.requestFocus()
-        editText.post {
-            val imm = context.getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-            imm?.showSoftInput(editText, 0)
         }
         return true
     }
@@ -84,18 +64,24 @@ internal class RuntimeWebChromeClient(
         message: String?,
         result: JsResult?,
     ): Boolean {
-        if (view == null || result == null) return false
-        val context = view.context ?: return false
-        AlertDialog.Builder(context)
-            .setMessage(message ?: "")
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                result.confirm()
-            }
-            .setOnCancelListener {
-                result.confirm()
-            }
-            .show()
-        return true
+        if (result == null) return false
+        val context = view?.context
+        if (view == null || context == null) {
+            result.confirm()
+            return true
+        }
+        return try {
+            AlertDialog.Builder(context)
+                .setMessage(message ?: "")
+                .setPositiveButton(android.R.string.ok) { _, _ -> result.confirm() }
+                .setOnCancelListener { result.confirm() }
+                .show()
+            true
+        } catch (error: Exception) {
+            android.util.Log.e(TAG, "runtime.js.alert_failed ${error.message}")
+            result.confirm()
+            true
+        }
     }
 
     override fun onJsConfirm(
@@ -104,21 +90,25 @@ internal class RuntimeWebChromeClient(
         message: String?,
         result: JsResult?,
     ): Boolean {
-        if (view == null || result == null) return false
-        val context = view.context ?: return false
-        AlertDialog.Builder(context)
-            .setMessage(message ?: "")
-            .setPositiveButton(android.R.string.ok) { _, _ ->
-                result.confirm()
-            }
-            .setNegativeButton(android.R.string.cancel) { _, _ ->
-                result.cancel()
-            }
-            .setOnCancelListener {
-                result.cancel()
-            }
-            .show()
-        return true
+        if (result == null) return false
+        val context = view?.context
+        if (view == null || context == null) {
+            result.cancel()
+            return true
+        }
+        return try {
+            AlertDialog.Builder(context)
+                .setMessage(message ?: "")
+                .setPositiveButton(android.R.string.ok) { _, _ -> result.confirm() }
+                .setNegativeButton(android.R.string.cancel) { _, _ -> result.cancel() }
+                .setOnCancelListener { result.cancel() }
+                .show()
+            true
+        } catch (error: Exception) {
+            android.util.Log.e(TAG, "runtime.js.confirm_failed ${error.message}")
+            result.cancel()
+            true
+        }
     }
 
     override fun onCloseWindow(window: WebView) {

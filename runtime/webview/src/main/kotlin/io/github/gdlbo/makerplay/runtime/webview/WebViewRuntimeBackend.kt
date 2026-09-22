@@ -73,6 +73,9 @@ class WebViewRuntimeBackend(
             logger
         }
         var sessionRegistered = false
+        var writeBehindStore: WriteBehindGameSaveStore? = null
+        var prefetch: NativeAssetPrefetch? = null
+        var prefetchTrim: AutoCloseable? = null
         try {
             gameLogger.info(
                 "runtime.prepare",
@@ -125,7 +128,6 @@ class WebViewRuntimeBackend(
                 )
             }
             val commonJsDataRoot = commonJsDataDirectory(request.gameId)
-            var writeBehindStore: WriteBehindGameSaveStore? = null
             val reportSaveFailure: (String, String?) -> Unit = { code, failureClass ->
                 gameLogger.error(
                     "runtime.javascript.bridge_call_failed",
@@ -180,37 +182,16 @@ class WebViewRuntimeBackend(
                     saveStore = writeBehindStore,
                 )
             }
-            val prefetch = NativeAssetPrefetch()
-            if (rpgmNative.isAvailable()) {
-                val plans = io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmBootPrefetchPlans
-                val hotPaths = plans.plaintextHotPaths(fileSystem)
-                prefetch.prefetchPlaintext(fileSystem, hotPaths)
-                val key = runCatching { plans.readEncryptionKey(fileSystem) }.getOrNull()
-                var mediaPrefetchCount = 0
-                if (key != null) {
-                    plans.encryptedLogicalPaths(fileSystem).forEach { logical ->
-                        val asset = fileSystem.resolve(logical) ?: return@forEach
-                        val opened = fileSystem.open(asset.storedPath.value) as? VfsOpenResult.Found
-                            ?: return@forEach
-                        val stored = opened.stream.use { it.readBytes() }
-                        prefetch.prefetchEncrypted(key, logical, stored)
-                        mediaPrefetchCount += 1
-                    }
-                } else {
-                    val media = plans.plaintextMediaPaths(fileSystem)
-                    prefetch.prefetchPlaintext(fileSystem, media)
-                    mediaPrefetchCount = media.size
-                }
-                gameLogger.info(
-                    "runtime.native.prefetch",
-                    mapOf(
-                        "gameId" to request.gameId,
-                        "paths" to hotPaths.size.toString(),
-                        "media" to mediaPrefetchCount.toString(),
-                        "encrypted" to (key != null).toString(),
-                    ),
-                )
-            }
+            val stagedPrefetch = NativeAssetPrefetch()
+            prefetch = stagedPrefetch
+            prefetchTrim = RuntimeMemoryCleaner.register(stagedPrefetch::clear)
+            val plans = io.github.gdlbo.makerplay.runtime.webview.nativebridge.RpgmBootPrefetchPlans
+            val prefetchPaths = plans.plaintextHotPaths(fileSystem) + plans.mediaLogicalPaths(fileSystem)
+            stagedPrefetch.prefetch(fileSystem, prefetchPaths)
+            gameLogger.info(
+                "runtime.native.prefetch",
+                mapOf("gameId" to request.gameId, "candidates" to prefetchPaths.size.toString()),
+            )
             val responder = GameOriginResponder(
                 host = gameOrigin.removePrefix("https://"),
                 sessionId = sessionId,
@@ -227,7 +208,8 @@ class WebViewRuntimeBackend(
                     )
                 },
                 overlayAsset = nodeProtocol?.let { protocol -> protocol::overlayAsset },
-                prefetchLookup = prefetch::get,
+                overlayMetadata = nodeProtocol?.let { protocol -> protocol::overlayMetadata },
+                prefetchLookup = stagedPrefetch::get,
             )
             val commonJs = nodeProtocol?.let {
                 CommonJsRuntimeConfiguration(
@@ -243,7 +225,8 @@ class WebViewRuntimeBackend(
                 saveBridge = saveBridge,
                 writeBehindStore = writeBehindStore,
                 logger = gameLogger,
-                prefetch = prefetch,
+                prefetch = stagedPrefetch,
+                prefetchTrim = prefetchTrim,
             )
             synchronized(sessions) {
                 check(sessions.size < MAX_ACTIVE_SESSIONS) { "Too many active runtime sessions" }
@@ -263,8 +246,23 @@ class WebViewRuntimeBackend(
                 runtimeProfile = runtimeProfile,
             )
         } finally {
-            if (!sessionRegistered && gameLogger !== logger) {
-                (gameLogger as? AutoCloseable)?.close()
+            if (!sessionRegistered) {
+                prefetchTrim?.close()
+                prefetch?.close()
+                // A write-behind store created for a session that never registered must not stay
+                // cached; leave a store that an already-registered session still owns untouched.
+                writeBehindStore?.let { store ->
+                    val referenced = sessions.values.any { session ->
+                        session.writeBehindStore === store
+                    }
+                    if (!referenced) {
+                        mvSaveStores.remove(request.gameId, store)
+                        store.close()
+                    }
+                }
+                if (gameLogger !== logger) {
+                    (gameLogger as? AutoCloseable)?.close()
+                }
             }
         }
     }
@@ -296,6 +294,19 @@ class WebViewRuntimeBackend(
                     sessionLogger.info(event, sessionFields)
                 } else {
                     sessionLogger.error(event, sessionFields)
+                }
+                if (event == "runtime.renderer_unresponsive") {
+                    onEvent(RuntimeEvent.RendererUnresponsive(session.sessionId))
+                }
+                if (event == "runtime.javascript.error") {
+                    onEvent(
+                        RuntimeEvent.JavaScriptError(
+                            sessionId = session.sessionId,
+                            message = fields["message"].orEmpty(),
+                            source = fields["source"].orEmpty(),
+                            line = fields["line"]?.toIntOrNull() ?: 0,
+                        ),
+                    )
                 }
             },
             inputEnabled = inputEnabled,
@@ -344,7 +355,11 @@ class WebViewRuntimeBackend(
             removed to orphanedStore
         }
         storeToClose?.close()
-        session?.prefetch?.clear()
+        session?.prefetchTrim?.close()
+        session?.prefetch?.close()
+        // Per-session file-protocol scratch output must not survive the close; the persistent
+        // game overlay/deletion index and the save stores are untouched.
+        runCatching { session?.commonJs?.protocol?.clearTransientCaches() }
         val sessionLogger = session?.logger ?: logger
         sessionLogger.info(
             "runtime.destroy",
@@ -359,6 +374,12 @@ class WebViewRuntimeBackend(
         }
         RuntimeMemoryCleaner.cleanUpMemory()
     }
+
+    /** Number of cached MV write-behind save stores; used by teardown tests. */
+    internal fun activeSaveStoreCount(): Int = mvSaveStores.size
+
+    /** Number of active runtime sessions; used by lifecycle tests. */
+    internal fun activeSessionCount(): Int = sessions.size
 
     companion object {
         const val ASSET_ORIGIN = "https://appassets.androidplatform.net"
@@ -384,6 +405,7 @@ class WebViewRuntimeBackend(
         val writeBehindStore: WriteBehindGameSaveStore?,
         val logger: RuntimeLogger,
         val prefetch: NativeAssetPrefetch? = null,
+        val prefetchTrim: AutoCloseable? = null,
     )
 }
 

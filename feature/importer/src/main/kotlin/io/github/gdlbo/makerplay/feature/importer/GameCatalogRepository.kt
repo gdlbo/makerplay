@@ -28,4 +28,8 @@ class GameCatalogRepository(private val store: PrivateGameStore) {
     fun deleteGame(gameId: String): Boolean = store.deleteGame(gameId).also { deleted ->
         if (deleted) refresh()
     }
+
+    fun findGameBySource(location: String): GameSummary? = store.findGameBySource(location)
+
+    fun addedFromLocation(gameId: String): String? = store.addedFromLocation(gameId)
 }

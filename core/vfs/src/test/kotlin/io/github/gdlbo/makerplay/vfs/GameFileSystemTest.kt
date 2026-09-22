@@ -96,7 +96,13 @@ class GameFileSystemTest {
         val vfs = mount()
 
         val full = vfs.open("audio/theme.ogg") as VfsOpenResult.Found
-        full.stream.use { assertArrayEquals("0123456789".toByteArray(), it.readBytes()) }
+        full.stream.use { stream ->
+            assertEquals(10, stream.available())
+            assertEquals(4, stream.skip(4))
+            assertEquals(6, stream.available())
+            assertArrayEquals("456789".toByteArray(), stream.readBytes())
+            assertEquals(0, stream.available())
+        }
         assertEquals("audio/ogg", full.asset.mimeType)
         assertTrue(full.asset.entityTag.startsWith("W/\""))
         assertEquals(10L, full.contentLength)

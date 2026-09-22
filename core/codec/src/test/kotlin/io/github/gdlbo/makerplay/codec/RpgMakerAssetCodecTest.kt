@@ -14,7 +14,14 @@ class RpgMakerAssetCodecTest {
     fun decodesKnownVectorWithoutMaterializingTheWholeAsset() {
         val source = MemorySource(KNOWN_STORED_ASSET)
 
-        val decoded = codec.open(source, 0, PLAINTEXT.size.toLong()).use { it.readBytes() }
+        val decoded = codec.open(source, 0, PLAINTEXT.size.toLong()).use { stream ->
+            assertEquals(PLAINTEXT.size, stream.available())
+            assertEquals(8, stream.skip(8))
+            assertEquals(PLAINTEXT.size - 8, stream.available())
+            val rest = stream.readBytes()
+            assertEquals(0, stream.available())
+            PLAINTEXT.copyOfRange(0, 8) + rest
+        }
 
         assertArrayEquals(PLAINTEXT, decoded)
         assertTrue(source.closed)

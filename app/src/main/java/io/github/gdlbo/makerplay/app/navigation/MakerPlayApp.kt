@@ -28,17 +28,25 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
+import java.io.File
+import java.net.URLDecoder
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
 import io.github.gdlbo.makerplay.model.GameEngine
 import io.github.gdlbo.makerplay.app.AppGraph
+import io.github.gdlbo.makerplay.app.openFolderExternally
 import io.github.gdlbo.makerplay.app.ui.MakerPlayTheme
 import io.github.gdlbo.makerplay.feature.importer.StorageRoots
 import io.github.gdlbo.makerplay.feature.importer.GameInstallMode
 import io.github.gdlbo.makerplay.feature.importer.ui.StorageBrowserScreen
 import io.github.gdlbo.makerplay.feature.library.LibraryScreen
 import io.github.gdlbo.makerplay.feature.library.R
+import io.github.gdlbo.makerplay.feature.player.controller.ui.DefaultControllerLayoutScreen
 import io.github.gdlbo.makerplay.feature.player.runtime.RuntimeHostScreen
 import io.github.gdlbo.makerplay.feature.settings.GameSettingsScreen
 import io.github.gdlbo.makerplay.feature.settings.SettingsScreen
@@ -60,6 +68,7 @@ fun MakerPlayApp(graph: AppGraph) {
     var defaultInstallMode by remember { mutableStateOf(graph.defaultInstallMode) }
     var runtimeSettings by remember { mutableStateOf(graph.runtimeSettings) }
     var themeMode by remember { mutableStateOf(graph.themeMode) }
+    var defaultControllerRevision by remember { mutableIntStateOf(0) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
@@ -136,6 +145,28 @@ fun MakerPlayApp(graph: AppGraph) {
                         },
                         onClearWebData = { game -> graph.clearGameWebData(game.id) },
                         canExport = { game -> graph.canExportGame(game.id) },
+                        canShowFolder = { game -> graph.browseableGameFolder(game.id) != null },
+                        onShowInFileManager = { game ->
+                            graph.browseableGameFolder(game.id)?.let { folder ->
+                                navController.navigate(
+                                    "browse-folder/${encodeNavPath(folder.path)}",
+                                )
+                            }
+                        },
+                        onOpenInExternalFileManager = { game ->
+                            val folder = graph.browseableGameFolder(game.id)
+                            android.util.Log.i(
+                                "MakerPlay",
+                                "native.folder.open request gameId=${game.id} folder=${folder?.path}",
+                            )
+                            if (folder == null || !openFolderExternally(context, folder)) {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.open_folder_failed),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
                         onExport = { game ->
                             scope.launch(Dispatchers.IO) {
                                 val archive = graph.exportCopiedGame(game)
@@ -226,7 +257,26 @@ fun MakerPlayApp(graph: AppGraph) {
                             runtimeSettings = settings
                             graph.runtimeSettings = settings
                         },
+                        hasCustomDefaultControllerLayout = remember(defaultControllerRevision) {
+                            graph.hasCustomDefaultControllerLayout()
+                        },
+                        onEditDefaultControllerLayout = {
+                            navController.navigate("default-controller")
+                        },
+                        onResetDefaultControllerLayout = {
+                            graph.clearDefaultControllerLayout()
+                            defaultControllerRevision++
+                        },
                         onBack = navController::popBackStack,
+                    )
+                }
+                composable("default-controller") {
+                    DefaultControllerLayoutScreen(
+                        layoutFile = graph.defaultControllerLayoutFile(),
+                        onBack = {
+                            defaultControllerRevision++
+                            navController.popBackStack()
+                        },
                     )
                 }
                 composable("default-folder") {
@@ -255,12 +305,15 @@ fun MakerPlayApp(graph: AppGraph) {
                     var customSettings by remember(gameId) {
                         mutableStateOf(graph.savedGameRuntimeSettings(gameId) ?: runtimeSettings)
                     }
+                    val folderPath = graph.addedFromLocation(gameId)
+                        ?: graph.browseableGameFolder(gameId)?.path
                     GameSettingsScreen(
                         gameTitle = game?.title ?: gameId,
                         isWolfGame = game?.engine == GameEngine.WOLF,
                         useCommonSettings = useCommonSettings,
                         commonSettings = runtimeSettings,
                         customSettings = customSettings,
+                        gameFolderPath = folderPath,
                         onUseCommonSettingsChange = { useCommon ->
                             useCommonSettings = useCommon
                             graph.setGameRuntimeSettings(
@@ -271,6 +324,68 @@ fun MakerPlayApp(graph: AppGraph) {
                         onCustomSettingsChange = { settings ->
                             customSettings = settings
                             graph.setGameRuntimeSettings(gameId, settings)
+                        },
+                        onSaveAsAppDefault = { settings ->
+                            runtimeSettings = settings
+                            graph.runtimeSettings = settings
+                            Toast.makeText(
+                                context,
+                                context.getString(
+                                    io.github.gdlbo.makerplay.feature.settings.R.string.saved_as_app_default,
+                                ),
+                                Toast.LENGTH_SHORT,
+                            ).show()
+                        },
+                        onShowInFileManager = {
+                            graph.browseableGameFolder(gameId)?.let { folder ->
+                                navController.navigate(
+                                    "browse-folder/${encodeNavPath(folder.path)}",
+                                )
+                            }
+                        },
+                        onOpenInExternalFileManager = {
+                            val folder = graph.browseableGameFolder(gameId)
+                            android.util.Log.i(
+                                "MakerPlay",
+                                "native.folder.open request gameId=$gameId folder=${folder?.path}",
+                            )
+                            if (folder == null || !openFolderExternally(context, folder)) {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.open_folder_failed),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
+                        },
+                        onBack = navController::popBackStack,
+                    )
+                }
+                composable(
+                    route = "browse-folder/{path}",
+                    arguments = listOf(navArgument("path") { type = NavType.StringType }),
+                ) { entry ->
+                    val folderPath = decodeNavPath(
+                        requireNotNull(entry.arguments?.getString("path")),
+                    )
+                    val folder = File(folderPath)
+                    StorageBrowserScreen(
+                        hasFullStorageAccess = hasFullStorageAccess,
+                        roots = storageRoots,
+                        extraRoots = listOfNotNull(folder.takeIf { it.isDirectory }),
+                        initialDirectoryPath = folderPath,
+                        initialInstallMode = defaultInstallMode,
+                        browseOnly = true,
+                        onRequestFullStorageAccess = ::requestFullStorageAccess,
+                        onUseSystemPicker = {},
+                        onInstallDirectory = { _, _ -> },
+                        onOpenExternally = { directory ->
+                            if (!openFolderExternally(context, directory)) {
+                                Toast.makeText(
+                                    context,
+                                    context.getString(R.string.open_folder_failed),
+                                    Toast.LENGTH_SHORT,
+                                ).show()
+                            }
                         },
                         onBack = navController::popBackStack,
                     )
@@ -296,6 +411,7 @@ fun MakerPlayApp(graph: AppGraph) {
                             settings = effectiveSettings,
                         ),
                         layoutFile = graph.controllerLayoutFile(gameId),
+                        defaultLayoutFile = graph.defaultControllerLayoutFile(),
                         logFile = graph.runtimeLogFile(gameId),
                         loggingEnabled = effectiveSettings.recordLogs,
                         onToggleLogging = {
@@ -314,3 +430,9 @@ fun MakerPlayApp(graph: AppGraph) {
         }
     }
 }
+
+internal fun encodeNavPath(path: String): String =
+    URLEncoder.encode(path, StandardCharsets.UTF_8.toString())
+
+internal fun decodeNavPath(path: String): String =
+    URLDecoder.decode(path, StandardCharsets.UTF_8.toString())

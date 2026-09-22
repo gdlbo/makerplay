@@ -9,7 +9,7 @@ import io.github.gdlbo.makerplay.input.VirtualControllerProfileValidator
 
 private val PREVIOUS_GAMEPAD_COLOR = 0xFF25272B.toInt()
 
-internal val DefaultGamepadProfile = VirtualControllerProfile(
+internal val PreviousCompactGamepadProfile = VirtualControllerProfile(
     id = "gamepad",
     controls = listOf(
         dPadControl(),
@@ -17,6 +17,18 @@ internal val DefaultGamepadProfile = VirtualControllerProfile(
         gamepadControl("escape", GameAction.CANCEL, .90f, .64f, .08f, .14f, keyCode = 111),
         gamepadControl("key-z", GameAction.OK, .80f, .82f, .08f, .14f, keyCode = 54),
         gamepadControl("key-b", GameAction.CANCEL, .90f, .82f, .08f, .14f, keyCode = 30),
+    ),
+).also(VirtualControllerProfileValidator::validate)
+
+/** Thumb-oriented layout: primary actions are larger and separated from utility keys. */
+internal val DefaultGamepadProfile = VirtualControllerProfile(
+    id = "gamepad",
+    controls = listOf(
+        dPadControl().copy(x = .035f, y = .57f, width = .19f, height = .34f),
+        gamepadControl("enter", GameAction.OK, .87f, .70f, .095f, .20f, keyCode = 66),
+        gamepadControl("escape", GameAction.CANCEL, .755f, .75f, .09f, .18f, keyCode = 111),
+        gamepadControl("shift", GameAction.SHIFT, .755f, .52f, .09f, .16f, keyCode = 59),
+        gamepadControl("menu", GameAction.MENU, .87f, .47f, .095f, .16f, keyCode = 82),
     ),
 ).also(VirtualControllerProfileValidator::validate)
 

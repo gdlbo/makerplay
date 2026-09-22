@@ -141,6 +141,45 @@ class CommonJsNodeFsScriptTest {
     }
 
     @Test
+    fun `reads descriptor windows through bounded native ranges`() {
+        runHarness(
+            """
+            const fs = globalThis.require("fs");
+
+            responses.set("exists /game/www/large.dat", { ok: true, data: true });
+            responses.set("readRange /game/www/large.dat", {
+              ok: true,
+              data: Buffer.from("cde").toString("base64"),
+            });
+            const fd = fs.openSync("/game/www/large.dat", "r");
+            const target = Buffer.alloc(7, "_");
+            assert.equal(fs.readSync(fd, target, 2, 3, null), 3);
+            assert.equal(target.toString(), "__cde__");
+            assert.equal(calls[calls.length - 1].op, "readRange");
+            assert.equal(calls[calls.length - 1].position, 0);
+            assert.equal(calls[calls.length - 1].size, 3);
+            assert.equal(calls.filter((call) => call.op === "read").length, 0);
+
+            // An explicit position does not move the descriptor, and EOF is an empty range.
+            responses.set("readRange /game/www/large.dat", { ok: true, data: "" });
+            assert.equal(fs.readSync(fd, target, 0, 2, 999), 0);
+            assert.equal(calls[calls.length - 1].position, 999);
+            responses.set("readRange /game/www/large.dat", {
+              ok: true,
+              data: Buffer.from("fg").toString("base64"),
+            });
+            assert.equal(fs.readSync(fd, target, 0, 2, null), 2);
+            assert.equal(calls[calls.length - 1].position, 3);
+            assert.equal(target.subarray(0, 2).toString(), "fg");
+
+            assert.throws(() => fs.readSync(fd, Buffer.alloc(2), -1, 1, 0), RangeError);
+            assert.throws(() => fs.readSync(fd, Buffer.alloc(2), 0, 1, -1), RangeError);
+            fs.closeSync(fd);
+            """,
+        )
+    }
+
+    @Test
     fun `implements node buffer encodings views and binary accessors`() {
         runHarness(
             """

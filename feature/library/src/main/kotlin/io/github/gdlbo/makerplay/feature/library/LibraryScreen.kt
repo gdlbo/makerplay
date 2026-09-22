@@ -50,6 +50,9 @@ fun LibraryScreen(
     onClearWebData: (GameSummary) -> Unit,
     canExport: (GameSummary) -> Boolean = { false },
     onExport: (GameSummary) -> Unit = {},
+    canShowFolder: (GameSummary) -> Boolean = { false },
+    onShowInFileManager: (GameSummary) -> Unit = {},
+    onOpenInExternalFileManager: (GameSummary) -> Unit = {},
     onReorderGames: (List<String>) -> Unit,
     onRunSmokeTest: () -> Unit,
     onSettings: () -> Unit,
@@ -228,6 +231,9 @@ fun LibraryScreen(
                         onClearWebData = { onClearWebData(game) },
                         canExport = canExport(game),
                         onExport = { onExport(game) },
+                        canShowFolder = canShowFolder(game),
+                        onShowInFileManager = { onShowInFileManager(game) },
+                        onOpenInExternalFileManager = { onOpenInExternalFileManager(game) },
                     )
                     }
                 }

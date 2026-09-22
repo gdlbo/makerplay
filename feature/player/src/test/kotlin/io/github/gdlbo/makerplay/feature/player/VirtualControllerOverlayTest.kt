@@ -1,27 +1,39 @@
 package io.github.gdlbo.makerplay.feature.player
 
+import androidx.compose.ui.unit.IntOffset
 import io.github.gdlbo.makerplay.feature.player.controller.model.DefaultGamepadProfile
 import io.github.gdlbo.makerplay.feature.player.controller.ui.circularControlSidePx
 import io.github.gdlbo.makerplay.feature.player.controller.ui.controlsFitViewport
 import io.github.gdlbo.makerplay.feature.player.controller.ui.dPadActionsForPosition
 import io.github.gdlbo.makerplay.feature.player.controller.ui.moveVirtualControl
+import io.github.gdlbo.makerplay.feature.player.controller.ui.minimumControlPressRemainingMillis
 import io.github.gdlbo.makerplay.feature.player.controller.ui.normalizeOverlayPointer
+import io.github.gdlbo.makerplay.feature.player.controller.ui.overlayPageOffsetPx
 import io.github.gdlbo.makerplay.input.GameAction
 import io.github.gdlbo.makerplay.input.VirtualControlShape
 import io.github.gdlbo.makerplay.input.VirtualControlType
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class VirtualControllerOverlayTest {
     @Test
+    fun `short taps span runtime frames but held buttons release immediately`() {
+        assertEquals(64L, minimumControlPressRemainingMillis(0))
+        assertEquals(59L, minimumControlPressRemainingMillis(5))
+        assertEquals(0L, minimumControlPressRemainingMillis(64))
+        assertEquals(0L, minimumControlPressRemainingMillis(200))
+    }
+
+    @Test
     fun `default profile exposes directional and action controls`() {
         assertEquals(
-            setOf("dpad", "enter", "escape", "key-z", "key-b"),
+            setOf("dpad", "enter", "escape", "shift", "menu"),
             DefaultGamepadProfile.controls.map { it.id }.toSet(),
         )
         assertEquals(VirtualControlType.D_PAD, DefaultGamepadProfile.controls.single { it.id == "dpad" }.type)
-        assertEquals(setOf(66, 111, 54, 30), DefaultGamepadProfile.controls.mapNotNull { it.keyCode }.toSet())
+        assertEquals(setOf(66, 111, 59, 82), DefaultGamepadProfile.controls.mapNotNull { it.keyCode }.toSet())
         assertTrue(DefaultGamepadProfile.controls.filter { it.id != "dpad" }.all { it.shape == VirtualControlShape.CIRCLE })
     }
 
@@ -40,12 +52,20 @@ class VirtualControllerOverlayTest {
     }
 
     @Test
+    fun `dpad favors cardinal directions and retains captured drags beyond edge`() {
+        assertEquals(setOf(GameAction.RIGHT), dPadActionsForPosition(.9f, .7f))
+        assertEquals(emptySet<GameAction>(), dPadActionsForPosition(.59f, .55f))
+        assertEquals(setOf(GameAction.LEFT), dPadActionsForPosition(-.3f, .5f, captured = true))
+        assertEquals(emptySet<GameAction>(), dPadActionsForPosition(-.3f, .5f))
+    }
+
+    @Test
     fun `circular controls square to the shorter axis`() {
         val dpad = DefaultGamepadProfile.controls.single { it.id == "dpad" }
         val button = DefaultGamepadProfile.controls.single { it.id == "enter" }
 
-        assertEquals(302.4f, circularControlSidePx(dpad, canvasWidthPx = 1920f, canvasHeightPx = 1080f), .001f)
-        assertEquals(151.2f, circularControlSidePx(button, canvasWidthPx = 1920f, canvasHeightPx = 1080f), .001f)
+        assertEquals(364.8f, circularControlSidePx(dpad, canvasWidthPx = 1920f, canvasHeightPx = 1080f), .001f)
+        assertEquals(182.4f, circularControlSidePx(button, canvasWidthPx = 1920f, canvasHeightPx = 1080f), .001f)
     }
 
     @Test
@@ -90,6 +110,47 @@ class VirtualControllerOverlayTest {
                 overlayHeightPx = 600,
             ),
         )
+    }
+
+    @Test
+    fun `overlay page offset keeps touches in the runtime surface space`() {
+        // The Popup window hosting the overlay is displaced 40px right and 128px down of the
+        // WebView surface (for example by a display cutout inset applied to the sub-panel window).
+        val (offsetX, offsetY) = overlayPageOffsetPx(
+            overlayPositionOnScreen = IntOffset(x = 40, y = 128),
+            runtimeSurfacePositionOnScreen = IntOffset.Zero,
+        )
+
+        assertEquals(40f, offsetX, .0001f)
+        assertEquals(128f, offsetY, .0001f)
+
+        // A touch at popup-local (200, 400) is physically at surface-relative (240, 528), so the
+        // normalized fraction must be the surface fraction, not the popup-local fraction.
+        val (x, y) = normalizeOverlayPointer(
+            localX = 200f,
+            localY = 400f,
+            overlayWidthPx = 2400,
+            overlayHeightPx = 1080,
+            pageOffsetXPx = offsetX,
+            pageOffsetYPx = offsetY,
+        )
+
+        assertEquals(240f / 2400f, x, .0001f)
+        assertEquals(528f / 1080f, y, .0001f)
+
+        // Regression proof: the pre-fix call site supplied no offset, so the same touch
+        // normalized to the popup-local fraction and landed 40px left / 128px above the
+        // finger in the game. The corrected fraction must differ from that value.
+        val (preFixX, preFixY) = normalizeOverlayPointer(
+            localX = 200f,
+            localY = 400f,
+            overlayWidthPx = 2400,
+            overlayHeightPx = 1080,
+        )
+        assertEquals(200f / 2400f, preFixX, .0001f)
+        assertEquals(400f / 1080f, preFixY, .0001f)
+        assertNotEquals(x, preFixX, .0001f)
+        assertNotEquals(y, preFixY, .0001f)
     }
 
     @Test

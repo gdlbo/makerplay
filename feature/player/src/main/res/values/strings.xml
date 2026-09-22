@@ -7,6 +7,9 @@
     <string name="preparation_failure_reason">MakerPlay could not prepare the game runtime</string>
     <string name="renderer_crash_reason">Android reported that the WebView rendering process crashed. The copied logs may contain the exact trigger</string>
     <string name="renderer_stopped_reason">Android stopped the WebView rendering process, usually because the device was under memory or resource pressure</string>
+    <string name="renderer_unresponsive_reason">The WebView renderer stopped answering before the game finished starting</string>
+    <string name="renderer_boot_timeout_reason">The game did not finish starting in time</string>
+    <string name="javascript_boot_failure_reason">A JavaScript error stopped the game from loading. The details below are from the game log</string>
     <string name="technical_details">Technical details</string>
     <string name="runtime_logs">Runtime logs</string>
     <string name="logs_unavailable">File logging was disabled or no runtime log was created. The failure details above are still included</string>
@@ -168,6 +171,10 @@
     <string name="controller_action">Action</string>
     <string name="controller_shape_round">Round button</string>
     <string name="controller_shape_rectangle">Rectangular button</string>
+    <string name="controller_save_as_default">Save as default overlay</string>
+    <string name="controller_saved_as_default">Saved as the default overlay</string>
+    <string name="default_controller_editor_title">Default overlay</string>
+    <string name="default_controller_back">Back</string>
     <string name="controller_reset_layout">Reset layout</string>
     <string name="controller_reset_title">Reset button layout?</string>
     <string name="controller_reset_message">Reset positions, sizes, opacity, and added buttons in this layout</string>
@@ -176,6 +183,7 @@
     <string name="controller_dpad">8-way D-pad</string>
     <string name="renderer_stopped_unexpectedly">The game renderer stopped unexpectedly</string>
     <string name="renderer_stopped_by_system">The game renderer was stopped by the system</string>
+    <string name="renderer_became_unresponsive">The game renderer became unresponsive</string>
     <string name="key_tab">Tab</string>
     <string name="key_caps">Caps</string>
     <string name="key_enter">Enter</string>
@@ -200,4 +208,14 @@
     <string name="action_tab">Tab</string>
     <string name="action_debug">Debug</string>
     <string name="action_pointer">Pointer</string>
+    <string name="controller_drag_hint">Drag the selected button on the game, or use the position sliders below</string>
+    <string name="controller_editor_more_actions">More editor actions</string>
+    <string name="controller_action_value">Action: %1$s</string>
+    <string name="controller_keyboard_key_value">Keyboard key: %1$s</string>
+    <string name="controller_choose_action">Choose action</string>
+    <string name="controller_delete_title">Delete this button?</string>
+    <string name="controller_delete_message">This removes the selected button from the current layout</string>
+    <string name="controller_delete_confirm">Delete</string>
+    <string name="controller_position_x">Horizontal position</string>
+    <string name="controller_position_y">Vertical position</string>
 </resources>

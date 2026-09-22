@@ -17,8 +17,8 @@ internal data class ControllerLayouts(
         ControllerMode.KEYBOARD -> copy(keyboard = profile)
     }
 
-    fun resetActive(): ControllerLayouts = when (mode) {
-        ControllerMode.GAMEPAD -> copy(gamepad = DefaultGamepadProfile)
-        ControllerMode.KEYBOARD -> copy(keyboard = DefaultKeyboardProfile)
+    fun resetActive(defaults: ControllerLayouts = ControllerLayouts()): ControllerLayouts = when (mode) {
+        ControllerMode.GAMEPAD -> copy(gamepad = defaults.gamepad)
+        ControllerMode.KEYBOARD -> copy(keyboard = defaults.keyboard)
     }
 }

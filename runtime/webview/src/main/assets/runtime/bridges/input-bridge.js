@@ -19,7 +19,8 @@
     keys: new Map(),
     pointers: new Map(),
     pointerTargets: new Map(),
-    current: { v: 1, actions: [], keys: [], pointers: [] }
+    current: { v: 1, actions: [], keys: [], pointers: [] },
+    nameConfirmLatch: false
   };
   // Host overlay pointers are normalized 0..1 fractions of the fullscreen overlay /
   // WebView viewport. Expand to CSS client space, then through GameCanvas's client
@@ -74,6 +75,26 @@
             nextKeys.set(defaultKey.a, defaultKey);
           }
         }
+      }
+    }
+    const wantsOk = wanted.ok || Array.from(nextKeys.values()).some(key => key && (key.d === 13 || key.k === "Enter"));
+    if (!wantsOk) state.nameConfirmLatch = false;
+    else if (!state.nameConfirmLatch) {
+      state.nameConfirmLatch = true;
+      const scene = globalThis.SceneManager && SceneManager._scene;
+      const sceneName = scene && scene.constructor && scene.constructor.name;
+      const field = globalThis.document && (document.activeElement || document.getElementById("textBox"));
+      const fieldIsInput = !!(field && (field.tagName === "INPUT" || field.tagName === "TEXTAREA" || field.id === "textBox"));
+      const nameScene = sceneName === "Scene_KorName" || sceneName === "Scene_Name";
+      if (nameScene || fieldIsInput) {
+        if (field && typeof field.blur === "function") {
+          try { field.blur(); } catch (_) {}
+        }
+        if (nameScene && scene && typeof scene.commandInput === "function") {
+          scene.commandInput();
+        }
+        nextKeys.clear();
+        for (const name in wanted) delete wanted[name];
       }
     }
     const shiftKey = Array.from(nextKeys.values()).some(key => key && key.d === 16);

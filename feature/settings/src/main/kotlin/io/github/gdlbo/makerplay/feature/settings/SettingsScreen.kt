@@ -23,6 +23,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.SportsEsports
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
@@ -33,6 +36,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -68,8 +72,12 @@ fun SettingsScreen(
     onDefaultInstallDirectChange: (Boolean) -> Unit,
     runtimeSettings: RuntimeSettings,
     onRuntimeSettingsChange: (RuntimeSettings) -> Unit,
+    hasCustomDefaultControllerLayout: Boolean = false,
+    onEditDefaultControllerLayout: () -> Unit = {},
+    onResetDefaultControllerLayout: () -> Unit = {},
     onBack: () -> Unit,
 ) {
+    var confirmResetDefaultController by remember { mutableStateOf(false) }
     BackHandler(onBack = onBack)
 
     Scaffold(
@@ -179,9 +187,88 @@ fun SettingsScreen(
                     )
                 }
 
+                SettingsSection(stringResource(R.string.default_controller_section))
+                Text(
+                    stringResource(R.string.default_controller_description),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SettingsCard {
+                    ListItem(
+                        colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onEditDefaultControllerLayout),
+                        leadingContent = {
+                            Icon(Icons.Default.SportsEsports, contentDescription = null)
+                        },
+                        headlineContent = {
+                            Text(stringResource(R.string.default_controller_layout))
+                        },
+                        supportingContent = {
+                            Text(
+                                stringResource(
+                                    if (hasCustomDefaultControllerLayout) {
+                                        R.string.default_controller_layout_custom
+                                    } else {
+                                        R.string.default_controller_layout_builtin
+                                    },
+                                ),
+                            )
+                        },
+                        trailingContent = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (hasCustomDefaultControllerLayout) {
+                                    IconButton(
+                                        onClick = { confirmResetDefaultController = true },
+                                    ) {
+                                        Icon(
+                                            Icons.Default.RestartAlt,
+                                            contentDescription = stringResource(
+                                                R.string.reset_default_controller_layout,
+                                            ),
+                                        )
+                                    }
+                                }
+                                SettingsChevron()
+                            }
+                        },
+                    )
+                }
+
+                SettingsSection(stringResource(R.string.default_game_settings_section))
+                Text(
+                    stringResource(R.string.default_game_settings_description),
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 RuntimeSettingsOptions(runtimeSettings, onRuntimeSettingsChange)
             }
         }
+    }
+    if (confirmResetDefaultController) {
+        AlertDialog(
+            onDismissRequest = { confirmResetDefaultController = false },
+            title = { Text(stringResource(R.string.reset_default_controller_title)) },
+            text = { Text(stringResource(R.string.reset_default_controller_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirmResetDefaultController = false
+                        onResetDefaultControllerLayout()
+                    },
+                ) {
+                    Text(stringResource(R.string.reset_default_controller_layout))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmResetDefaultController = false }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            },
+        )
     }
 }
 
@@ -193,8 +280,12 @@ fun GameSettingsScreen(
     useCommonSettings: Boolean,
     commonSettings: RuntimeSettings,
     customSettings: RuntimeSettings,
+    gameFolderPath: String? = null,
     onUseCommonSettingsChange: (Boolean) -> Unit,
     onCustomSettingsChange: (RuntimeSettings) -> Unit,
+    onSaveAsAppDefault: (RuntimeSettings) -> Unit = {},
+    onShowInFileManager: () -> Unit = {},
+    onOpenInExternalFileManager: () -> Unit = {},
     onBack: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
@@ -229,6 +320,35 @@ fun GameSettingsScreen(
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (!gameFolderPath.isNullOrBlank()) {
+                    SettingsCard {
+                        ListItem(
+                            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
+                            headlineContent = { Text(stringResource(R.string.game_folder)) },
+                            supportingContent = {
+                                Text(
+                                    gameFolderPath,
+                                    maxLines = 3,
+                                    overflow = TextOverflow.MiddleEllipsis,
+                                )
+                            },
+                        )
+                        TextButton(onClick = onShowInFileManager, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Default.FolderOpen, contentDescription = null)
+                            Text(
+                                stringResource(R.string.show_in_file_manager),
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                        TextButton(onClick = onOpenInExternalFileManager, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
+                            Text(
+                                stringResource(R.string.open_in_file_manager),
+                                modifier = Modifier.padding(start = 8.dp),
+                            )
+                        }
+                    }
+                }
                 SettingsCard {
                     ToggleSetting(
                         title = stringResource(R.string.use_common_settings),
@@ -238,6 +358,12 @@ fun GameSettingsScreen(
                     )
                 }
                 if (!useCommonSettings) {
+                    TextButton(
+                        onClick = { onSaveAsAppDefault(customSettings) },
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.save_as_app_default))
+                    }
                     RuntimeSettingsOptions(customSettings, onCustomSettingsChange, isWolfGame = isWolfGame)
                 } else {
                     Text(

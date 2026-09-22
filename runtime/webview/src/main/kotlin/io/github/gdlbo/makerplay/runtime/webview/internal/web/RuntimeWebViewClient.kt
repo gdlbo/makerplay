@@ -3,6 +3,7 @@ package io.github.gdlbo.makerplay.runtime.webview.internal.web
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.net.Uri
+import android.util.Log
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
@@ -10,6 +11,8 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.webkit.WebViewAssetLoader
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import io.github.gdlbo.makerplay.runtime.webview.GameOriginResponder
 import io.github.gdlbo.makerplay.runtime.webview.internal.assets.RuntimeNetworkFallback
 import io.github.gdlbo.makerplay.runtime.webview.internal.assets.RuntimeScripts
@@ -28,13 +31,42 @@ internal class RuntimeWebViewClient(
     private val onRendererGone: (WebView, Boolean) -> Unit,
 ) : WebViewClient() {
     private val startOrigin = Uri.parse(startUrl)
+    private var loadGeneration = 0L
+
+    private var notifiedReady = false
+
+    private fun notifyPageReady(view: WebView, source: String) {
+        if (notifiedReady) return
+        notifiedReady = true
+        Log.i(TAG, "runtime.page_ready source=$source url=${view.url}")
+        onPageReady(view)
+    }
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+        val generation = ++loadGeneration
+        notifiedReady = false
+        Log.i(TAG, "runtime.page_started url=$url")
         onPageStarted()
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.VISUAL_STATE_CALLBACK)) {
+            WebViewCompat.postVisualStateCallback(
+                view,
+                generation,
+                object : WebViewCompat.VisualStateCallback {
+                    override fun onComplete(requestId: Long) {
+                        if (requestId != loadGeneration) return
+                        if (!Uri.parse(view.url ?: url).sameOrigin(startOrigin)) return
+                        notifyPageReady(view, "visual_state")
+                    }
+                },
+            )
+        }
     }
 
     override fun onPageFinished(view: WebView, url: String) {
-        if (!Uri.parse(url).sameOrigin(startOrigin)) return
+        if (!Uri.parse(url).sameOrigin(startOrigin)) {
+            Log.i(TAG, "runtime.page_finished skipped origin url=$url start=$startOrigin")
+            return
+        }
         if (runtimeScripts.layout.isNotEmpty()) {
             view.evaluateJavascript(runtimeScripts.layout, null)
         }
@@ -44,7 +76,7 @@ internal class RuntimeWebViewClient(
         if (runtimeScripts.legacyCompatibility.isNotEmpty()) {
             view.evaluateJavascript(runtimeScripts.legacyCompatibility, null)
         }
-        onPageReady(view)
+        notifyPageReady(view, "page_finished")
     }
 
     override fun shouldOverrideUrlLoading(
@@ -75,7 +107,7 @@ internal class RuntimeWebViewClient(
             }
             WebResourceResponse(
                 response.mimeType,
-                null,
+                charsetFor(response.mimeType),
                 response.statusCode,
                 response.reasonPhrase,
                 response.headers,
@@ -151,5 +183,24 @@ internal class RuntimeWebViewClient(
     override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
         onRendererGone(view, detail.didCrash())
         return true
+    }
+
+    private companion object {
+        const val TAG = "MakerPlay"
+
+        fun charsetFor(mimeType: String): String? {
+            val mime = mimeType.substringBefore(';').trim().lowercase()
+            return if (
+                mime.startsWith("text/") ||
+                    mime == "application/json" ||
+                    mime == "application/javascript" ||
+                    mime == "application/xml" ||
+                    mime == "application/xhtml+xml"
+            ) {
+                "UTF-8"
+            } else {
+                null
+            }
+        }
     }
 }

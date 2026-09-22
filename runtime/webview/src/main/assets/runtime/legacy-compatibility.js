@@ -1,5 +1,79 @@
 (() => {
   "use strict";
+  const eventScriptNames = [
+    "set_text_sound_name", "set_text_sound_volume", "set_text_sound_pitch",
+    "set_text_sound_interval", "set_text_sound_pan",
+  ];
+  const installEventScriptStubs = () => {
+    eventScriptNames.forEach(name => {
+      if (typeof globalThis[name] !== "function") {
+        globalThis[name] = function () {};
+      }
+      const Interpreter = globalThis.Game_Interpreter;
+      if (Interpreter && Interpreter.prototype && typeof Interpreter.prototype[name] !== "function") {
+        Interpreter.prototype[name] = function () {
+          return globalThis[name].apply(this, arguments);
+        };
+      }
+    });
+  };
+  const tryLoadUnlistedPlugin = name => {
+    const manager = globalThis.PluginManager;
+    if (!manager || typeof manager.loadScript !== "function") return;
+    const scripts = manager._scripts || (manager._scripts = []);
+    if (scripts.indexOf(name) >= 0) return;
+    const root = globalThis.document && (document.body || document.head);
+    if (!root || typeof document.createElement !== "function") return;
+    const script = document.createElement("script");
+    script.src = (manager._path || "js/plugins/") + name + ".js";
+    script.async = false;
+    script.onerror = () => { if (script.parentNode) script.parentNode.removeChild(script); };
+    root.appendChild(script);
+    scripts.push(name);
+  };
+  const bindKeyboardRequest = () => {
+    const TouchInput = globalThis.TouchInput;
+    if (!TouchInput || (TouchInput.requestKeyboard && TouchInput.requestKeyboard.__makerplay)) return;
+    TouchInput.requestKeyboard = function (variableId, title, defaultValue) {
+      const bridge = globalThis.makerplayKeyboard;
+      if (bridge && typeof bridge.request === "function") {
+        bridge.request(
+          String(title || "Input:"),
+          defaultValue == null ? "" : String(defaultValue),
+          String(variableId || 0),
+        );
+      }
+      return "";
+    };
+    TouchInput.requestKeyboard.__makerplay = true;
+  };
+  const afterPlugins = () => {
+    tryLoadUnlistedPlugin("MessageTextSound");
+    installEventScriptStubs();
+    bindKeyboardRequest();
+    if (globalThis.Utils) Utils.isDesignMode = function() { return false; };
+  };
+  const hookPluginManager = () => {
+    const manager = globalThis.PluginManager;
+    if (!manager || typeof manager.setup !== "function") return false;
+    if (manager.setup.__makerplayEventStubs) return true;
+    const originalSetup = manager.setup;
+    manager.setup = function(plugins) {
+      const value = originalSetup.apply(this, arguments);
+      afterPlugins();
+      return value;
+    };
+    manager.setup.__makerplayEventStubs = true;
+    return true;
+  };
+  installEventScriptStubs();
+  if (!hookPluginManager() && globalThis.document && document.addEventListener) {
+    document.addEventListener("DOMContentLoaded", () => {
+      hookPluginManager();
+      afterPlugins();
+    });
+  }
+  afterPlugins();
   if (globalThis.__makerplayLegacyCompatibilityInstalled) return;
   globalThis.__makerplayLegacyCompatibilityInstalled = true;
 
@@ -60,21 +134,14 @@
     };
   }
 
-  // Provide TouchInput.requestKeyboard support for plugins requesting text input
-  if (!globalThis.TouchInput) globalThis.TouchInput = {};
-  if (typeof globalThis.TouchInput.requestKeyboard !== "function") {
-    globalThis.TouchInput.requestKeyboard = function (variableId, title, defaultValue) {
-      const promptTitle = typeof title === "string" ? title : "Input:";
-      const initialValue = typeof defaultValue === "string" ? defaultValue : "";
-      const result = globalThis.prompt(promptTitle, initialValue);
-      if (result !== null && result !== undefined) {
-        if (variableId && globalThis.$gameVariables && typeof globalThis.$gameVariables.setValue === "function") {
-          globalThis.$gameVariables.setValue(variableId, result);
-        }
-      }
-      return result;
-    };
-  }
+  bindKeyboardRequest();
+  const keyboardPoll = setInterval(() => {
+    bindKeyboardRequest();
+    if (globalThis.TouchInput && TouchInput.requestKeyboard && TouchInput.requestKeyboard.__makerplay) {
+      clearInterval(keyboardPoll);
+    }
+  }, 50);
+  setTimeout(() => clearInterval(keyboardPoll), 10000);
 
   // Ensure game canvas element has id="gameCanvas" for DOM form positioning plugins
   const ensureCanvasId = () => {
@@ -93,11 +160,26 @@
     document.addEventListener("click", event => {
       const target = event.target;
       if (target && target.id === "_111_input") {
-        const current = target.value || "";
-        const result = globalThis.prompt("Input:", current);
-        if (result !== null && result !== undefined) {
-          target.value = result;
+        const bridge = globalThis.makerplayKeyboard;
+        if (bridge && typeof bridge.request === "function") {
+          bridge.request("Input:", String(target.value || ""), "0");
         }
+      }
+    }, true);
+    document.addEventListener("focusin", event => {
+      const target = event.target;
+      if (!target || (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA")) return;
+      if (target.id === "textBox" || target.id === "_111_input") return;
+      if (target.dataset && target.dataset.makerplayNative === "1") return;
+      event.preventDefault();
+      try { target.blur(); } catch (_) {}
+      const bridge = globalThis.makerplayKeyboard;
+      if (bridge && typeof bridge.request === "function") {
+        bridge.request(
+          String(target.placeholder || target.name || "Input:"),
+          String(target.value || ""),
+          "0",
+        );
       }
     }, true);
   }

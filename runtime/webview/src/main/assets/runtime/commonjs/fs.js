@@ -69,6 +69,30 @@
   Stats.prototype.isFIFO = function() { return false; };
   Stats.prototype.isSocket = function() { return false; };
 
+  // Keep descriptor reads within the caller's buffer and bridge payload bounds.
+  function readWindow(buffer, offset, length) {
+    if (!buffer || typeof buffer.set !== "function" || typeof buffer.length !== "number") {
+      throw new TypeError("buffer must be a Buffer or Uint8Array");
+    }
+    offset = Number(offset);
+    length = Number(length);
+    if (!Number.isSafeInteger(offset) || offset < 0 || offset > buffer.length) {
+      throw new RangeError("offset is outside the buffer");
+    }
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw new RangeError("length must be a non-negative integer");
+    }
+    return { offset: offset, length: Math.min(length, buffer.length - offset) };
+  }
+
+  function readPosition(position) {
+    position = Number(position);
+    if (!Number.isSafeInteger(position) || position < 0) {
+      throw new RangeError("position must be a non-negative integer");
+    }
+    return position;
+  }
+
   // Sync core of the module; the callback and promise APIs wrap the same bridge ops.
   var fsModule = {
     existsSync: function(path) { try { return !!transact("exists", pathModule.resolve(path)); } catch (_) { return false; } },
@@ -143,13 +167,13 @@
       var descriptor = fileDescriptors[fd];
       if (!descriptor) throw new Error("EBADF");
       if (descriptor.flags.charAt(0) === "w" && descriptor.flags.indexOf("+") === -1) throw new Error("EBADF");
-      var source = fsModule.readFileSync(descriptor.path);
-      offset = Number(offset) || 0;
-      length = Math.min(Number(length) || 0, buffer.length - offset);
-      var sourcePosition = position == null ? descriptor.position : Number(position);
-      var chunk = source.subarray(sourcePosition, sourcePosition + length);
-      if (!buffer || typeof buffer.set !== "function") throw new TypeError("buffer must be a Buffer or Uint8Array");
-      buffer.set(chunk, offset);
+      var window = readWindow(buffer, offset, length);
+      var sourcePosition = position == null ? descriptor.position : readPosition(position);
+      var chunk = Buffer.from(transact("readRange", descriptor.path, undefined, undefined, {
+        position: sourcePosition,
+        size: window.length,
+      }), "base64");
+      buffer.set(chunk, window.offset);
       if (position == null) descriptor.position += chunk.length;
       return chunk.length;
     },
@@ -325,13 +349,11 @@
     if (typeof offset === "function") { offset = 0; length = buffer.length; position = null; }
     else if (typeof length === "function") { length = buffer.length - (Number(offset) || 0); position = null; }
     else if (typeof position === "function") position = null;
-    offset = Number(offset) || 0;
-    length = Math.min(Number(length) || 0, buffer.length - offset);
-    var sourcePosition = position == null ? descriptor.position : Number(position);
-    asyncTransact("readRange", descriptor.path, undefined, undefined, { position: sourcePosition, size: length }).then(function(value) {
+    var window = readWindow(buffer, offset, length);
+    var sourcePosition = position == null ? descriptor.position : readPosition(position);
+    asyncTransact("readRange", descriptor.path, undefined, undefined, { position: sourcePosition, size: window.length }).then(function(value) {
       var chunk = Buffer.from(value, "base64");
-      if (!buffer || typeof buffer.set !== "function") throw new TypeError("buffer must be a Buffer or Uint8Array");
-      buffer.set(chunk, offset);
+      buffer.set(chunk, window.offset);
       if (position == null) descriptor.position += chunk.length;
       callback(null, chunk.length, buffer);
     }, callback);

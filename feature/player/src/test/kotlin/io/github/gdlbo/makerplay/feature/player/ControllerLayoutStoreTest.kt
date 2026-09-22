@@ -9,16 +9,46 @@ import io.github.gdlbo.makerplay.feature.player.controller.model.DefaultKeyboard
 import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousDefaultGamepadProfile
 import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousDefaultKeyboardProfile
 import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousLargeGamepadProfile
+import io.github.gdlbo.makerplay.feature.player.controller.model.PreviousCompactGamepadProfile
 import io.github.gdlbo.makerplay.input.GameAction
 import io.github.gdlbo.makerplay.input.VirtualControlType
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ControllerLayoutStoreTest {
+    @Test
+    fun `upgrades untouched compact controls and preserves customized controls`() {
+        val directory = Files.createTempDirectory("makerplay-compact-migration-").toFile()
+        try {
+            val file = File(directory, "gamepad.json")
+            val store = ControllerLayoutStore(file)
+            fun writePrevious(profile: io.github.gdlbo.makerplay.input.VirtualControllerProfile) {
+                file.writeText(ControllerLayoutJsonCodec.encode(ControllerLayouts(gamepad = profile))
+                    .toString().replace("\"version\":8", "\"version\":7"))
+            }
+            writePrevious(PreviousCompactGamepadProfile)
+            assertEquals(DefaultGamepadProfile, store.load().gamepad)
+            val customized = PreviousCompactGamepadProfile.copy(
+                controls = PreviousCompactGamepadProfile.controls.mapIndexed { index, control ->
+                    if (index == 0) control.copy(x = control.x + .01f) else control
+                },
+            )
+            writePrevious(customized)
+            val restored = store.load().gamepad
+            assertEquals(customized.controls.map { it.id }, restored.controls.map { it.id })
+            assertEquals(customized.controls.first().x, restored.controls.first().x, .0001f)
+            store.save(store.load())
+            assertEquals(restored, store.load().gamepad)
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
     @Test
     fun `upgrades the previous keyboard only when it was not customized`() {
         val directory = Files.createTempDirectory("makerplay-keyboard-migration-").toFile()
@@ -27,7 +57,7 @@ class ControllerLayoutStoreTest {
             val store = ControllerLayoutStore(file)
             val previousLayouts = ControllerLayouts(keyboard = PreviousDefaultKeyboardProfile)
             val previousJson = ControllerLayoutJsonCodec.encode(previousLayouts).toString()
-                .replace("\"version\":7", "\"version\":4")
+                .replace("\"version\":8", "\"version\":4")
             file.writeText(previousJson)
 
             val upgraded = store.load()
@@ -40,7 +70,7 @@ class ControllerLayoutStoreTest {
                 },
             )
             val customizedJson = ControllerLayoutJsonCodec.encode(previousLayouts.copy(keyboard = customized)).toString()
-                .replace("\"version\":7", "\"version\":4")
+                .replace("\"version\":8", "\"version\":4")
             file.writeText(customizedJson)
 
             val restoredCustomized = store.load().keyboard
@@ -64,7 +94,7 @@ class ControllerLayoutStoreTest {
             val loaded = ControllerLayoutStore(file).load()
 
             assertEquals(DefaultGamepadProfile.controls.map { it.id }, loaded.gamepad.controls.map { it.id })
-            assertEquals(setOf(66, 111, 54, 30), loaded.gamepad.controls.mapNotNull { it.keyCode }.toSet())
+            assertEquals(setOf(66, 111, 59, 82), loaded.gamepad.controls.mapNotNull { it.keyCode }.toSet())
         } finally {
             directory.deleteRecursively()
         }
@@ -109,7 +139,7 @@ class ControllerLayoutStoreTest {
             val store = ControllerLayoutStore(file)
             val previousJson = ControllerLayoutJsonCodec.encode(
                 ControllerLayouts(gamepad = PreviousLargeGamepadProfile),
-            ).toString().replace("\"version\":7", "\"version\":6")
+            ).toString().replace("\"version\":8", "\"version\":6")
             file.writeText(previousJson)
 
             assertEquals(DefaultGamepadProfile, store.load().gamepad)
@@ -122,7 +152,7 @@ class ControllerLayoutStoreTest {
             file.writeText(
                 ControllerLayoutJsonCodec.encode(ControllerLayouts(gamepad = customized))
                     .toString()
-                    .replace("\"version\":7", "\"version\":6"),
+                    .replace("\"version\":8", "\"version\":6"),
             )
 
             val restored = store.load().gamepad
@@ -141,7 +171,7 @@ class ControllerLayoutStoreTest {
             val store = ControllerLayoutStore(file)
             val previousJson = ControllerLayoutJsonCodec.encode(
                 ControllerLayouts(gamepad = PreviousDefaultGamepadProfile),
-            ).toString().replace("\"version\":7", "\"version\":5")
+            ).toString().replace("\"version\":8", "\"version\":5")
             file.writeText(previousJson)
 
             val upgraded = store.load()
@@ -154,7 +184,7 @@ class ControllerLayoutStoreTest {
             )
             val customizedJson = ControllerLayoutJsonCodec.encode(
                 ControllerLayouts(gamepad = customized),
-            ).toString().replace("\"version\":7", "\"version\":5")
+            ).toString().replace("\"version\":8", "\"version\":5")
             file.writeText(customizedJson)
 
             val restored = store.load().gamepad
@@ -182,6 +212,50 @@ class ControllerLayoutStoreTest {
 
             assertTrue(customized.gamepad.controls.none { it.type == VirtualControlType.D_PAD })
             assertTrue(customized.gamepad.controls.any { it.id == "up" })
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `missing file returns supplied defaults`() {
+        val directory = Files.createTempDirectory("makerplay-layout-defaults-").toFile()
+        try {
+            val store = ControllerLayoutStore(File(directory, "missing.json"))
+            val defaults = ControllerLayouts(
+                mode = ControllerMode.KEYBOARD,
+                gamepad = DefaultGamepadProfile.copy(
+                    controls = DefaultGamepadProfile.controls.map {
+                        if (it.id == "enter") it.copy(x = it.x + .02f) else it
+                    },
+                ),
+            )
+            assertEquals(defaults, store.load(defaults))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `saveOrClear deletes the file when layouts match the clear value`() {
+        val directory = Files.createTempDirectory("makerplay-layout-clear-").toFile()
+        try {
+            val file = File(directory, "gamepad.json")
+            val store = ControllerLayoutStore(file)
+            val custom = ControllerLayouts(
+                gamepad = DefaultGamepadProfile.copy(
+                    controls = DefaultGamepadProfile.controls.map {
+                        if (it.id == "enter") it.copy(x = it.x + .03f) else it
+                    },
+                ),
+            )
+            store.save(custom)
+            assertTrue(file.isFile)
+            store.saveOrClear(ControllerLayouts())
+            assertFalse(file.isFile)
+            store.save(custom)
+            store.saveOrClear(custom, clearWhen = custom)
+            assertFalse(file.isFile)
         } finally {
             directory.deleteRecursively()
         }

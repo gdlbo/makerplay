@@ -40,4 +40,23 @@ class ControllerLayoutsTest {
         assertEquals(DefaultKeyboardProfile, resetKeyboard.keyboard)
         assertNotEquals(DefaultGamepadProfile, resetKeyboard.gamepad)
     }
+
+    @Test
+    fun `reset restores the supplied default for the active layout`() {
+        val customDefault = DefaultGamepadProfile.copy(
+            controls = DefaultGamepadProfile.controls.map {
+                if (it.id == "enter") it.copy(x = it.x + .05f) else it
+            },
+        )
+        val layouts = ControllerLayouts(
+            gamepad = DefaultGamepadProfile.copy(
+                controls = DefaultGamepadProfile.controls.dropLast(1),
+            ),
+        )
+
+        val reset = layouts.resetActive(ControllerLayouts(gamepad = customDefault))
+
+        assertEquals(customDefault, reset.gamepad)
+        assertEquals(DefaultKeyboardProfile, reset.keyboard)
+    }
 }

@@ -2,6 +2,9 @@
     <string name="navigate_back">Назад</string>
     <string name="choose_game_folder">Выбрать папку с игрой</string>
     <string name="choose_default_folder">Выбрать папку по умолчанию</string>
+    <string name="browse_game_folder">Папка игры</string>
+    <string name="open_in_file_manager">Открыть в файлах</string>
+    <string name="game_already_imported">%1$s уже есть в библиотеке</string>
     <string name="use_this_folder">Использовать эту папку</string>
     <string name="directory_read_error">Не удалось прочитать эту папку</string>
     <string name="storage_locations">РАСПОЛОЖЕНИЯ ХРАНИЛИЩА</string>

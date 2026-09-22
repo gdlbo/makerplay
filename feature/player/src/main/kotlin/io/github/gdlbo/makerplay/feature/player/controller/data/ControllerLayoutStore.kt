@@ -20,6 +20,14 @@ internal class ControllerLayoutStore(private val file: File) {
         }.getOrDefault(defaults)
     }
 
+    fun saveOrClear(layouts: ControllerLayouts, clearWhen: ControllerLayouts = ControllerLayouts()) {
+        if (layouts == clearWhen) {
+            if (file.isFile) file.delete()
+            return
+        }
+        save(layouts)
+    }
+
     fun save(layouts: ControllerLayouts) {
         ControllerLayoutJsonCodec.validate(layouts)
         file.parentFile?.mkdirs()

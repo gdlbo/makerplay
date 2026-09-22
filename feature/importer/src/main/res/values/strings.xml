@@ -3,6 +3,9 @@
     <string name="navigate_back">Back</string>
     <string name="choose_game_folder">Choose game folder</string>
     <string name="choose_default_folder">Choose default folder</string>
+    <string name="browse_game_folder">Game folder</string>
+    <string name="open_in_file_manager">Open in Files</string>
+    <string name="game_already_imported">%1$s is already in your library</string>
     <string name="use_this_folder">Use this folder</string>
     <string name="directory_read_error">This directory cannot be read</string>
     <string name="storage_locations">STORAGE LOCATIONS</string>

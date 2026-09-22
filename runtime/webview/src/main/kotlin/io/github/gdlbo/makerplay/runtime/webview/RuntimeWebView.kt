@@ -34,6 +34,7 @@ import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.runtime.webview.internal.assets.RuntimeScriptAssets
 import io.github.gdlbo.makerplay.runtime.webview.internal.bridge.RuntimeCheatBridge
 import io.github.gdlbo.makerplay.runtime.webview.internal.bridge.RuntimeDiagnosticsBridge
+import io.github.gdlbo.makerplay.runtime.webview.internal.bridge.RuntimeKeyboardBridge
 import io.github.gdlbo.makerplay.runtime.webview.internal.bridge.WebGlContextEvent
 import io.github.gdlbo.makerplay.runtime.webview.internal.input.EMPTY_INPUT
 import io.github.gdlbo.makerplay.runtime.webview.internal.input.RuntimeInputFrameBridge
@@ -95,9 +96,13 @@ fun RuntimeWebView(
     DisposableEffect(lifecycleOwner, startUrl, profileSettings) {
         onDispose {
             lifecycleObservers.values.toList().forEach(lifecycleOwner.lifecycle::removeObserver)
-            lifecycleControllers.values.toList().forEach(RuntimeWebViewLifecycle::onRelease)
+            lifecycleControllers.values.toList().forEach { controller ->
+                runTeardownStage("lifecycle") { controller.onRelease() }
+            }
             lifecycleObservers.clear()
             lifecycleControllers.clear()
+            inputMixers.clear()
+            cheatSessions.clear()
         }
     }
     key(startUrl, profileSettings, runtimeProfile) {
@@ -160,6 +165,12 @@ fun RuntimeWebView(
                                         "runtime.renderer_unresponsive",
                                         mapOf("rendererAvailable" to (renderer != null).toString()),
                                     )
+                                    val terminated = renderer?.terminate() == true
+                                    if (!terminated) {
+                                        runCatching {
+                                            WebViewCompat.getWebViewRenderProcess(view)?.terminate()
+                                        }
+                                    }
                                 }
 
                                 override fun onRenderProcessResponsive(
@@ -246,6 +257,7 @@ fun RuntimeWebView(
                             )
                         }
                     }
+                    RuntimeKeyboardBridge.install(this)
                     val inputBridge = RuntimeInputFrameBridge.install(
                         this,
                         allowedOrigin,
@@ -303,25 +315,39 @@ fun RuntimeWebView(
                             if (profileSettings.pauseOnBackground) onResume()
                         },
                         release = {
-                            clearPhysicalInput()
-                            inputBridge?.close()
-                            inputMixers.remove(this)
-                            audioFocus.abandon()
-                            stopLoading()
-                            RuntimeDiagnosticsBridge.uninstall(this)
-                            RuntimeCheatBridge.uninstall(this)
-                            commonJsAttachment?.let { RuntimeCommonJsBridge.uninstall(this, it) }
-                            saveBridgeAttachment?.let { RuntimeSaveBridge.uninstall(this, it) }
-                            settings.javaScriptEnabled = false
-                            clearHistory()
-                            clearCache(true)
-                            loadUrl("about:blank")
-                            onPause()
-                            (parent as? android.view.ViewGroup)?.removeView(this)
-                            removeAllViews()
-                            webViewClient = WebViewClient()
-                            webChromeClient = WebChromeClient()
-                            destroy()
+                            // Teardown must finish on every close, including repeated closes and
+                            // after a renderer crash: each stage is isolated so one failure can
+                            // never skip the remaining cleanup, and destroy() is always reached.
+                            runTeardownStage("input") {
+                                clearPhysicalInput()
+                                setOnPhysicalInputChanged {}
+                                inputBridge?.close()
+                                inputMixers.remove(this)
+                                audioFocus.abandon()
+                                stopLoading()
+                            }
+                            runTeardownStage("bridges") {
+                                RuntimeKeyboardBridge.uninstall(this)
+                                RuntimeDiagnosticsBridge.uninstall(this)
+                                RuntimeCheatBridge.uninstall(this)
+                                commonJsAttachment?.let { RuntimeCommonJsBridge.uninstall(this, it) }
+                                saveBridgeAttachment?.let { RuntimeSaveBridge.uninstall(this, it) }
+                            }
+                            runTeardownStage("webview") {
+                                if (WebViewFeature.isFeatureSupported(WebViewFeature.WEB_VIEW_RENDERER_CLIENT_BASIC_USAGE)) {
+                                    WebViewCompat.setWebViewRenderProcessClient(this, null)
+                                }
+                                settings.javaScriptEnabled = false
+                                clearHistory()
+                                clearCache(true)
+                                loadUrl("about:blank")
+                                onPause()
+                                (parent as? android.view.ViewGroup)?.removeView(this)
+                                removeAllViews()
+                                webViewClient = WebViewClient()
+                                webChromeClient = WebChromeClient()
+                            }
+                            runTeardownStage("destroy") { destroy() }
                         },
                     )
                     // Game audio inside the WebView can steal audio focus from the host.
@@ -358,8 +384,12 @@ fun RuntimeWebView(
                         networkFallbacks = runtimeScripts.networkFallbacks,
                         onRuntimeError = onRuntimeError,
                         onPageStarted = {
+                            // Keep host gameReady sticky after the first paint.
+                            // Chromium can emit unpaired onPageStarted during MZ
+                            // script compile / title boot; clearing ready there
+                            // traps Compose under RuntimePreparing forever while
+                            // Scene_Title is already running underneath.
                             pageReady.value = false
-                            latestReadyChanged.value(false)
                             appliedCheatFlags.value = null
                         },
                         onPageReady = { view ->
@@ -394,7 +424,10 @@ fun RuntimeWebView(
                 }
             },
             update = { webView ->
-                webView.isEnabled = inputEnabled
+                // Keep the view enabled. WebView.isEnabled=false during IME/editor
+                // requests deadlocks Chromium's InputConnection ("editor request").
+                webView.isEnabled = true
+                if (!inputEnabled) webView.clearFocus()
                 inputMixers[webView]?.let {
                     it.setUiEnabled(inputEnabled)
                     it.setVirtual(latestVirtualInput.value)
@@ -421,7 +454,9 @@ fun RuntimeWebView(
             },
             onRelease = { webView ->
                 lifecycleObservers.remove(webView)?.let(lifecycleOwner.lifecycle::removeObserver)
-                lifecycleControllers.remove(webView)?.onRelease()
+                runTeardownStage("lifecycle") {
+                    lifecycleControllers.remove(webView)?.onRelease()
+                }
                 inputMixers.remove(webView)
                 cheatSessions.remove(webView)
             },
@@ -438,3 +473,19 @@ internal fun RuntimeSettings.configScript(disableVibrationScript: String): Strin
             "vibrationEnabled:${vibrationEnabled}" +
             "};\n" +
             if (vibrationEnabled) "" else disableVibrationScript
+
+/**
+ * Runs a single teardown stage. Failures are reported instead of propagated so the remaining
+ * stages (including WebView destruction and registry cleanup) always run.
+ */
+internal fun runTeardownStage(
+    step: String,
+    onFailure: (String, Throwable) -> Unit = ::reportTeardownFailure,
+    block: () -> Unit,
+) {
+    runCatching(block).onFailure { error -> onFailure(step, error) }
+}
+
+private fun reportTeardownFailure(step: String, error: Throwable) {
+    android.util.Log.w("MakerPlay", "runtime.webview.release_failed step=$step", error)
+}

@@ -24,7 +24,12 @@ class PrivateGameStore(private val gamesRoot: File) {
         return staging
     }
 
-    fun writeMetadata(staging: File, game: GameSummary, directSource: File? = null) {
+    fun writeMetadata(
+        staging: File,
+        game: GameSummary,
+        directSource: File? = null,
+        sourceLocation: String? = null,
+    ) {
         require(staging.parentFile?.canonicalFile == stagingRoot.canonicalFile) {
             "Staging directory is outside the private import root"
         }
@@ -37,6 +42,9 @@ class PrivateGameStore(private val gamesRoot: File) {
             setProperty("engineVersion", game.engineVersion.orEmpty())
             game.artworkRelativePath?.let { setProperty("artworkRelativePath", it) }
             directSource?.let { setProperty("directSourcePath", it.canonicalPath) }
+            val recordedSource = sourceLocation?.trim()?.ifBlank { null }
+                ?: directSource?.canonicalPath
+            recordedSource?.let { setProperty("sourceLocation", it) }
             setProperty("installedAtEpochMillis", game.installedAtEpochMillis.toString())
             setProperty("pluginCount", game.plugins.size.toString())
             game.plugins.forEachIndexed { index, plugin -> setProperty("plugin.$index", plugin) }
@@ -150,6 +158,30 @@ class PrivateGameStore(private val gamesRoot: File) {
         return readStoredGame(directory)?.directSourcePath != null
     }
 
+    fun addedFromLocation(gameId: String): String? {
+        val directory = findCatalogDirectory(gameId) ?: return null
+        val stored = readStoredGame(directory) ?: return null
+        return stored.sourceLocation ?: stored.directSourcePath ?: directory.canonicalPath
+    }
+
+    fun findGameBySource(vararg locations: String?): GameSummary? {
+        val wanted = locations.mapNotNull(::normalizeSourceLocation).toSet()
+        if (wanted.isEmpty()) return null
+        return gamesRoot.listFiles().orEmpty().asSequence()
+            .filter { it.isDirectory && it.name != STAGING_DIRECTORY }
+            .mapNotNull(::readStoredGame)
+            .firstOrNull { stored ->
+                val keys = listOfNotNull(stored.sourceLocation, stored.directSourcePath)
+                    .mapNotNull(::normalizeSourceLocation)
+                wanted.any { it in keys }
+            }?.summary
+    }
+
+    fun requireUniqueSource(vararg locations: String?) {
+        val existing = findGameBySource(*locations) ?: return
+        throw ImportFailure("This folder is already in your library as ${existing.title}.")
+    }
+
     fun controllerLayoutFile(gameId: String): File? =
         findCatalogDirectory(gameId)?.let { File(it, CONTROLLER_LAYOUT_FILE) }
 
@@ -174,6 +206,7 @@ class PrivateGameStore(private val gamesRoot: File) {
         require(properties.getProperty("formatVersion") in SUPPORTED_METADATA_VERSIONS)
         val pluginCount = properties.getProperty("pluginCount").toInt().coerceIn(0, MAX_PLUGINS)
         val directSourcePath = properties.getProperty("directSourcePath")?.ifBlank { null }
+        val sourceLocation = properties.getProperty("sourceLocation")?.ifBlank { null }
         StoredGame(
             summary = GameSummary(
                 id = properties.getProperty("id"),
@@ -188,6 +221,7 @@ class PrivateGameStore(private val gamesRoot: File) {
                 installedAtEpochMillis = properties.getProperty("installedAtEpochMillis").toLong(),
             ),
             directSourcePath = directSourcePath,
+            sourceLocation = sourceLocation,
         )
     }.getOrNull()
 
@@ -228,5 +262,12 @@ class PrivateGameStore(private val gamesRoot: File) {
     private data class StoredGame(
         val summary: GameSummary,
         val directSourcePath: String?,
+        val sourceLocation: String?,
     )
+}
+
+internal fun normalizeSourceLocation(raw: String?): String? {
+    val trimmed = raw?.trim()?.ifBlank { null } ?: return null
+    if (trimmed.startsWith("content:", ignoreCase = true)) return trimmed
+    return runCatching { File(trimmed).canonicalFile.path }.getOrDefault(trimmed)
 }
