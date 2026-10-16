@@ -7,6 +7,7 @@ import io.github.gdlbo.makerplay.feature.importer.GameImportWorker
 import io.github.gdlbo.makerplay.runtime.api.MemorySampleReason
 import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryWatchdog
 import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryWatchdogOptions
+import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.runtime.webview.WebViewRuntimeStartup
 
 class MakerPlayApplication : Application() {
@@ -49,6 +50,18 @@ class MakerPlayApplication : Application() {
             ),
         )
         memoryWatchdog.start()
+    }
+
+    /** Applies the open game's heap trim fraction without restarting the sampler. */
+    fun applyGameMemoryOptions(settings: RuntimeSettings) {
+        memoryWatchdog.updateOptions(
+            RuntimeMemoryWatchdogOptions(
+                enabled = true,
+                heapTrimFraction = settings.heapTrimFraction,
+                nativeTrimBytes = settings.nativeTrimBytes,
+                graphicsTrimBytes = settings.graphicsTrimBytes,
+            ),
+        )
     }
 
     override fun onTrimMemory(level: Int) {

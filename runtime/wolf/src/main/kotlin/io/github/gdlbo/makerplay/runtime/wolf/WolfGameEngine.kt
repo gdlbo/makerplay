@@ -94,6 +94,9 @@ class WolfGameEngine(
         var ageFrames: Int = 0,
     )
 
+    /** Picture and bitmap caches owned outside the engine; set by the runtime host. */
+    var onMapReplaced: () -> Unit = {}
+
     /** Applies a successful map transfer and discards triggers from the prior map. */
     fun replaceMap(nextMap: MapFile, tileX: Int, tileY: Int) {
         map = nextMap
@@ -111,6 +114,7 @@ class WolfGameEngine(
         slipThrough = false
         scrollLocked = false
         shakeRemaining = 0
+        onMapReplaced()
     }
 
     fun position(): Position {

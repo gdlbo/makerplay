@@ -16,6 +16,7 @@ import io.github.gdlbo.makerplay.wolfformat.GameDataSource
  */
 class WolfDatabase private constructor(
     private val banks: Array<Bank?>,
+    private val source: GameDataSource? = null,
 ) {
     enum class Kind { CHANGEABLE, SYSTEM, USER }
 
@@ -91,6 +92,39 @@ class WolfDatabase private constructor(
             e.strings[slot] = value
         }
 
+        fun clearValues() {
+            for (entry in entries) {
+                entry.numbers.fill(0)
+                for (index in entry.strings.indices) entry.strings[index] = ""
+            }
+        }
+
+        fun replaceFromRows(rows: List<List<String>>) {
+            entries.clear()
+            entryNames.clear()
+            entriesByName.clear()
+            for (row in rows) {
+                val name = row.firstOrNull().orEmpty()
+                val values = if (row.size > 1) row.drop(1) else row
+                val numbers = IntArray(numberPoolSize())
+                val strings = MutableList(stringPoolSize()) { "" }
+                var numberSlot = 0
+                var stringSlot = 0
+                for (field in fieldNames.indices) {
+                    val cell = values.getOrNull(field) ?: continue
+                    if (isStringField(field)) {
+                        if (stringSlot < strings.size) strings[stringSlot++] = cell
+                    } else if (isNumberField(field) && numberSlot < numbers.size) {
+                        numbers[numberSlot++] = cell.toIntOrNull() ?: 0
+                    }
+                }
+                val index = entries.size
+                entries.add(EntryState(numbers, strings))
+                entryNames.add(name)
+                if (name.isNotEmpty()) entriesByName[name] = index
+            }
+        }
+
         private fun ensureEntry(entry: Int) {
             while (entries.size <= entry) {
                 val sample = entries.firstOrNull()
@@ -115,6 +149,31 @@ class WolfDatabase private constructor(
 
     fun bank(kind: Kind): Bank? = banks[kind.ordinal]
 
+    /** Copies saved `CDataBase` numbers and strings onto the bank with the same type count. */
+    fun applySavedUserRows(rows: List<List<WolfOfficialSave.SavedDatabaseRow>>): Int {
+        val bank = banks.firstOrNull { it != null && it.types.size == rows.size }
+            ?: bank(Kind.CHANGEABLE)
+            ?: return 0
+        var applied = 0
+        for ((typeIndex, typeRows) in rows.withIndex()) {
+            val type = bank.typeAt(typeIndex) ?: continue
+            for ((entryIndex, row) in typeRows.withIndex()) {
+                val entry = type.entries.getOrNull(entryIndex) ?: continue
+                var wrote = false
+                if (entry.numbers.size == row.numbers.size) {
+                    row.numbers.copyInto(entry.numbers)
+                    wrote = true
+                }
+                if (entry.strings.size == row.strings.size) {
+                    row.strings.forEachIndexed { index, value -> entry.strings[index] = value }
+                    wrote = true
+                }
+                if (wrote) applied++
+            }
+        }
+        return applied
+    }
+
     fun execute(
         command: EventCommand,
         readNumber: (Int) -> Int,
@@ -123,10 +182,95 @@ class WolfDatabase private constructor(
         writeString: (Int, String) -> Unit,
     ) {
         when (command.commandType) {
-            250 -> executeAssign(command, readNumber, writeNumber, readString, writeString)
-            251, 252, 255 -> Unit // import / commit family: not required for the sample set yet
+            250, 252 -> executeAssign(command, readNumber, writeNumber, readString, writeString)
+            251 -> importCsv(command)
+            255 -> clearNamedType(command)
             else -> Unit
         }
+    }
+
+    /** Opcode 251. strings[0] is a CSV path and strings[1] is the user-database type. */
+    private fun importCsv(command: EventCommand) {
+        val file = command.strings.getOrNull(0)?.takeIf { it.isNotBlank() } ?: return
+        val typeName = command.strings.getOrNull(1).orEmpty()
+        val user = bank(Kind.USER) ?: bank(Kind.CHANGEABLE) ?: return
+        val typeIdx = if (typeName.isNotEmpty()) {
+            user.typeIndex(typeName)
+        } else {
+            command.params.getOrNull(0)?.takeIf { it >= 0 }
+        } ?: return
+        val type = user.typeAt(typeIdx) ?: return
+        val bytes = readImport(file) ?: return
+        val rows = bytes.toString(Charsets.UTF_8).removePrefix("\uFEFF")
+            .lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .map { splitCsv(it) }
+            .toList()
+        if (rows.isEmpty()) return
+        val header = rows.first()
+        val body = if (header.any { it == type.name || type.fieldIndex(it) != null }) rows.drop(1) else rows
+        type.replaceFromRows(body)
+    }
+
+    /** Opcode 255. Dragon Blood clears a named type (MiniMapA and friends) before rebuilding it. */
+    private fun clearNamedType(command: EventCommand) {
+        val typeName = command.strings.getOrNull(1)?.takeIf { it.isNotBlank() }
+            ?: command.strings.firstOrNull { it.isNotBlank() }
+            ?: return
+        val type = sequenceOf(Kind.USER, Kind.CHANGEABLE, Kind.SYSTEM).firstNotNullOfOrNull { kind ->
+            val found = bank(kind) ?: return@firstNotNullOfOrNull null
+            found.typeIndex(typeName)?.let { found.typeAt(it) }
+        } ?: return
+        type.clearValues()
+    }
+
+    private fun findNamedType(name: String): TypeState? {
+        if (name.isEmpty()) return null
+        for (kind in Kind.entries) {
+            val found = bank(kind) ?: continue
+            val index = found.typeIndex(name) ?: continue
+            return found.typeAt(index)
+        }
+        return null
+    }
+
+    private fun typeIndexOf(type: TypeState): Int {
+        for (kind in Kind.entries) {
+            val found = bank(kind) ?: continue
+            val index = found.typeIndex(type.name)
+            if (index != null && found.typeAt(index) === type) return index
+        }
+        return 0
+    }
+
+    private fun readImport(path: String): ByteArray? {
+        val reader = source ?: return null
+        val trimmed = path.removePrefix("/")
+        val candidates = listOf(trimmed, "Data/$trimmed", "Data/${trimmed.removePrefix("Data/")}")
+        for (candidate in candidates.distinct()) {
+            val bytes = runCatching { reader.read(candidate) }.getOrNull()
+            if (bytes != null) return bytes
+        }
+        return null
+    }
+
+    private fun splitCsv(line: String): List<String> {
+        val cells = mutableListOf<String>()
+        val current = StringBuilder()
+        var quoted = false
+        for (ch in line) {
+            when {
+                ch == '"' -> quoted = !quoted
+                ch == ',' && !quoted -> {
+                    cells += current.toString().trim()
+                    current.clear()
+                }
+                else -> current.append(ch)
+            }
+        }
+        cells += current.toString().trim()
+        return cells
     }
 
     private fun executeAssign(
@@ -146,18 +290,22 @@ class WolfDatabase private constructor(
         val nameFlags = (flags ushr 16) and 0x0F
         val operator = opByte and 0xF0
         val rhsKind = opByte and 0x0F
-        val mode = modeByte and 0xF0
+        val mode = when (modeByte and 0xF0) {
+            0x20 -> MODE_WRITE
+            else -> modeByte and 0xF0
+        }
         val dbKind = when (modeByte and 0x0F) {
             0 -> Kind.CHANGEABLE
             1 -> Kind.SYSTEM
-            2 -> Kind.USER
+            2, 3 -> Kind.USER
             else -> return // XY array not implemented yet
         }
-        val bank = bank(dbKind) ?: return
-
-        val typeIdx = resolveType(bank, p[0], s.getOrNull(1).orEmpty(), nameFlags)
-            ?: return
-        val type = bank.typeAt(typeIdx) ?: return
+        val bank = bank(dbKind)
+        val typeName = s.getOrNull(1).orEmpty()
+        val type = bank?.let { found ->
+            resolveType(found, p[0], typeName, nameFlags)?.let { found.typeAt(it) }
+        } ?: findNamedType(typeName) ?: return
+        val typeIdx = typeIndexOf(type)
 
         // Meta ops use sentinel field / entry markers.
         val entryRaw = p.getOrElse(1) { 0 }
@@ -225,9 +373,11 @@ class WolfDatabase private constructor(
         writeNumber: (Int, Int) -> Unit,
         writeString: (Int, String) -> Unit,
     ) {
+        if (mode == MODE_WRITE && (entryRaw == SENTINEL_CLEAR || fieldRaw == SENTINEL_CLEAR)) {
+            type.clearValues()
+            return
+        }
         if (mode != MODE_READ) {
-            // Full reset / clear variants land here for write mode; keep a
-            // conservative no-op until a sample requires mutation semantics.
             return
         }
         when {
@@ -320,6 +470,13 @@ class WolfDatabase private constructor(
     companion object {
         fun empty(): WolfDatabase = WolfDatabase(arrayOfNulls(Kind.entries.size))
 
+        internal fun forTest(type: TypeState, source: GameDataSource): WolfDatabase {
+            val bank = Bank(Kind.USER, listOf(type), mapOf(type.name to 0))
+            val banks = arrayOfNulls<Bank>(Kind.entries.size)
+            banks[Kind.USER.ordinal] = bank
+            return WolfDatabase(banks, source)
+        }
+
         private const val MODE_WRITE = 0x00
         private const val MODE_READ = 0x10
         private const val RHS_NUMBER = 0x00
@@ -369,7 +526,7 @@ class WolfDatabase private constructor(
                     "Data/BasicData/BasicData/SysDatabase.project",
                 ),
             )?.let { banks[Kind.SYSTEM.ordinal] = it }
-            return WolfDatabase(banks)
+            return WolfDatabase(banks, source)
         }
 
         private fun loadBank(

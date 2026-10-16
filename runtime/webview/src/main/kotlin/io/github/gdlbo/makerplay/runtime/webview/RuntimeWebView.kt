@@ -29,6 +29,7 @@ import io.github.gdlbo.makerplay.runtime.api.CheatCatalog
 import io.github.gdlbo.makerplay.runtime.api.CheatCommand
 import io.github.gdlbo.makerplay.runtime.api.CheatFlags
 import io.github.gdlbo.makerplay.runtime.api.CheatOperation
+import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
 import io.github.gdlbo.makerplay.runtime.api.RuntimeProfile
 import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.runtime.webview.internal.assets.RuntimeScriptAssets
@@ -249,6 +250,13 @@ fun RuntimeWebView(
                             runtimeScripts.performanceOptimization,
                             setOf(allowedOrigin),
                         )
+                        if (runtimeScripts.memoryHooks.isNotEmpty()) {
+                            WebViewCompat.addDocumentStartJavaScript(
+                                this,
+                                runtimeScripts.memoryHooks,
+                                setOf(allowedOrigin),
+                            )
+                        }
                         if (runtimeScripts.visualBoosts.isNotEmpty()) {
                             WebViewCompat.addDocumentStartJavaScript(
                                 this,
@@ -258,6 +266,14 @@ fun RuntimeWebView(
                         }
                     }
                     RuntimeKeyboardBridge.install(this)
+                    val memoryTrimRegistration = RuntimeMemoryCleaner.register {
+                        post {
+                            evaluateJavascript(
+                                "globalThis.__makerplayTrimSceneCaches&&globalThis.__makerplayTrimSceneCaches()",
+                                null,
+                            )
+                        }
+                    }
                     val inputBridge = RuntimeInputFrameBridge.install(
                         this,
                         allowedOrigin,
@@ -326,6 +342,7 @@ fun RuntimeWebView(
                                 audioFocus.abandon()
                                 stopLoading()
                             }
+                            runTeardownStage("memory") { memoryTrimRegistration.close() }
                             runTeardownStage("bridges") {
                                 RuntimeKeyboardBridge.uninstall(this)
                                 RuntimeDiagnosticsBridge.uninstall(this)

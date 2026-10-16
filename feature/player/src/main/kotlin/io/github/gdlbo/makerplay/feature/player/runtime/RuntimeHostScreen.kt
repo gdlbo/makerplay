@@ -72,6 +72,7 @@ import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeFailur
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeOverlayTheme
 import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimePreparing
 import io.github.gdlbo.makerplay.feature.player.runtime.components.buildRuntimeFailureReport
+import io.github.gdlbo.makerplay.input.GameAction
 import io.github.gdlbo.makerplay.input.LogicalInputSnapshot
 import io.github.gdlbo.makerplay.input.PhysicalInputNormalizer
 import io.github.gdlbo.makerplay.runtime.api.CheatCatalog
@@ -87,6 +88,7 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -125,6 +127,7 @@ fun RuntimeHostScreen(
     var layouts by remember(request.gameId) { mutableStateOf(ControllerLayouts()) }
     var layoutLoaded by remember(request.gameId) { mutableStateOf(layoutFile == null) }
     var selectedControlId by remember(request.gameId) { mutableStateOf<String?>(null) }
+    var keyCapture by remember { mutableStateOf<((Int) -> Unit)?>(null) }
     var virtualInput by remember(request.gameId) {
         mutableStateOf(
             LogicalInputSnapshot(
@@ -187,7 +190,32 @@ fun RuntimeHostScreen(
             else -> confirmExit = true
         }
     }
-    BackHandler(onBack = ::handleBack)
+    fun sendEscapeToGame() {
+        scope.launch {
+            val down = LogicalInputSnapshot(
+                pressedActions = setOf(GameAction.ESCAPE),
+                pointers = emptySet(),
+                pressedKeyCodes = setOf(AndroidKeyEvent.KEYCODE_ESCAPE),
+            )
+            virtualInput = down
+            delay(48)
+            if (virtualInput == down) virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+        }
+    }
+    BackHandler {
+        val capture = keyCapture
+        when {
+            // Emulator and many keyboards report Esc as Back. Bind it while
+            // the editor is waiting, otherwise give it to the game as Escape
+            // so RPG Maker can open the menu.
+            capture != null -> {
+                keyCapture = null
+                capture(AndroidKeyEvent.KEYCODE_ESCAPE)
+            }
+            failure != null || showCheats || editControls || !gameReady -> handleBack()
+            else -> sendEscapeToGame()
+        }
+    }
 
     fun sendCheat(operation: CheatOperation) {
         if (!request.settings.modules.cheatBridge) return
@@ -299,6 +327,13 @@ fun RuntimeHostScreen(
             ) {
                 return@onKeyEvent false
             }
+            if (keyCapture != null && event.type == KeyEventType.KeyDown) {
+                val capture = keyCapture
+                keyCapture = null
+                capture?.invoke(keyCode)
+                return@onKeyEvent true
+            }
+            if (editControls) return@onKeyEvent true
             val action = PhysicalInputNormalizer.keyMap[keyCode]
             when (event.type) {
                 KeyEventType.KeyDown -> {
@@ -530,6 +565,7 @@ fun RuntimeHostScreen(
                                 selectedId = selectedControlId,
                                 onProfileChanged = { layouts = layouts.updateActive(it) },
                                 onSelected = { selectedControlId = it },
+                                onKeyCapture = { keyCapture = it },
                                 onResetProfile = {
                                     scope.launch {
                                         val inherited = withContext(Dispatchers.IO) {

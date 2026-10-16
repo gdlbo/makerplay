@@ -69,7 +69,22 @@ object WolfSaveFormat {
 
     fun decode(data: ByteArray): GameState {
         if (data.size < MAGIC.size) throw WolfFormatException("Save too small")
-        if (!startsWithBytes(data, MAGIC)) throw WolfFormatException("Not a MakerPlay WOLF save")
+        if (!startsWithBytes(data, MAGIC)) {
+            val plain = runCatching { WolfOfficialSave.decrypt(data) }.getOrNull()
+            val official = plain?.let { runCatching { WolfOfficialSave.header(it) }.getOrNull() }
+            if (plain != null && official != null &&
+                official.gameName.isNotBlank() &&
+                official.version in 1..WolfOfficialSave.HIGHEST_SUPPORTED_VERSION
+            ) {
+                val point = runCatching { WolfOfficialSave.resumePoint(plain, official) }.getOrNull()
+                val where = if (point == null) "" else " at tile ${point.tileX},${point.tileY}"
+                throw WolfFormatException(
+                    "Official WOLF save '${official.gameName}' version 0x${official.version.toString(16)} " +
+                        "is recognized$where, but its play state is not restored yet",
+                )
+            }
+            throw WolfFormatException("Not a MakerPlay WOLF save")
+        }
 
         val reader = BoundedReader(data, offset = MAGIC.size)
         val version = reader.readU4().toInt()

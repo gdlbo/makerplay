@@ -17,6 +17,7 @@ import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.file.AtomicMoveNotSupportedException
@@ -326,7 +327,7 @@ internal class NodeFileProtocol(
                 }
 
                 "copy" -> {
-                    write(request.string("target"), read(request.string("path")), append = false)
+                    copyFile(request.string("path"), request.string("target"))
                     success(requestId)
                 }
 
@@ -485,6 +486,28 @@ internal class NodeFileProtocol(
         .distinct()
         .filterNot(deleted::contains)
         .sorted()
+
+    private fun copyFile(rawSource: String, rawTarget: String) {
+        val source = virtualPath(rawSource)
+        val target = virtualPath(rawTarget)
+        if (source is VirtualPath.Data && target is VirtualPath.Data) {
+            val from = writableFile(rawSource, allowRoot = false)
+            val to = writableFile(rawTarget, allowRoot = false)
+            if (!from.exists()) missing()
+            if (from.isDirectory) isDirectory()
+            if (!from.isFile || Files.isSymbolicLink(from.toPath())) missing()
+            require(from.length() <= MAX_PAYLOAD_BYTES) { "File is too large" }
+            to.parentFile?.let { parent ->
+                require(parent.mkdirs() || parent.isDirectory) { "Unable to create target directory" }
+            }
+            require(!Files.isSymbolicLink(to.toPath())) { "Symbolic links are not allowed" }
+            FileInputStream(from).use { input ->
+                FileOutputStream(to).use { output -> input.copyTo(output, 64 * 1024) }
+            }
+            return
+        }
+        write(rawTarget, read(rawSource), append = false)
+    }
 
     private fun read(rawPath: String): ByteArray = when (val path = virtualPath(rawPath)) {
         VirtualPath.GameRoot, VirtualPath.DataRoot -> isDirectory()

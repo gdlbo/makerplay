@@ -33,9 +33,10 @@ class WolfParityCommonEventTest {
 
     @Test
     fun everyCommonEventRunsFullyHandled() {
-        val fixtures = repoRoot.resolve("example").listFiles().orEmpty()
-            .filter { it.resolve("Data/BasicData/CommonEvent.dat").isFile }
+        val fixtures = repoRoot.resolve("example").walkTopDown().maxDepth(3)
+            .filter { it.isDirectory && it.resolve("Data/BasicData/CommonEvent.dat").isFile }
             .map { it.resolve("Data/BasicData/CommonEvent.dat") }
+            .toList()
         assumeTrue("No CommonEvent.dat fixtures present", fixtures.isNotEmpty())
 
         for (fixture in fixtures) {

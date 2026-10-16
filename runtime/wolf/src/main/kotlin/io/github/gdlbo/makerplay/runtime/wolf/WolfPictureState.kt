@@ -32,22 +32,53 @@ class WolfPictureState {
         val fillWidth: Int? = null,
         val fillHeight: Int? = null,
         val fillColor: Int? = null,
+        /** Frames the last opcode-290 effect asked to spend. 0 means snap. */
+        val effectFrames: Int = 0,
+        val tweenOpacityFrom: Int = opacity,
+        val tweenOpacityTo: Int = opacity,
+        val tweenZoomFrom: Int = zoom,
+        val tweenZoomTo: Int = zoom,
+        /** Added to the pattern on each advance while frames remain. 0 means no pattern tween. */
+        val tweenPatternStep: Int = 0,
+        val tweenFramesLeft: Int = 0,
+        val tweenFramesTotal: Int = 0,
     ) {
         val centerOrigin: Boolean get() = anchor == 1
     }
 
     private val slots = LinkedHashMap<Int, Picture>()
     private var revision = 0L
-    private val pathCache = HashMap<String, String?>()
+    private val pathCache = object : LinkedHashMap<String, String?>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean =
+            size > MAX_PATH_CACHE
+    }
 
     /** Monotonic change counter; the renderer recomposes when it advances. */
     fun version(): Long = revision
 
     fun all(): List<Picture> = slots.values.toList()
 
+    /** Puts a picture read from an official save. Replaces any picture in the same slot. */
+    fun restoreSaved(picture: WolfOfficialSave.SavedPicture) {
+        if (picture.fileName.isEmpty()) return
+        slots[picture.slot] = Picture(
+            slot = picture.slot,
+            fileName = picture.fileName,
+            x = picture.x,
+            y = picture.y,
+            opacity = picture.opacity.coerceIn(0, 255),
+            divisionWidth = picture.divisionWidth.coerceAtLeast(1),
+            divisionHeight = picture.divisionHeight.coerceAtLeast(1),
+            pattern = picture.pattern.coerceAtLeast(0),
+            isText = picture.isText,
+        )
+        revision++
+    }
+
     fun clear() {
         if (slots.isNotEmpty()) revision++
         slots.clear()
+        pathCache.clear()
     }
 
     /**
@@ -77,16 +108,60 @@ class WolfPictureState {
                 // they have no stable slot state in this renderer.
                 2 -> existing.copy(x = existing.x + p4, y = existing.y + p5)
                 4 -> existing.copy(zoom = p4.takeIf { it in 1..400 } ?: existing.zoom)
-                7 -> existing.copy(zoom = (existing.zoom + 10).coerceAtMost(400))
+                // Type 5 is the color/tone effect used by the example games
+                // (params 100,100,100 at full strength). The last component is opacity.
+                5 -> {
+                    val opacity = command.params.getOrNull(6)?.takeIf { it in 0..255 }
+                        ?: ((p4.coerceIn(0, 100) * 255) / 100)
+                    val frames = command.params.getOrNull(1)?.coerceAtLeast(0) ?: 0
+                    existing.copy(
+                        opacity = if (frames == 0) opacity else existing.opacity,
+                        effectFrames = frames,
+                        tweenOpacityFrom = existing.opacity,
+                        tweenOpacityTo = opacity,
+                        tweenZoomFrom = existing.zoom,
+                        tweenZoomTo = existing.zoom,
+                        tweenFramesLeft = frames,
+                        tweenFramesTotal = frames,
+                    )
+                }
+                // Dragon Blood type 7: duration in params[1], zoom delta in params[4].
+                7 -> {
+                    val frames = command.params.getOrNull(1)?.coerceAtLeast(0) ?: 0
+                    val delta = p4.takeIf { it in 1..400 } ?: 10
+                    val target = (existing.zoom + delta).coerceAtMost(400)
+                    existing.copy(
+                        zoom = if (frames == 0) target else existing.zoom,
+                        effectFrames = frames,
+                        tweenOpacityFrom = existing.opacity,
+                        tweenOpacityTo = existing.opacity,
+                        tweenZoomFrom = existing.zoom,
+                        tweenZoomTo = target,
+                        tweenFramesLeft = frames,
+                        tweenFramesTotal = frames,
+                    )
+                }
                 8 -> existing.copy(
                     pattern = (existing.pattern + 1).coerceAtMost(
                         (existing.divisionWidth * existing.divisionHeight - 1).coerceAtLeast(0),
                     ),
                 )
-                9, 10 -> existing.copy(
-                    pattern = (existing.pattern + 1) %
-                        (existing.divisionWidth * existing.divisionHeight).coerceAtLeast(1),
-                )
+                9, 10 -> {
+                    val frames = command.params.getOrNull(1)?.coerceAtLeast(0) ?: 0
+                    val cells = (existing.divisionWidth * existing.divisionHeight).coerceAtLeast(1)
+                    val stepped = (existing.pattern + 1) % cells
+                    existing.copy(
+                        pattern = if (frames == 0) stepped else existing.pattern,
+                        effectFrames = frames,
+                        tweenOpacityFrom = existing.opacity,
+                        tweenOpacityTo = existing.opacity,
+                        tweenZoomFrom = existing.zoom,
+                        tweenZoomTo = existing.zoom,
+                        tweenPatternStep = if (frames == 0) 0 else 1,
+                        tweenFramesLeft = frames,
+                        tweenFramesTotal = frames,
+                    )
+                }
                 else -> existing
             }
             if (updated != existing) {
@@ -96,6 +171,44 @@ class WolfPictureState {
         }
         if (changed) revision++
         return changed
+    }
+
+    /** Steps opcode-290 tweens one frame. A zero-length effect has already snapped. */
+    fun advanceEffects() {
+        var changed = false
+        for ((slot, picture) in slots) {
+            if (picture.tweenFramesLeft <= 0 || picture.tweenFramesTotal <= 0) continue
+            val left = picture.tweenFramesLeft - 1
+            val done = picture.tweenFramesTotal - left
+            val opacity = if (left == 0) {
+                picture.tweenOpacityTo
+            } else {
+                picture.tweenOpacityFrom +
+                    (picture.tweenOpacityTo - picture.tweenOpacityFrom) * done / picture.tweenFramesTotal
+            }
+            val zoom = if (left == 0) {
+                picture.tweenZoomTo
+            } else {
+                picture.tweenZoomFrom +
+                    (picture.tweenZoomTo - picture.tweenZoomFrom) * done / picture.tweenFramesTotal
+            }
+            val cells = (picture.divisionWidth * picture.divisionHeight).coerceAtLeast(1)
+            val pattern = if (picture.tweenPatternStep == 0) {
+                picture.pattern
+            } else {
+                (picture.pattern + picture.tweenPatternStep) % cells
+            }
+            slots[slot] = picture.copy(
+                opacity = opacity,
+                zoom = zoom,
+                pattern = pattern,
+                tweenFramesLeft = left,
+                effectFrames = left,
+                tweenPatternStep = if (left == 0) 0 else picture.tweenPatternStep,
+            )
+            changed = true
+        }
+        if (changed) revision++
     }
 
     /** Applies a picture command; returns true when visible state changed. */
@@ -272,6 +385,7 @@ class WolfPictureState {
     }
 
     companion object {
+        private const val MAX_PATH_CACHE = 512
         private val IMAGE_EXTS = setOf("png", "jpg", "jpeg", "bmp", "gif", "webp")
 
         /**

@@ -86,11 +86,20 @@ data class RuntimeSettings(
     val ignoreMissingFiles: Boolean = true,
     val fpsLimit: Int? = null,
     val showFpsCounter: Boolean = false,
+    /** Fraction of the Java heap that triggers a cache trim for this game. */
+    val heapTrimFraction: Float = 0.80f,
+    /** Native-heap trim threshold for this game. 0 disables the native check. */
+    val nativeTrimBytes: Long = 128L * 1024L * 1024L,
+    /** Graphics/EGL trim threshold for this game. 0 disables the graphics check. */
+    val graphicsTrimBytes: Long = 0L,
     val recordLogs: Boolean = false,
     val modules: RuntimeModuleSettings = RuntimeModuleSettings(),
 ) {
     init {
         require(fpsLimit == null || fpsLimit in SUPPORTED_FPS_LIMITS)
+        require(heapTrimFraction in 0.05f..0.95f) { "Heap trim fraction must be between 0.05 and 0.95" }
+        require(nativeTrimBytes >= 0L) { "Native trim threshold must not be negative" }
+        require(graphicsTrimBytes >= 0L) { "Graphics trim threshold must not be negative" }
     }
 }
 

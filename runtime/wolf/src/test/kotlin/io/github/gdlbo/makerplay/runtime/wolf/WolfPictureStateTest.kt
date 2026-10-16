@@ -56,6 +56,88 @@ class WolfPictureStateTest {
     }
 
     @Test
+    fun clearDropsPathCache() {
+        val source = CountingSource("Data/Picture/window.png")
+        val state = WolfPictureState()
+        assertEquals("Data/Picture/window.png", state.resolvePath(source, "window.png"))
+        val readsAfterFirst = source.reads
+        assertEquals("Data/Picture/window.png", state.resolvePath(source, "window.png"))
+        assertEquals(readsAfterFirst, source.reads)
+        state.clear()
+        assertEquals("Data/Picture/window.png", state.resolvePath(source, "window.png"))
+        assertTrue(source.reads > readsAfterFirst)
+    }
+
+    @Test
+    fun effectTypeFiveSetsOpacityAndDuration() {
+        val state = WolfPictureState()
+        assertTrue(state.apply(cmd(0x0F, 3, "window.png")))
+        val effect = EventCommand(
+            paramCount = 8,
+            commandType = 290,
+            params = intArrayOf(80, 20, 3, 3, 100, 100, 40),
+            branchDepth = 0,
+            strings = emptyList(),
+            route = null,
+        )
+        assertTrue(state.applyEffect(effect))
+        assertEquals(255, state.all().single().opacity)
+        state.advanceEffects()
+        assertTrue(state.all().single().opacity < 255)
+        repeat(19) { state.advanceEffects() }
+        val picture = state.all().single()
+        assertEquals(40, picture.opacity)
+        assertEquals(0, picture.effectFrames)
+    }
+
+    @Test
+    fun effectTypeSevenTweensZoom() {
+        val state = WolfPictureState()
+        assertTrue(state.apply(cmd(0x0F, 3, "window.png")))
+        val effect = EventCommand(
+            paramCount = 8,
+            commandType = 290,
+            params = intArrayOf(112, 2, 3, 3, 30, 30, 0),
+            branchDepth = 0,
+            strings = emptyList(),
+            route = null,
+        )
+        assertTrue(state.applyEffect(effect))
+        assertEquals(100, state.all().single().zoom)
+        state.advanceEffects()
+        state.advanceEffects()
+        assertEquals(130, state.all().single().zoom)
+    }
+
+    @Test
+    fun effectTypeNineStepsPatternAcrossFrames() {
+        val state = WolfPictureState()
+        val show = EventCommand(
+            paramCount = 9,
+            commandType = 150,
+            params = intArrayOf(0x0F, 3, 0, 4, 1, 0, 255, 0, 0),
+            branchDepth = 0,
+            strings = listOf("window.png"),
+            route = null,
+        )
+        assertTrue(state.apply(show))
+        val effect = EventCommand(
+            paramCount = 8,
+            commandType = 290,
+            params = intArrayOf(144, 2, 3, 3, 0, 0, 0),
+            branchDepth = 0,
+            strings = emptyList(),
+            route = null,
+        )
+        assertTrue(state.applyEffect(effect))
+        assertEquals(0, state.all().single().pattern)
+        state.advanceEffects()
+        assertEquals(1, state.all().single().pattern)
+        state.advanceEffects()
+        assertEquals(2, state.all().single().pattern)
+    }
+
+    @Test
     fun textPicturesEnterThePictureLayer() {
         val state = WolfPictureState()
         // type nibble 2 = text picture.
@@ -74,6 +156,17 @@ class WolfPictureStateTest {
 
     private object DummySource : io.github.gdlbo.makerplay.wolfformat.GameDataSource {
         override fun read(path: String): ByteArray = throw java.io.FileNotFoundException(path)
+        override fun list(path: String) = emptyList<String>()
+        override fun close() = Unit
+    }
+
+    private class CountingSource(private val hit: String) : io.github.gdlbo.makerplay.wolfformat.GameDataSource {
+        var reads: Int = 0
+        override fun read(path: String): ByteArray {
+            reads++
+            if (path == hit) return byteArrayOf(1)
+            throw java.io.FileNotFoundException(path)
+        }
         override fun list(path: String) = emptyList<String>()
         override fun close() = Unit
     }

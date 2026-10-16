@@ -42,9 +42,12 @@
         const originalTextColor = windowBase.prototype.textColor;
         const originalLoadWindowskin = windowBase.prototype.loadWindowskin;
         const colors = new Map();
+        const maxColors = 64;
+        globalThis.__makerplayResetPerfCaches = function () { colors.clear(); };
         windowBase.prototype.textColor = function (index) {
             if (colors.has(index)) return colors.get(index);
             const color = originalTextColor.apply(this, arguments);
+            if (colors.size >= maxColors) colors.clear();
             colors.set(index, color);
             return color;
         };

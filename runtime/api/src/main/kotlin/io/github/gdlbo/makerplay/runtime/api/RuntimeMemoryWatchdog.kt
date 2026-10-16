@@ -77,7 +77,7 @@ data class RuntimeMemoryWatchdogOptions(
 class RuntimeMemoryWatchdog(
     private val logger: RuntimeLogger,
     private val sampler: MemorySampler,
-    private val options: RuntimeMemoryWatchdogOptions = RuntimeMemoryWatchdogOptions(),
+    private var options: RuntimeMemoryWatchdogOptions = RuntimeMemoryWatchdogOptions(),
     private val trim: () -> Unit = RuntimeMemoryCleaner::evictRegisteredCaches,
     private val clock: () -> Long = System::currentTimeMillis,
     private val scheduler: WatchdogScheduler = SystemWatchdogScheduler,
@@ -89,6 +89,11 @@ class RuntimeMemoryWatchdog(
 
     val isEnabled: Boolean
         get() = options.enabled
+
+    /** Replaces thresholds, including a per-game heap fraction, without restarting the sampler. */
+    fun updateOptions(next: RuntimeMemoryWatchdogOptions) {
+        options = next
+    }
 
     val isRunning: Boolean
         get() = synchronized(lock) { running }

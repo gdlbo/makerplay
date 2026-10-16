@@ -53,6 +53,14 @@ class RuntimeInputFrameBridgeTest {
     }
 
     @Test
+    fun `escape press is latched as the rpg maker menu trigger`() {
+        val source = RuntimeInputFrameBridge.source(runtimeAsset("bridges/input-bridge.js"))
+
+        assertTrue(source.contains("Input._virtualButton = \"escape\""))
+        assertTrue(source.contains("escapeWasDown"))
+    }
+
+    @Test
     fun `document bridge applies the latest snapshot immediately`() {
         val source = RuntimeInputFrameBridge.source(runtimeAsset("bridges/input-bridge.js"))
 

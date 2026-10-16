@@ -1,5 +1,6 @@
 package io.github.gdlbo.makerplay.wolfformat
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
@@ -23,11 +24,7 @@ class WolfCommandAuditTest {
         dir
     }
 
-    private val fixtures: List<String> =
-        repoRoot.resolve("example").listFiles().orEmpty()
-            .filter { it.resolve("Data/BasicData/CommonEvent.dat").isFile }
-            .map { it.name }
-            .sorted()
+    private val fixtures: List<File> = deploymentRoots(repoRoot)
 
     /** Human names for the WOLF system-call band (commands 100-199). */
     private val systemCallNames: Map<Int, String> = mapOf(
@@ -62,8 +59,7 @@ class WolfCommandAuditTest {
 
     @Test
     fun auditCommandCoverageOfExampleDeployments() {
-        val roots = fixtures.map { repoRoot.resolve("example").resolve(it) }
-            .filter { it.isDirectory }
+        val roots = fixtures.filter { it.isDirectory }
         assumeTrue("No example deployments present", roots.isNotEmpty())
 
         val report = StringBuilder()
@@ -134,5 +130,125 @@ class WolfCommandAuditTest {
         outFile.writeText(report.toString())
         println(report.toString())
         assertTrue(report.isNotEmpty())
+    }
+
+    @Test
+    fun opcode104InExampleGamesHasNoParameters() {
+        val hits = mutableListOf<EventCommand>()
+        for (root in deploymentRoots(repoRoot)) {
+            val common = root.resolve("Data/BasicData/CommonEvent.dat")
+            if (common.isFile) {
+                val parsed = CommonEventDat.parse(common.readBytes())
+                for (ev in parsed.events) hits += ev.commands.filter { it.commandType == 104 }
+            }
+            root.resolve("Data").walkTopDown().filter { it.extension.equals("mps", true) }.forEach { map ->
+                val parsedMap = runCatching { MapFile.parse(map.readBytes()) }.getOrNull() ?: return@forEach
+                for (event in parsedMap.events) for (page in event.pages) {
+                    hits += page.commands.filter { it.commandType == 104 }
+                }
+            }
+        }
+        assertTrue(hits.isNotEmpty())
+        assertTrue(hits.all { it.params.isEmpty() && it.strings.isEmpty() })
+    }
+
+    @Test
+    fun exampleGamesSystemVariableReferences() {
+        var normal = 0
+        var strings = 0
+        val stringIds = HashSet<Int>()
+        var system8 = 0
+        var system9 = 0
+        var system16 = 0
+        val system8ids = HashSet<Int>()
+        val system9ids = HashSet<Int>()
+        fun consider(params: IntArray) {
+            for (p in params) {
+                when (p) {
+                    in 2_000_000..2_999_999 -> normal++
+                    in 3_000_000..3_999_999 -> {
+                        strings++
+                        stringIds += p - 3_000_000
+                    }
+                    in 8_000_000..8_999_999 -> {
+                        system8++
+                        system8ids += p - 8_000_000
+                    }
+                    in 9_000_000..9_999_999 -> {
+                        system9++
+                        system9ids += p - 9_000_000
+                    }
+                    in 1_600_000..1_699_999 -> system16++
+                }
+            }
+        }
+        for (root in deploymentRoots(repoRoot)) {
+            val common = root.resolve("Data/BasicData/CommonEvent.dat")
+            if (common.isFile) {
+                for (ev in CommonEventDat.parse(common.readBytes()).events) {
+                    for (cmd in ev.commands) consider(cmd.params)
+                }
+            }
+            root.resolve("Data").walkTopDown().filter { it.extension.equals("mps", true) }.forEach { map ->
+                val parsed = runCatching { MapFile.parse(map.readBytes()) }.getOrNull() ?: return@forEach
+                for (event in parsed.events) for (page in event.pages) {
+                    for (cmd in page.commands) consider(cmd.params)
+                }
+            }
+        }
+        assertEquals(31692, normal)
+        assertEquals(2344, strings)
+        assertEquals(106, stringIds.size)
+        assertEquals(30, stringIds.count { it < 30 })
+        assertEquals(4, system8)
+        assertEquals(setOf(217700), system8ids)
+        assertEquals(1464, system9)
+        assertEquals(129180, system16)
+        assertEquals(105, system9ids.size)
+        assertEquals(74, system9ids.count { it < 150 })
+        assertEquals(
+            "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,28,29,35,36,37,39,40,41,51,52,53,54,55,56,57,59,60,61,64,65,66,71,72,73,74,77,78,79,80,81,82,84,95,96,97,98,100,101,102,104,105,110,111,112,115,116,117,118",
+            system9ids.filter { it < 150 }.sorted().joinToString(","),
+        )
+    }
+
+    @Test
+    fun dumpDatabaseAndEffectSamples() {
+        val out = StringBuilder()
+        for (root in deploymentRoots(repoRoot)) {
+            val interesting = mutableListOf<String>()
+            fun take(label: String, commands: List<EventCommand>) {
+                for (cmd in commands) {
+                    if (cmd.commandType !in setOf(251, 252, 255, 290)) continue
+                    if (interesting.count { it.startsWith("${root.name} ${cmd.commandType}") } >= 4) continue
+                    interesting += "${root.name} ${cmd.commandType} $label params=${cmd.params.toList()} strings=${cmd.strings}"
+                }
+            }
+            val common = root.resolve("Data/BasicData/CommonEvent.dat")
+            if (common.isFile) {
+                val parsed = CommonEventDat.parse(common.readBytes())
+                for (ev in parsed.events) take("CE ${ev.id}", ev.commands)
+            }
+            root.resolve("Data").walkTopDown().filter { it.extension.equals("mps", true) }.forEach { map ->
+                val parsedMap = runCatching { MapFile.parse(map.readBytes()) }.getOrNull() ?: return@forEach
+                for (event in parsedMap.events) for (page in event.pages) take(map.name, page.commands)
+            }
+            interesting.forEach { out.appendLine(it) }
+        }
+        val file = File(repoRoot, "build/db-effect-samples.txt")
+        file.parentFile?.mkdirs()
+        file.writeText(out.toString())
+        println(out.toString())
+        assertTrue(out.isNotEmpty())
+    }
+
+    companion object {
+        fun deploymentRoots(repoRoot: File): List<File> {
+            val example = repoRoot.resolve("example")
+            val candidates = example.walkTopDown().maxDepth(3)
+                .filter { it.isDirectory && it.resolve("Data/BasicData/CommonEvent.dat").isFile }
+                .toList()
+            return candidates.distinctBy { it.canonicalPath }.sortedBy { it.name }
+        }
     }
 }

@@ -212,6 +212,8 @@
     <string name="controller_editor_more_actions">More editor actions</string>
     <string name="controller_action_value">Action: %1$s</string>
     <string name="controller_keyboard_key_value">Keyboard key: %1$s</string>
+    <string name="controller_press_key">Press a key</string>
+    <string name="controller_key_unset">None</string>
     <string name="controller_choose_action">Choose action</string>
     <string name="controller_delete_title">Delete this button?</string>
     <string name="controller_delete_message">This removes the selected button from the current layout</string>

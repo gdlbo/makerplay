@@ -427,6 +427,12 @@ class WolfRuntimeBackend(
                     },
                 )
                 val pictures = WolfPictureState()
+                engine.onMapReplaced = {
+                    pictures.clear()
+                    WolfSceneLoader.clearCache()
+                }
+                stored.pictureCleanup?.close()
+                stored.pictureCleanup = RuntimeMemoryCleaner.register { pictures.clear() }
                 val savesRoot = File(stored.gameRoot, "MakerPlaySaves")
                 val saveManager = WolfGameSaveManager(savesRoot)
                 val audio = WolfAudioPlayer().also { activeAudio = it }
@@ -547,6 +553,7 @@ class WolfRuntimeBackend(
                             map = nextMap
                             mapPath = target
                             pictures.clear()
+                            WolfSceneLoader.clearCache()
                             composeGeneration++
                             composeJob?.cancel()
                             composeJob = null
@@ -655,7 +662,7 @@ class WolfRuntimeBackend(
 
                     override fun onLoad(slot: Int): Boolean {
                         val name = slotSaveName(slot)
-                        if (!saveManager.has(name)) return false
+                        if (!saveManager.has(name)) return loadOfficialSlot(slot)
                         return runCatching {
                             val state = saveManager.load(name)
                             android.util.Log.i("WolfRuntime", "load slot=$slot path=${state.mapPath}")
@@ -665,6 +672,8 @@ class WolfRuntimeBackend(
                             if (source.has(state.mapPath)) {
                                 map = MapFile.parse(source.read(state.mapPath))
                                 mapPath = state.mapPath
+                                pictures.clear()
+                                WolfSceneLoader.clearCache()
                                 composeGeneration++
                                 composeJob?.cancel()
                                 composeJob = null
@@ -679,6 +688,43 @@ class WolfRuntimeBackend(
 
                     private fun slotSaveName(slot: Int): String =
                         if (slot == 0) "slot-0" else "slot-$slot"
+
+                    /** Shipped `Save/SaveDataNN.sav` when no MakerPlay slot exists. */
+                    private fun loadOfficialSlot(slot: Int): Boolean {
+                        if (slot < 1) return false
+                        val saveName = "Save/SaveData%02d.sav".format(slot)
+                        if (!runCatching { source.has(saveName) }.getOrDefault(false)) return false
+                        return runCatching {
+                            val plain = WolfOfficialSave.decrypt(source.read(saveName))
+                            val sysDat = io.github.gdlbo.makerplay.wolfformat.DataBaseDat.parse(
+                                source.read("Data/BasicData/SysDatabase.dat"),
+                            )
+                            val state = WolfOfficialSave.officialSlotState(plain, sysDat)
+                                ?: return@runCatching false
+                            if (!source.has(state.mapPath)) return@runCatching false
+                            database?.applySavedUserRows(
+                                WolfOfficialSave.userDatabaseRows(plain, WolfOfficialSave.header(plain)),
+                            )
+                            WolfOfficialSave.mergeNormalVariables(machineVariables, state.variables)
+                            interpreter?.variables?.let {
+                                WolfOfficialSave.mergeNormalVariables(it, state.variables)
+                            }
+                            map = MapFile.parse(source.read(state.mapPath))
+                            mapPath = state.mapPath
+                            pictures.clear()
+                            val officialHeader = WolfOfficialSave.header(plain)
+                            for (picture in WolfOfficialSave.part5Pictures(plain, officialHeader)) {
+                                pictures.restoreSaved(picture)
+                            }
+                            WolfSceneLoader.clearCache()
+                            composeGeneration++
+                            composeJob?.cancel()
+                            composeJob = null
+                            engine.replaceMap(map, state.tileX, state.tileY)
+                            forceCompose = true
+                            true
+                        }.getOrDefault(false)
+                    }
 
                     override fun onPicture(command: EventCommand) {
                         // File-from-string-var forms ship an empty strings[] and
@@ -906,6 +952,7 @@ class WolfRuntimeBackend(
                                 map = nextMap
                                 mapPath = target
                                 pictures.clear()
+                                WolfSceneLoader.clearCache()
                                 composeGeneration++
                                 composeJob?.cancel()
                                 composeJob = null
@@ -1308,6 +1355,15 @@ class WolfRuntimeBackend(
         val stored = sessions[session.sessionId] ?: return 0L
         if (stored.nativeHandle == 0L) {
             stored.nativeHandle = bridge.loadGame(stored.gameId, stored.gameRoot.absolutePath)
+            stored.nativeCleanup?.close()
+            val sessionBridge = bridge
+            stored.nativeCleanup = RuntimeMemoryCleaner.register {
+                WolfSceneLoader.clearCache()
+                if (stored.releaseNativeOnCleanup && stored.nativeHandle != 0L) {
+                    sessionBridge.destroySession(stored.nativeHandle)
+                    stored.nativeHandle = 0L
+                }
+            }
         }
         return stored.nativeHandle
     }
@@ -1316,9 +1372,12 @@ class WolfRuntimeBackend(
         val session = sessions.remove(sessionId) ?: return
         session.loopJob?.cancel()
         session.loopJob = null
-        bridge.get()?.destroySession(session.nativeHandle)
-        session.nativeHandle = 0L
-        WolfSceneLoader.clearCache()
+        session.releaseNativeOnCleanup = true
+        RuntimeMemoryCleaner.evictRegisteredCaches()
+        session.nativeCleanup?.close()
+        session.nativeCleanup = null
+        session.pictureCleanup?.close()
+        session.pictureCleanup = null
         logger.info(
             "runtime.destroy",
             mapOf("backend" to descriptor.id, "gameId" to session.gameId),
@@ -1384,6 +1443,10 @@ class WolfRuntimeBackend(
         var nativeHandle: Long = 0L,
         /** Set while the per-session game loop is running; cancelled on destroy. */
         @Volatile var loopJob: kotlinx.coroutines.Job? = null,
+        /** When set, the cleaner callback also destroys the native session. */
+        @Volatile var releaseNativeOnCleanup: Boolean = false,
+        var nativeCleanup: AutoCloseable? = null,
+        var pictureCleanup: AutoCloseable? = null,
     )
 
     fun interface WolfNativeBridgeProvider {

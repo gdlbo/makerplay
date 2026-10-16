@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -391,6 +392,10 @@ fun MakerPlayApp(graph: AppGraph) {
                     )
                 }
                 composable("runtime-smoke") {
+                    LaunchedEffect(runtimeSettings.heapTrimFraction) {
+                        (context.applicationContext as io.github.gdlbo.makerplay.app.MakerPlayApplication)
+                            .applyGameMemoryOptions(runtimeSettings)
+                    }
                     RuntimeHostScreen(
                         backend = graph.runtimeBackend("m0-smoke"),
                         request = LaunchRequest(
@@ -404,6 +409,10 @@ fun MakerPlayApp(graph: AppGraph) {
                 composable("runtime/{gameId}") { entry ->
                     val gameId = requireNotNull(entry.arguments?.getString("gameId"))
                     val effectiveSettings = graph.gameRuntimeSettings(gameId) ?: runtimeSettings
+                    LaunchedEffect(gameId, effectiveSettings.heapTrimFraction) {
+                        (context.applicationContext as io.github.gdlbo.makerplay.app.MakerPlayApplication)
+                            .applyGameMemoryOptions(effectiveSettings)
+                    }
                     RuntimeHostScreen(
                         backend = graph.runtimeBackend(gameId),
                         request = LaunchRequest(

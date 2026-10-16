@@ -4,7 +4,11 @@ import androidx.compose.ui.unit.IntOffset
 import io.github.gdlbo.makerplay.feature.player.controller.model.DefaultGamepadProfile
 import io.github.gdlbo.makerplay.feature.player.controller.ui.circularControlSidePx
 import io.github.gdlbo.makerplay.feature.player.controller.ui.controlsFitViewport
+import android.view.KeyEvent
+import io.github.gdlbo.makerplay.feature.player.controller.ui.controlBoundToKey
 import io.github.gdlbo.makerplay.feature.player.controller.ui.dPadActionsForPosition
+import io.github.gdlbo.makerplay.feature.player.controller.ui.isLiteralKeyCode
+import io.github.gdlbo.makerplay.input.VirtualControl
 import io.github.gdlbo.makerplay.feature.player.controller.ui.moveVirtualControl
 import io.github.gdlbo.makerplay.feature.player.controller.ui.minimumControlPressRemainingMillis
 import io.github.gdlbo.makerplay.feature.player.controller.ui.normalizeOverlayPointer
@@ -24,6 +28,27 @@ class VirtualControllerOverlayTest {
         assertEquals(59L, minimumControlPressRemainingMillis(5))
         assertEquals(0L, minimumControlPressRemainingMillis(64))
         assertEquals(0L, minimumControlPressRemainingMillis(200))
+    }
+
+    @Test
+    fun `keyboard capture stores letters and treats back as escape`() {
+        val button = VirtualControl(
+            id = "custom",
+            type = VirtualControlType.BUTTON,
+            action = GameAction.OK,
+            x = 0f,
+            y = 0f,
+            width = .1f,
+            height = .1f,
+            opacity = 1f,
+        )
+        val letter = controlBoundToKey(button, KeyEvent.KEYCODE_A)
+        assertEquals(KeyEvent.KEYCODE_A, letter.keyCode)
+        assertTrue(isLiteralKeyCode(letter.keyCode))
+        val escape = controlBoundToKey(button, KeyEvent.KEYCODE_BACK)
+        assertEquals(KeyEvent.KEYCODE_ESCAPE, escape.keyCode)
+        assertEquals(GameAction.ESCAPE, escape.action)
+        assertEquals(false, isLiteralKeyCode(escape.keyCode))
     }
 
     @Test

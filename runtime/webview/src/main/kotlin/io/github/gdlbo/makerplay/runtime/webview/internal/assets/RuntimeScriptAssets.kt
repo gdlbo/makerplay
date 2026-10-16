@@ -8,6 +8,7 @@ internal data class RuntimeScripts(
     val legacyCompatibility: String,
     val frameResilience: String,
     val performanceOptimization: String,
+    val memoryHooks: String,
     val visualBoosts: String,
     val networkFallbacks: List<RuntimeNetworkFallback>,
     val frameRate: String,
@@ -40,6 +41,7 @@ internal object RuntimeScriptAssets {
             legacyCompatibility = assets.readUtf8("runtime/legacy-compatibility.js"),
             frameResilience = assets.readUtf8("runtime/frame-resilience.js"),
             performanceOptimization = assets.readUtf8("runtime/performance-optimization.js"),
+            memoryHooks = assets.readUtf8("runtime/memory-hooks.js"),
             visualBoosts = assets.readUtf8("runtime/visual-boosts.js"),
             networkFallbacks = NETWORK_FALLBACK_ASSETS.map { asset ->
                 RuntimeNetworkFallback(

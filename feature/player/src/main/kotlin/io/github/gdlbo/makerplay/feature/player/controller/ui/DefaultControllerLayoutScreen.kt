@@ -1,6 +1,10 @@
 package io.github.gdlbo.makerplay.feature.player.controller.ui
 
+import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -30,6 +34,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusTarget
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.gdlbo.makerplay.feature.player.R
@@ -54,6 +61,8 @@ fun DefaultControllerLayoutScreen(
     var original by remember { mutableStateOf(ControllerLayouts()) }
     var selectedControlId by remember { mutableStateOf<String?>(null) }
     var loaded by remember { mutableStateOf(false) }
+    var keyCapture by remember { mutableStateOf<((Int) -> Unit)?>(null) }
+    val focusRequester = remember { FocusRequester() }
 
     fun persistAndLeave(value: ControllerLayouts) {
         scope.launch {
@@ -70,9 +79,18 @@ fun DefaultControllerLayoutScreen(
         original = loadedLayouts
         selectedControlId = loadedLayouts.activeProfile().controls.firstOrNull()?.id
         loaded = true
+        runCatching { focusRequester.requestFocus() }
     }
 
-    BackHandler { persistAndLeave(layouts) }
+    BackHandler {
+        val capture = keyCapture
+        if (capture != null) {
+            keyCapture = null
+            capture(KeyEvent.KEYCODE_ESCAPE)
+        } else {
+            persistAndLeave(layouts)
+        }
+    }
 
     Scaffold(
         contentWindowInsets = WindowInsets(0.dp),
@@ -118,7 +136,24 @@ fun DefaultControllerLayoutScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(contentPadding)
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                .focusRequester(focusRequester)
+                .focusTarget()
+                .onPreviewKeyEvent { event ->
+                    val capture = keyCapture ?: return@onPreviewKeyEvent false
+                    if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent true
+                    val keyCode = event.nativeKeyEvent.keyCode
+                    if (
+                        keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+                        keyCode == KeyEvent.KEYCODE_VOLUME_DOWN ||
+                        keyCode == KeyEvent.KEYCODE_VOLUME_MUTE
+                    ) {
+                        return@onPreviewKeyEvent false
+                    }
+                    keyCapture = null
+                    capture(keyCode)
+                    true
+                },
         ) {
             val editorMaxHeight = (maxHeight - 96.dp).coerceIn(48.dp, 420.dp)
             if (loaded) {
@@ -147,6 +182,7 @@ fun DefaultControllerLayoutScreen(
                             selectedControlId =
                                 resetLayouts.activeProfile().controls.firstOrNull()?.id
                         },
+                        onKeyCapture = { keyCapture = it },
                         modifier = Modifier
                             .align(Alignment.TopCenter)
                             .safeDrawingPadding()

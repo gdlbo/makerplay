@@ -43,4 +43,15 @@
   defineBuiltin("constants", {});
   defineBuiltin("querystring", { stringify: function(value) { return new URLSearchParams(value).toString(); }, parse: function(value) { var output = {}; new URLSearchParams(value).forEach(function(item, key) { output[key] = item; }); return output; } });
   defineBuiltin("url", { URL: root.URL, URLSearchParams: root.URLSearchParams, pathToFileURL: function(path) { return new URL("file://" + pathModule.resolve(path)); }, fileURLToPath: function(url) { return new URL(url).pathname; } });
+  defineBuiltin("punycode", {
+    ucs2: {
+      decode: function(value) { return Array.from(String(value), function(ch) { return ch.codePointAt(0); }); },
+      encode: function(points) { return Array.from(points, function(point) { return String.fromCodePoint(point); }).join(""); }
+    },
+    decode: function(value) { return String(value); },
+    encode: function(value) { return String(value); },
+    toASCII: function(value) { return String(value); },
+    toUnicode: function(value) { return String(value); }
+  });
+  defineBuiltin("_process", processModule);
   defineBuiltin("worker_threads", { isMainThread: true, parentPort: null, workerData: null, Worker: function() { throw new Error("worker_threads is not supported"); } });

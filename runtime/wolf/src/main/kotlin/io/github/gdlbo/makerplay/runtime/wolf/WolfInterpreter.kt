@@ -315,7 +315,7 @@ class WolfInterpreter(
             99 -> Unit // checkpoint
             101 -> showMessage(command)
             102 -> showChoices(command)
-            103 -> Unit // comment
+            103, 104 -> Unit // comment, and parameterless 104 lines in the example games
             105, 106, 107 -> Unit // force-stop-message / debug message / clear debug text
             111 -> evaluateNumberCondition(command)
             112 -> evaluateStringCondition(command)
@@ -368,7 +368,6 @@ class WolfInterpreter(
             201 -> host.onMove(command)
             202 -> { blocking = Blocking.MoveWait(command) }
             212 -> Unit // label marker: resolved by 213 scans
-            99, 105, 106, 107 -> Unit // checkpoints & debug text: non-blocking
             213 -> jumpToLabel(command)
             210, 211 -> callCommonEventById(command)
             220 -> host.onSaveLoad()

@@ -639,7 +639,10 @@ object WolfSceneLoader {
         }
     }
     /** Positive + negative picture path lookups; misses are expensive on Direct mode. */
-    private val picturePathCache = HashMap<String, String?>()
+    private val picturePathCache = object : LinkedHashMap<String, String?>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String?>): Boolean =
+            size > MAX_CACHED_BITMAPS
+    }
 
     fun clearCache() {
         synchronized(bitmapCache) {

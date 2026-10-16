@@ -117,6 +117,12 @@
       }
     }
     for (const [androidCode, descriptor] of state.keys) if (!nextKeys.has(androidCode)) dispatchKey(descriptor, false);
+    // RPG Maker opens the map menu from isTriggered('menu'), which is true
+    // only when _latestButton is 'escape'. A cancel action is recorded after
+    // the Escape key and would otherwise steal that trigger.
+    const escapeDown = !!wanted.escape || Array.from(nextKeys.values()).some((key) => key && key.d === 27);
+    const escapeWasDown = !!state.actions.escape || Array.from(state.keys.values()).some((key) => key && key.d === 27);
+    if (escapeDown && !escapeWasDown && globalThis.Input) Input._virtualButton = "escape";
     state.keys = nextKeys;
     if (globalThis.Input && Input._currentState) {
       for (const name in state.actions) if (!wanted[name]) Input._currentState[name] = false;

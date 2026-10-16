@@ -1,5 +1,6 @@
 package io.github.gdlbo.makerplay.feature.player.controller.ui
 
+import android.view.KeyEvent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -65,6 +66,7 @@ import io.github.gdlbo.makerplay.input.VirtualControllerProfileValidator
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlinx.coroutines.awaitCancellation
 
 @Composable
 internal fun ControllerEditorPanel(
@@ -74,6 +76,7 @@ internal fun ControllerEditorPanel(
     onSelected: (String?) -> Unit,
     onResetProfile: () -> Unit,
     onSaveAsDefault: (() -> Unit)? = null,
+    onKeyCapture: (((Int) -> Unit)?) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val selectedIndex = profile.controls.indexOfFirst { it.id == selectedId }.takeIf { it >= 0 } ?: 0
@@ -143,7 +146,7 @@ internal fun ControllerEditorPanel(
                         style = MaterialTheme.typography.labelSmall,
                     )
                     if (selected.type == VirtualControlType.D_PAD) DPadSummary()
-                    else ButtonOptions(profile, selected, onProfileChanged)
+                    else ButtonOptions(profile, selected, onProfileChanged, onKeyCapture)
                     ControlSliders(profile, selected, onProfileChanged)
                     PositionSliders(profile, selected, onProfileChanged)
                 }
@@ -265,24 +268,86 @@ private fun DPadSummary() {
 }
 
 @Composable
-private fun ButtonOptions(profile: VirtualControllerProfile, selected: VirtualControl, onProfileChanged: (VirtualControllerProfile) -> Unit) {
+private fun ButtonOptions(
+    profile: VirtualControllerProfile,
+    selected: VirtualControl,
+    onProfileChanged: (VirtualControllerProfile) -> Unit,
+    onKeyCapture: (((Int) -> Unit)?) -> Unit,
+) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         ActionSelector(profile, selected, onProfileChanged)
+        KeyBindButton(profile, selected, onProfileChanged, onKeyCapture)
         ShapeSelector(profile, selected, onProfileChanged)
     }
 }
 
 @Composable
-private fun ActionSelector(profile: VirtualControllerProfile, selected: VirtualControl, onProfileChanged: (VirtualControllerProfile) -> Unit) {
-    var showActionPicker by rememberSaveable(selected.id) { mutableStateOf(false) }
-    val isKeyboardKey = profile.id == "keyboard" && selected.keyCode != null
-    val actionLabel = if (isKeyboardKey) {
-        stringResource(R.string.controller_keyboard_key_value, controlDisplayLabel(selected))
+private fun KeyBindButton(
+    profile: VirtualControllerProfile,
+    selected: VirtualControl,
+    onProfileChanged: (VirtualControllerProfile) -> Unit,
+    onKeyCapture: (((Int) -> Unit)?) -> Unit,
+) {
+    var listening by rememberSaveable(selected.id) { mutableStateOf(false) }
+    LaunchedEffect(listening, selected.id) {
+        if (!listening) {
+            onKeyCapture(null)
+            return@LaunchedEffect
+        }
+        try {
+            onKeyCapture { keyCode ->
+                listening = false
+                onProfileChanged(profile.update(controlBoundToKey(selected, keyCode)))
+            }
+            awaitCancellation()
+        } finally {
+            onKeyCapture(null)
+        }
+    }
+    val keyLabel = if (selected.keyCode != null) {
+        controlDisplayLabel(selected)
     } else {
-        stringResource(R.string.controller_action_value, gameActionLabel(selected.action))
+        stringResource(R.string.controller_key_unset)
     }
     OutlinedButton(
-        enabled = !isKeyboardKey, onClick = { showActionPicker = true },
+        onClick = { listening = !listening },
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+    ) {
+        Text(
+            if (listening) stringResource(R.string.controller_press_key)
+            else stringResource(R.string.controller_keyboard_key_value, keyLabel),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+internal fun controlBoundToKey(control: VirtualControl, keyCode: Int): VirtualControl {
+    val code = if (keyCode == KeyEvent.KEYCODE_BACK) KeyEvent.KEYCODE_ESCAPE else keyCode
+    val action = when (code) {
+        KeyEvent.KEYCODE_DPAD_UP -> GameAction.UP
+        KeyEvent.KEYCODE_DPAD_DOWN -> GameAction.DOWN
+        KeyEvent.KEYCODE_DPAD_LEFT -> GameAction.LEFT
+        KeyEvent.KEYCODE_DPAD_RIGHT -> GameAction.RIGHT
+        KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_NUMPAD_ENTER, KeyEvent.KEYCODE_Z -> GameAction.OK
+        KeyEvent.KEYCODE_ESCAPE, KeyEvent.KEYCODE_DEL, KeyEvent.KEYCODE_FORWARD_DEL, KeyEvent.KEYCODE_X -> GameAction.ESCAPE
+        KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> GameAction.SHIFT
+        KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT -> GameAction.CONTROL
+        KeyEvent.KEYCODE_TAB -> GameAction.TAB
+        KeyEvent.KEYCODE_MENU -> GameAction.MENU
+        KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_Q -> GameAction.PAGE_UP
+        KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_W -> GameAction.PAGE_DOWN
+        else -> control.action
+    }
+    return control.copy(keyCode = code, action = action, label = null)
+}
+
+@Composable
+private fun ActionSelector(profile: VirtualControllerProfile, selected: VirtualControl, onProfileChanged: (VirtualControllerProfile) -> Unit) {
+    var showActionPicker by rememberSaveable(selected.id) { mutableStateOf(false) }
+    val actionLabel = stringResource(R.string.controller_action_value, gameActionLabel(selected.action))
+    OutlinedButton(
+        onClick = { showActionPicker = true },
         modifier = Modifier.fillMaxWidth().height(48.dp),
     ) { Text(actionLabel, maxLines = 1, overflow = TextOverflow.Ellipsis) }
     if (showActionPicker) {

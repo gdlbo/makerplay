@@ -141,6 +141,51 @@ class CommonJsNodeFsScriptTest {
     }
 
     @Test
+    fun `covers copy stat descriptors and explicit unsupported fs calls`() {
+        runHarness(
+            """
+            const fs = globalThis.require("fs");
+
+            responses.set("exists /game/save/note.txt", { ok: true, data: true });
+            responses.set("stat /game/save/note.txt", {
+              ok: true,
+              data: { file: true, directory: false, size: 4, mtimeMs: 10 },
+            });
+            const fd = fs.openSync("/game/save/note.txt", "r");
+            assert.equal(fs.fstatSync(fd).size, 4);
+            responses.set("truncate /game/save/note.txt", { ok: true, data: true });
+            fs.ftruncateSync(fd, 0);
+            assert.equal(calls[calls.length - 1].op, "truncate");
+            assert.equal(calls[calls.length - 1].size, 0);
+
+            responses.set("stat /game/save", {
+              ok: true,
+              data: { file: false, directory: true, size: 0, mtimeMs: 10 },
+            });
+            responses.set("readdir /game/save", { ok: true, data: ["note.txt"] });
+            responses.set("stat /game/save/note.txt", {
+              ok: true,
+              data: { file: true, directory: false, size: 4, mtimeMs: 10 },
+            });
+            responses.set("copy /game/save/note.txt", { ok: true, data: true });
+            responses.set("mkdir /game/backup", { ok: true, data: true });
+            fs.cpSync("/game/save", "/game/backup", { recursive: true });
+            assert.equal(calls.some((call) => call.op === "copy" && call.path === "/game/save/note.txt"), true);
+
+            await new Promise((resolve, reject) => {
+              fs.writeFile("/game/save/out.txt", "hi", (error) => error ? reject(error) : resolve());
+            });
+            assert.equal(asyncCalls.some((call) => call.op === "write" && call.path === "/game/save/out.txt"), true);
+
+            assert.throws(() => fs.chmodSync("/game/save/note.txt", 0o644), (error) => error.code === "ENOSYS");
+            assert.throws(() => fs.watch("/game/save"), (error) => error.code === "ENOSYS");
+            await assert.rejects(fs.promises.symlink("a", "b"), (error) => error.code === "ENOSYS");
+            fs.closeSync(fd);
+            """,
+        )
+    }
+
+    @Test
     fun `reads descriptor windows through bounded native ranges`() {
         runHarness(
             """
@@ -174,6 +219,57 @@ class CommonJsNodeFsScriptTest {
 
             assert.throws(() => fs.readSync(fd, Buffer.alloc(2), -1, 1, 0), RangeError);
             assert.throws(() => fs.readSync(fd, Buffer.alloc(2), 0, 1, -1), RangeError);
+
+            responses.set("readRange /game/www/large.dat", {
+              ok: true,
+              data: Buffer.from("ab").toString("base64"),
+            });
+            const shaped = Buffer.alloc(4, "_");
+            assert.equal(fs.readSync(fd, shaped, { offset: 1, length: 2, position: 5n }), 2);
+            assert.equal(shaped.toString(), "_ab_");
+            assert.equal(calls[calls.length - 1].position, 5);
+            assert.equal(calls[calls.length - 1].size, 2);
+
+            const left = Buffer.alloc(2);
+            const right = Buffer.alloc(2);
+            assert.equal(fs.readvSync(fd, [left, right], 10n), 4);
+            assert.equal(left.toString(), "ab");
+            assert.equal(right.toString(), "ab");
+            assert.equal(calls[calls.length - 1].position, 12);
+
+            const encoded = await new Promise((resolve, reject) => {
+              fs.read(fd, { length: 2, position: 0, encoding: "utf8" }, (error, bytesRead, text) => {
+                if (error) reject(error);
+                else resolve({ bytesRead, text });
+              });
+            });
+            assert.equal(encoded.bytesRead, 2);
+            assert.equal(encoded.text, "ab");
+
+            const controller = new AbortController();
+            controller.abort();
+            const aborted = await new Promise((resolve) => {
+              fs.read(fd, { signal: controller.signal }, (error) => resolve(error));
+            });
+            assert.equal(aborted.name, "AbortError");
+            assert.equal(aborted.code, "ABORT_ERR");
+
+            responses.set("readRange /game/www/wide.dat", {
+              ok: true,
+              data: Buffer.from("abcdefghij").toString("base64"),
+            });
+            const stream = fs.createReadStream("/game/www/wide.dat", { start: 4, highWaterMark: 3 });
+            const streamed = await new Promise((resolve, reject) => {
+              stream.once("data", resolve);
+              stream.once("error", reject);
+            });
+            assert.equal(Buffer.from(streamed).toString(), "abc");
+            const ranged = calls.filter((call) => call.op === "readRange" && call.path === "/game/www/wide.dat");
+            assert.equal(ranged[0].position, 4);
+            assert.equal(ranged[0].size, 3);
+            assert.equal(calls.filter((call) => call.op === "read" && call.path === "/game/www/wide.dat").length, 0);
+            stream.destroy();
+
             fs.closeSync(fd);
             """,
         )
@@ -508,10 +604,24 @@ class CommonJsNodeFsScriptTest {
             const fs = globalThis.require("fs");
             const stream = globalThis.require("stream");
 
-            responses.set("read /game/save/log.txt", {
-              ok: true,
-              data: Buffer.from("line1\nline2\n").toString("base64"),
-            });
+            const log = Buffer.from("line1\nline2\n");
+            const native = globalThis.makerplayNodeNative;
+            const originalTransact = native.transact.bind(native);
+            native.transact = (token, request) => {
+              const value = JSON.parse(request);
+              if (value.op === "readRange" && value.path === "/game/save/log.txt") {
+                calls.push(value);
+                const start = value.position || 0;
+                const size = value.size || log.length;
+                return JSON.stringify({
+                  v: 1,
+                  id: value.id,
+                  ok: true,
+                  data: log.subarray(start, start + size).toString("base64"),
+                });
+              }
+              return originalTransact(token, request);
+            };
             const chunks = [];
             const reader = fs.createReadStream("/game/save/log.txt", { highWaterMark: 4 });
             reader.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
@@ -574,6 +684,24 @@ class CommonJsNodeFsScriptTest {
             assert.equal(writes.length, 1);
             assert.equal(Buffer.from(writes[0].data, "base64").toString(), "hi");
             assert.equal(writes[0].append, false);
+            """,
+        )
+    }
+
+    @Test
+    fun `builtins required by the example games resolve`() {
+        runHarness(
+            """
+            for (const name of ["fs", "path", "os", "events", "http", "child_process", "nw.gui", "querystring", "url", "punycode", "_process"]) {
+              const loaded = globalThis.require(name);
+              assert.ok(loaded != null && (typeof loaded === "object" || typeof loaded === "function"), name);
+            }
+            assert.equal(globalThis.require("child_process").execSync, globalThis.require("child_process").execSync);
+            assert.throws(() => globalThis.require("child_process").execSync("echo hi"), (error) => error.code === "ENOSYS");
+            assert.equal(typeof globalThis.require("http").request, "function");
+            assert.equal(typeof globalThis.require("https").request, "function");
+            assert.equal(globalThis.require("punycode").toASCII("example.com"), "example.com");
+            assert.equal(globalThis.require("_process"), globalThis.require("process"));
             """,
         )
     }

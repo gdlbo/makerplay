@@ -282,7 +282,9 @@ private fun VirtualButton(
                         releaseJob?.cancel()
                         val pressedAt = SystemClock.uptimeMillis()
                         pressed = true
-                        reducer.press(source, control.action)
+                        // Letters and digits must not also press OK. That injected
+                        // Enter and confirmed instead of typing the key.
+                        if (!isLiteralKeyCode(control.keyCode)) reducer.press(source, control.action)
                         control.keyCode?.let { reducer.pressKeyCode(source, it) }
                         onSnapshotChanged(reducer.snapshot())
                         try {
@@ -786,6 +788,18 @@ private fun keyboardFrame(profile: VirtualControllerProfile): KeyboardFrame? {
     val right = min(1f, keys.maxOf { it.x + it.width } + paddingX)
     val bottom = min(1f, keys.maxOf { it.y + it.height } + paddingY)
     return KeyboardFrame(left, top, right - left, bottom - top)
+}
+
+internal fun isLiteralKeyCode(keyCode: Int?): Boolean = when (keyCode) {
+    null -> false
+    in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> true
+    in KeyEvent.KEYCODE_A..KeyEvent.KEYCODE_Z -> true
+    KeyEvent.KEYCODE_SPACE, KeyEvent.KEYCODE_COMMA, KeyEvent.KEYCODE_PERIOD,
+    KeyEvent.KEYCODE_GRAVE, KeyEvent.KEYCODE_MINUS, KeyEvent.KEYCODE_EQUALS,
+    KeyEvent.KEYCODE_LEFT_BRACKET, KeyEvent.KEYCODE_RIGHT_BRACKET,
+    KeyEvent.KEYCODE_BACKSLASH, KeyEvent.KEYCODE_SEMICOLON,
+    KeyEvent.KEYCODE_APOSTROPHE, KeyEvent.KEYCODE_SLASH -> true
+    else -> false
 }
 
 internal fun dPadActionsForPosition(x: Float, y: Float, captured: Boolean = false): Set<GameAction> {
