@@ -21,6 +21,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.net.toUri
@@ -55,6 +56,7 @@ import io.github.gdlbo.makerplay.feature.library.R
 import io.github.gdlbo.makerplay.feature.player.controller.ui.DefaultControllerLayoutScreen
 import io.github.gdlbo.makerplay.feature.player.runtime.RuntimeHostScreen
 import io.github.gdlbo.makerplay.feature.settings.GameSettingsScreen
+import io.github.gdlbo.makerplay.feature.settings.R.string
 import io.github.gdlbo.makerplay.feature.settings.SettingsScreen
 import io.github.gdlbo.makerplay.runtime.api.LaunchRequest
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +68,10 @@ fun MakerPlayApp(graph: AppGraph) {
     val games by graph.catalog.games.collectAsStateWithLifecycle()
     val importState by graph.importCoordinator.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    val openFolderFailedMessage = stringResource(R.string.open_folder_failed)
+    val savedAsAppDefaultMessage = stringResource(
+        string.saved_as_app_default,
+    )
     val scope = rememberCoroutineScope()
     val lifecycleOwner = LocalLifecycleOwner.current
     var hasFullStorageAccess by remember { mutableStateOf(Environment.isExternalStorageManager()) }
@@ -183,7 +189,7 @@ fun MakerPlayApp(graph: AppGraph) {
                             if (folder == null || !openFolderExternally(context, folder)) {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.open_folder_failed),
+                                    openFolderFailedMessage,
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             }
@@ -351,9 +357,7 @@ fun MakerPlayApp(graph: AppGraph) {
                             graph.runtimeSettings = settings
                             Toast.makeText(
                                 context,
-                                context.getString(
-                                    io.github.gdlbo.makerplay.feature.settings.R.string.saved_as_app_default,
-                                ),
+                                savedAsAppDefaultMessage,
                                 Toast.LENGTH_SHORT,
                             ).show()
                         },
@@ -373,7 +377,7 @@ fun MakerPlayApp(graph: AppGraph) {
                             if (folder == null || !openFolderExternally(context, folder)) {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.open_folder_failed),
+                                    openFolderFailedMessage,
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             }
@@ -403,7 +407,7 @@ fun MakerPlayApp(graph: AppGraph) {
                             if (!openFolderExternally(context, directory)) {
                                 Toast.makeText(
                                     context,
-                                    context.getString(R.string.open_folder_failed),
+                                    openFolderFailedMessage,
                                     Toast.LENGTH_SHORT,
                                 ).show()
                             }
