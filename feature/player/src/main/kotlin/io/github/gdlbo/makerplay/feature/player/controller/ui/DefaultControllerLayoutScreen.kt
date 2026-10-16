@@ -2,11 +2,7 @@ package io.github.gdlbo.makerplay.feature.player.controller.ui
 
 import android.view.KeyEvent
 import androidx.activity.compose.BackHandler
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -37,13 +33,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import io.github.gdlbo.makerplay.feature.player.R
 import io.github.gdlbo.makerplay.feature.player.controller.data.ControllerLayoutStore
 import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerLayouts
 import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerMode
-import io.github.gdlbo.makerplay.feature.player.runtime.components.RuntimeOverlayTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -170,27 +168,25 @@ fun DefaultControllerLayoutScreen(
                     onSnapshotChanged = { _ -> },
                     modifier = Modifier.fillMaxSize(),
                 )
-                RuntimeOverlayTheme {
-                    ControllerEditorPanel(
-                        profile = layouts.activeProfile(),
-                        selectedId = selectedControlId,
-                        onProfileChanged = { layouts = layouts.updateActive(it) },
-                        onSelected = { selectedControlId = it },
-                        onResetProfile = {
-                            val resetLayouts = layouts.resetActive()
-                            layouts = resetLayouts
-                            selectedControlId =
-                                resetLayouts.activeProfile().controls.firstOrNull()?.id
-                        },
-                        onKeyCapture = { keyCapture = it },
-                        modifier = Modifier
-                            .align(Alignment.TopCenter)
-                            .safeDrawingPadding()
-                            .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 12.dp)
-                            .widthIn(max = 380.dp)
-                            .heightIn(max = editorMaxHeight),
-                    )
-                }
+                ControllerEditorPanel(
+                    profile = layouts.activeProfile(),
+                    selectedId = selectedControlId,
+                    onProfileChanged = { layouts = layouts.updateActive(it) },
+                    onSelected = { selectedControlId = it },
+                    onResetProfile = {
+                        val resetLayouts = layouts.resetActive()
+                        layouts = resetLayouts
+                        selectedControlId =
+                            resetLayouts.activeProfile().controls.firstOrNull()?.id
+                    },
+                    onKeyCapture = { keyCapture = it },
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .safeDrawingPadding()
+                        .padding(start = 12.dp, top = 12.dp, bottom = 12.dp, end = 12.dp)
+                        .widthIn(max = 380.dp)
+                        .heightIn(max = editorMaxHeight),
+                )
             }
         }
     }

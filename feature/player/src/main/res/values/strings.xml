@@ -140,6 +140,7 @@
     <string name="world_tools">World</string>
     <string name="map_id">Map ID</string>
     <string name="teleport">Teleport</string>
+    <string name="system_keyboard">System keyboard</string>
     <string name="save_position">Save position %1$d</string>
     <string name="recall_position">Recall position %1$d</string>
     <string name="controller_controls">Controls</string>
@@ -213,6 +214,8 @@
     <string name="controller_action_value">Action: %1$s</string>
     <string name="controller_keyboard_key_value">Keyboard key: %1$s</string>
     <string name="controller_press_key">Press a key</string>
+    <string name="controller_choose_key">Choose a key</string>
+    <string name="controller_choose_key_hint">Tap a letter or button</string>
     <string name="controller_key_unset">None</string>
     <string name="controller_choose_action">Choose action</string>
     <string name="controller_delete_title">Delete this button?</string>

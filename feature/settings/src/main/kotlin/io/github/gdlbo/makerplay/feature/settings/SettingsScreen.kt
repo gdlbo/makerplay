@@ -7,33 +7,36 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SportsEsports
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
@@ -54,11 +58,6 @@ import io.github.gdlbo.makerplay.runtime.api.RuntimeOrientation
 import io.github.gdlbo.makerplay.runtime.api.RuntimeScaleMode
 import io.github.gdlbo.makerplay.runtime.api.RuntimeSettings
 import io.github.gdlbo.makerplay.runtime.api.SUPPORTED_FPS_LIMITS
-
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.ListItemDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.ui.graphics.Color
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -108,6 +107,7 @@ fun SettingsScreen(
                     .widthIn(max = 680.dp)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -317,6 +317,7 @@ fun GameSettingsScreen(
                     .widthIn(max = 680.dp)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
+                    .navigationBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -333,14 +334,20 @@ fun GameSettingsScreen(
                                 )
                             },
                         )
-                        TextButton(onClick = onShowInFileManager, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(
+                            onClick = onShowInFileManager,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Icon(Icons.Default.FolderOpen, contentDescription = null)
                             Text(
                                 stringResource(R.string.show_in_file_manager),
                                 modifier = Modifier.padding(start = 8.dp),
                             )
                         }
-                        TextButton(onClick = onOpenInExternalFileManager, modifier = Modifier.fillMaxWidth()) {
+                        TextButton(
+                            onClick = onOpenInExternalFileManager,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null)
                             Text(
                                 stringResource(R.string.open_in_file_manager),
@@ -364,7 +371,11 @@ fun GameSettingsScreen(
                     ) {
                         Text(stringResource(R.string.save_as_app_default))
                     }
-                    RuntimeSettingsOptions(customSettings, onCustomSettingsChange, isWolfGame = isWolfGame)
+                    RuntimeSettingsOptions(
+                        customSettings,
+                        onCustomSettingsChange,
+                        isWolfGame = isWolfGame
+                    )
                 } else {
                     Text(
                         stringResource(
@@ -539,7 +550,11 @@ private fun ColumnScope.RuntimeSettingsOptions(
                 checked = runtimeSettings.modules.steamCompatibility,
                 onCheckedChange = {
                     onRuntimeSettingsChange(
-                        runtimeSettings.copy(modules = runtimeSettings.modules.copy(steamCompatibility = it)),
+                        runtimeSettings.copy(
+                            modules = runtimeSettings.modules.copy(
+                                steamCompatibility = it
+                            )
+                        ),
                     )
                 },
             )
@@ -611,11 +626,13 @@ private fun SettingsCard(
 ) {
     Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
+        shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
             content = content,
         )
     }
@@ -626,7 +643,7 @@ private fun SettingsSection(title: String) {
     Text(
         title,
         modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 4.dp),
-        style = MaterialTheme.typography.labelLarge,
+        style = MaterialTheme.typography.titleSmall,
         color = MaterialTheme.colorScheme.primary,
     )
 }

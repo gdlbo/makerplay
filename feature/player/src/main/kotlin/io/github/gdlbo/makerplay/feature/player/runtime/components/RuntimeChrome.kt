@@ -1,21 +1,30 @@
 package io.github.gdlbo.makerplay.feature.player.runtime.components
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Done
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.SportsEsports
 import androidx.compose.material.icons.filled.Visibility
@@ -34,30 +43,15 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import io.github.gdlbo.makerplay.feature.player.R
 import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerMode
-
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 
 @Composable
 internal fun RuntimePreparing(modifier: Modifier = Modifier) {
@@ -68,16 +62,16 @@ internal fun RuntimePreparing(modifier: Modifier = Modifier) {
         contentColor = MaterialTheme.colorScheme.onSurface,
         tonalElevation = 3.dp,
     ) {
-      Column(
-        modifier = Modifier.padding(horizontal = 28.dp, vertical = 22.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(16.dp),
-      ) {
-        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
-        Text(
-            text = stringResource(R.string.preparing_runtime),
-        )
-      }
+        Column(
+            modifier = Modifier.padding(horizontal = 28.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+            Text(
+                text = stringResource(R.string.preparing_runtime),
+            )
+        }
     }
 }
 
@@ -111,14 +105,10 @@ internal fun PlayerToolbar(
             .padding(top = 8.dp)
             .zIndex(3f)
             .graphicsLayer { alpha = pillAlpha },
-        shape = CircleShape,
-        color = Color(0xEE14161E),
-        border = BorderStroke(
-            1.dp,
-            if (editControls) Color(0xFF38BDF8).copy(alpha = 0.8f) else Color.White.copy(alpha = 0.14f),
-        ),
-        shadowElevation = 6.dp,
-        contentColor = Color.White,
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.inverseSurface,
+        shadowElevation = 3.dp,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
     ) {
         AnimatedContent(
             targetState = expanded,
@@ -144,13 +134,17 @@ internal fun PlayerToolbar(
                         },
                         contentDescription = stringResource(R.string.player_tools_show),
                         modifier = Modifier.size(18.dp),
-                        tint = if (editControls) Color(0xFF38BDF8) else Color.White,
+                        tint = if (editControls) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.inverseOnSurface
+                        },
                     )
                     Icon(
                         Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = Color.White.copy(alpha = 0.7f),
+                        tint = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.7f),
                     )
                 }
             } else {
@@ -182,8 +176,8 @@ internal fun PlayerToolbar(
                             if (showControls) R.string.controller_hide_controls else R.string.controller_show_controls,
                         ),
                         active = !showControls,
-                        activeColor = Color(0x33F59E0B),
-                        activeContentColor = Color(0xFFFBBF24),
+                        activeColor = MaterialTheme.colorScheme.tertiaryContainer,
+                        activeContentColor = MaterialTheme.colorScheme.onTertiaryContainer,
                     )
 
                     // Edit button layout
@@ -195,8 +189,8 @@ internal fun PlayerToolbar(
                             if (editControls) R.string.controller_finish_editing else R.string.controller_edit,
                         ),
                         active = editControls,
-                        activeColor = Color(0xFF0284C7),
-                        activeContentColor = Color.White,
+                        activeColor = MaterialTheme.colorScheme.primary,
+                        activeContentColor = MaterialTheme.colorScheme.onPrimary,
                     )
 
                     // Mode switch (Gamepad <-> Keyboard)
@@ -206,8 +200,8 @@ internal fun PlayerToolbar(
                         icon = if (controllerMode == ControllerMode.GAMEPAD) Icons.Default.Keyboard else Icons.Default.SportsEsports,
                         contentDescription = stringResource(R.string.controller_switch_mode),
                         active = controllerMode == ControllerMode.KEYBOARD,
-                        activeColor = Color(0xFF4F46E5),
-                        activeContentColor = Color.White,
+                        activeColor = MaterialTheme.colorScheme.secondaryContainer,
+                        activeContentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                     )
 
                     ToolbarDivider()
@@ -218,7 +212,7 @@ internal fun PlayerToolbar(
                             onClick = onOpenCheats,
                             icon = Icons.Default.AutoAwesome,
                             contentDescription = stringResource(R.string.cheats),
-                            tint = Color(0xFFFFD54F),
+                            tint = MaterialTheme.colorScheme.tertiary,
                         )
                     }
 
@@ -228,7 +222,7 @@ internal fun PlayerToolbar(
                         onClick = { expanded = false },
                         icon = Icons.Default.KeyboardArrowUp,
                         contentDescription = stringResource(R.string.player_tools_hide),
-                        tint = Color.White.copy(alpha = 0.8f),
+                        tint = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
                     )
                 }
             }
@@ -269,7 +263,7 @@ private fun ToolbarIconButton(
                 !enabled -> LocalContentColor.current.copy(alpha = 0.38f)
                 active -> activeContentColor
                 tint != null -> tint
-                else -> Color.White
+                else -> MaterialTheme.colorScheme.inverseOnSurface
             },
         )
     }
@@ -282,7 +276,7 @@ private fun ToolbarDivider() {
             .padding(horizontal = 3.dp)
             .width(1.dp)
             .height(18.dp)
-            .background(Color.White.copy(alpha = 0.15f)),
+            .background(MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.24f)),
     )
 }
 
@@ -296,11 +290,10 @@ internal fun PlayerBackButton(
             .safeDrawingPadding()
             .padding(top = 8.dp, end = 12.dp)
             .zIndex(3f),
-        shape = CircleShape,
-        color = Color(0xEE14161E),
-        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.14f)),
-        shadowElevation = 6.dp,
-        contentColor = Color.White,
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.inverseSurface,
+        shadowElevation = 3.dp,
+        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
     ) {
         IconButton(
             onClick = onBack,
@@ -310,7 +303,7 @@ internal fun PlayerBackButton(
                 Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = stringResource(R.string.navigate_back),
                 modifier = Modifier.size(18.dp),
-                tint = Color.White,
+                tint = MaterialTheme.colorScheme.inverseOnSurface,
             )
         }
     }

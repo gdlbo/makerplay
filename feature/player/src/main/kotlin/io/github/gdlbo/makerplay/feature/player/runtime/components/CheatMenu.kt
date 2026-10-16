@@ -1,6 +1,7 @@
 package io.github.gdlbo.makerplay.feature.player.runtime.components
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,10 +13,10 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
@@ -27,16 +28,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items as lazyItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Backspace
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Search
@@ -61,9 +63,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -90,6 +93,7 @@ import io.github.gdlbo.makerplay.runtime.api.CheatOperation
 import io.github.gdlbo.makerplay.runtime.api.CheatResource
 import io.github.gdlbo.makerplay.runtime.api.RecoveryTarget
 import kotlin.math.abs
+import androidx.compose.foundation.lazy.items as lazyItems
 
 private enum class CheatTab { BOOST, BATTLE, PARTY, ITEMS, DATA, WORLD }
 
@@ -251,27 +255,32 @@ private fun CheatMenu(
                         scrollState = boostScroll,
                         onFlagsChanged = onFlagsChanged,
                     )
+
                     CheatTab.BATTLE -> BattleTab(
                         flags = flags,
                         scrollState = battleScroll,
                         onFlagsChanged = onFlagsChanged,
                         onOperation = onOperation,
                     )
+
                     CheatTab.PARTY -> PartyTab(
                         catalog = catalog,
                         listState = partyListState,
                         onOperation = onOperation,
                     )
+
                     CheatTab.ITEMS -> ItemsTab(
                         catalog = catalog,
                         listState = itemsListState,
                         onOperation = onOperation,
                     )
+
                     CheatTab.DATA -> DataTab(
                         catalog = catalog,
                         listState = dataListState,
                         onOperation = onOperation,
                     )
+
                     CheatTab.WORLD -> WorldTab(
                         catalog = catalog,
                         scrollState = worldScroll,
@@ -378,7 +387,14 @@ private fun BattleTab(
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
             ) { Text(stringResource(R.string.recover_selected)) }
             TextButton(
-                onClick = { onOperation(CheatOperation.RefillResource(selected, CheatResource.MP)) },
+                onClick = {
+                    onOperation(
+                        CheatOperation.RefillResource(
+                            selected,
+                            CheatResource.MP
+                        )
+                    )
+                },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
             ) { Text(stringResource(R.string.refill_mp)) }
         }
@@ -387,7 +403,14 @@ private fun BattleTab(
             horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
         ) {
             TextButton(
-                onClick = { onOperation(CheatOperation.RefillResource(selected, CheatResource.TP)) },
+                onClick = {
+                    onOperation(
+                        CheatOperation.RefillResource(
+                            selected,
+                            CheatResource.TP
+                        )
+                    )
+                },
                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
             ) { Text(stringResource(R.string.refill_tp)) }
             TextButton(
@@ -506,13 +529,25 @@ private fun ActorCard(actor: CheatActorEntry, onOperation: (CheatOperation) -> U
             ) {
                 TextButton(
                     onClick = {
-                        onOperation(CheatOperation.SetActorStat(actor.id, CheatActorStat.HP, actor.mhp))
+                        onOperation(
+                            CheatOperation.SetActorStat(
+                                actor.id,
+                                CheatActorStat.HP,
+                                actor.mhp
+                            )
+                        )
                     },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                 ) { Text(stringResource(R.string.cheat_max_hp)) }
                 TextButton(
                     onClick = {
-                        onOperation(CheatOperation.SetActorStat(actor.id, CheatActorStat.MP, actor.mmp))
+                        onOperation(
+                            CheatOperation.SetActorStat(
+                                actor.id,
+                                CheatActorStat.MP,
+                                actor.mmp
+                            )
+                        )
                     },
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                 ) { Text(stringResource(R.string.cheat_max_mp)) }
@@ -538,7 +573,8 @@ private fun ItemsTab(
     onOperation: (CheatOperation) -> Unit,
 ) {
     var kindName by rememberSaveable { mutableStateOf(CheatInventoryKind.ITEM.name) }
-    val kind = CheatInventoryKind.entries.firstOrNull { it.name == kindName } ?: CheatInventoryKind.ITEM
+    val kind =
+        CheatInventoryKind.entries.firstOrNull { it.name == kindName } ?: CheatInventoryKind.ITEM
     var query by rememberSaveable { mutableStateOf("") }
     val source = when (kind) {
         CheatInventoryKind.ITEM -> catalog.items
@@ -549,9 +585,9 @@ private fun ItemsTab(
         val needle = query.trim()
         source.filter { entry ->
             needle.isEmpty() ||
-                entry.id.toString().contains(needle) ||
-                entry.name.contains(needle, ignoreCase = true) ||
-                entry.value.contains(needle, ignoreCase = true)
+                    entry.id.toString().contains(needle) ||
+                    entry.name.contains(needle, ignoreCase = true) ||
+                    entry.value.contains(needle, ignoreCase = true)
         }
     }
     Column(modifier = Modifier.fillMaxSize()) {
@@ -694,9 +730,9 @@ private fun DataTab(
         val needle = query.trim()
         source.filter { entry ->
             needle.isEmpty() ||
-                entry.id.toString().contains(needle) ||
-                entry.name.contains(needle, ignoreCase = true) ||
-                entry.value.contains(needle, ignoreCase = true)
+                    entry.id.toString().contains(needle) ||
+                    entry.name.contains(needle, ignoreCase = true) ||
+                    entry.value.contains(needle, ignoreCase = true)
         }
     }
     Column(modifier = Modifier.fillMaxSize()) {
@@ -903,7 +939,11 @@ private fun WorldTab(
     }
     var mapXText by remember(catalog.mapX) { mutableStateOf(catalog.mapX.toString()) }
     var mapYText by remember(catalog.mapY) { mutableStateOf(catalog.mapY.toString()) }
-    var actorIdText by remember { mutableStateOf(catalog.actors.firstOrNull()?.id?.toString() ?: "1") }
+    var actorIdText by remember {
+        mutableStateOf(
+            catalog.actors.firstOrNull()?.id?.toString() ?: "1"
+        )
+    }
     var paramIdText by remember { mutableStateOf("0") }
     var amountText by remember { mutableStateOf("10") }
     val mapId = mapIdText.toIntOrNull()?.takeIf { it in 1..9999 }
@@ -912,6 +952,27 @@ private fun WorldTab(
     val actorId = actorIdText.toIntOrNull()?.takeIf { it in 1..9999 }
     val paramId = paramIdText.toIntOrNull()?.takeIf { it in 0..7 }
     val amount = amountText.toIntOrNull()?.takeIf { it in -1_000_000_000..1_000_000_000 }
+    var activeNumber by remember { mutableStateOf<Int?>(null) }
+    var systemNumberKeyboard by remember { mutableStateOf(false) }
+    val keyboard = LocalSoftwareKeyboardController.current
+    fun selectNumber(index: Int) {
+        if (activeNumber != index) systemNumberKeyboard = false
+        activeNumber = index
+        if (!systemNumberKeyboard) keyboard?.hide()
+    }
+
+    fun editNumber(index: Int, next: String) {
+        when (index) {
+            0 -> mapIdText = next.filter(Char::isDigit).take(4)
+            1 -> mapXText = next.filter(Char::isDigit).take(4)
+            2 -> mapYText = next.filter(Char::isDigit).take(4)
+            3 -> actorIdText = next.filter(Char::isDigit).take(4)
+            4 -> paramIdText = next.filter(Char::isDigit).take(1)
+            5 -> amountText = next.filterIndexed { i, char ->
+                char.isDigit() || (char == '-' && i == 0)
+            }.take(11)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -936,25 +997,31 @@ private fun WorldTab(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            CompactValueField(
+            NumberValueField(
                 value = mapIdText,
-                onValueChange = { mapIdText = it.filter(Char::isDigit).take(4) },
+                onValueChange = { editNumber(0, it) },
                 placeholder = stringResource(R.string.map_id),
-                keyboardType = KeyboardType.Number,
+                selected = activeNumber == 0,
+                systemKeyboard = systemNumberKeyboard && activeNumber == 0,
+                onSelect = { selectNumber(0) },
                 modifier = Modifier.weight(1f),
             )
-            CompactValueField(
+            NumberValueField(
                 value = mapXText,
-                onValueChange = { mapXText = it.filter(Char::isDigit).take(4) },
+                onValueChange = { editNumber(1, it) },
                 placeholder = "X",
-                keyboardType = KeyboardType.Number,
+                selected = activeNumber == 1,
+                systemKeyboard = systemNumberKeyboard && activeNumber == 1,
+                onSelect = { selectNumber(1) },
                 modifier = Modifier.weight(1f),
             )
-            CompactValueField(
+            NumberValueField(
                 value = mapYText,
-                onValueChange = { mapYText = it.filter(Char::isDigit).take(4) },
+                onValueChange = { editNumber(2, it) },
                 placeholder = "Y",
-                keyboardType = KeyboardType.Number,
+                selected = activeNumber == 2,
+                systemKeyboard = systemNumberKeyboard && activeNumber == 2,
+                onSelect = { selectNumber(2) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -987,29 +1054,31 @@ private fun WorldTab(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            CompactValueField(
+            NumberValueField(
                 value = actorIdText,
-                onValueChange = { actorIdText = it.filter(Char::isDigit).take(4) },
+                onValueChange = { editNumber(3, it) },
                 placeholder = stringResource(R.string.actor_id),
-                keyboardType = KeyboardType.Number,
+                selected = activeNumber == 3,
+                systemKeyboard = systemNumberKeyboard && activeNumber == 3,
+                onSelect = { selectNumber(3) },
                 modifier = Modifier.weight(1f),
             )
-            CompactValueField(
+            NumberValueField(
                 value = paramIdText,
-                onValueChange = { paramIdText = it.filter(Char::isDigit).take(1) },
+                onValueChange = { editNumber(4, it) },
                 placeholder = stringResource(R.string.parameter_id),
-                keyboardType = KeyboardType.Number,
+                selected = activeNumber == 4,
+                systemKeyboard = systemNumberKeyboard && activeNumber == 4,
+                onSelect = { selectNumber(4) },
                 modifier = Modifier.weight(1f),
             )
-            CompactValueField(
+            NumberValueField(
                 value = amountText,
-                onValueChange = {
-                    amountText = it.filterIndexed { index, char ->
-                        char.isDigit() || (char == '-' && index == 0)
-                    }.take(11)
-                },
+                onValueChange = { editNumber(5, it) },
                 placeholder = stringResource(R.string.amount),
-                keyboardType = KeyboardType.Number,
+                selected = activeNumber == 5,
+                systemKeyboard = systemNumberKeyboard && activeNumber == 5,
+                onSelect = { selectNumber(5) },
                 modifier = Modifier.weight(1f),
             )
         }
@@ -1021,6 +1090,24 @@ private fun WorldTab(
             },
             enabled = actorId != null && paramId != null && amount != null,
         ) { Text(stringResource(R.string.add_parameter)) }
+        if (activeNumber != null && !systemNumberKeyboard) {
+            val index = activeNumber!!
+            val current = when (index) {
+                0 -> mapIdText
+                1 -> mapXText
+                2 -> mapYText
+                3 -> actorIdText
+                4 -> paramIdText
+                else -> amountText
+            }
+            NumberPad(
+                allowMinus = index == 5,
+                onDigit = { digit -> editNumber(index, current + digit) },
+                onMinus = { editNumber(index, "-$current".removePrefix("--")) },
+                onBackspace = { editNumber(index, current.dropLast(1)) },
+                onSystemKeyboard = { systemNumberKeyboard = true },
+            )
+        }
     }
 }
 
@@ -1100,7 +1187,11 @@ private fun CompactValueField(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(36.dp)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.small)
+                    .border(
+                        1.dp,
+                        MaterialTheme.colorScheme.outlineVariant,
+                        MaterialTheme.shapes.small
+                    )
                     .padding(horizontal = 8.dp),
                 contentAlignment = boxAlign,
             ) {
@@ -1122,6 +1213,143 @@ private fun CompactValueField(
                 if (state.isFocused) keyboard?.show()
             },
     )
+}
+
+@Composable
+private fun NumberValueField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    selected: Boolean,
+    systemKeyboard: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (systemKeyboard) {
+        val focus = remember { FocusRequester() }
+        val keyboard = LocalSoftwareKeyboardController.current
+        LaunchedEffect(Unit) {
+            runCatching { focus.requestFocus() }
+            keyboard?.show()
+        }
+        CompactValueField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = placeholder,
+            keyboardType = KeyboardType.Number,
+            modifier = modifier.focusRequester(focus),
+        )
+        return
+    }
+    Surface(
+        onClick = onSelect,
+        modifier = modifier.height(40.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainerHighest
+        },
+        contentColor = if (selected) {
+            MaterialTheme.colorScheme.onPrimaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        },
+        border = if (selected) {
+            androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+        } else {
+            null
+        },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text = value.ifEmpty { placeholder },
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NumberPad(
+    allowMinus: Boolean,
+    onDigit: (String) -> Unit,
+    onMinus: () -> Unit,
+    onBackspace: () -> Unit,
+    onSystemKeyboard: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        listOf("123", "456", "789").forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                row.forEach { digit ->
+                    NumberKey(
+                        digit.toString(),
+                        Modifier.weight(1f),
+                        onClick = { onDigit(digit.toString()) },
+                    )
+                }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            if (allowMinus) {
+                NumberKey("−", Modifier.weight(1f), onClick = onMinus)
+            } else {
+                Box(Modifier.weight(1f))
+            }
+            NumberKey("0", Modifier.weight(1f), onClick = { onDigit("0") })
+            NumberKey(
+                "",
+                Modifier.weight(1f),
+                onClick = onBackspace,
+                icon = {
+                    Icon(
+                        Icons.AutoMirrored.Filled.Backspace,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                },
+            )
+            Surface(
+                onClick = onSystemKeyboard,
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp),
+                shape = MaterialTheme.shapes.extraLarge,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.Keyboard,
+                        contentDescription = stringResource(R.string.system_keyboard),
+                        modifier = Modifier.size(18.dp),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NumberKey(
+    label: String,
+    modifier: Modifier,
+    onClick: () -> Unit,
+    icon: (@Composable () -> Unit)? = null,
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(40.dp),
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            if (icon != null) icon() else Text(label, style = MaterialTheme.typography.titleMedium)
+        }
+    }
 }
 
 @Composable

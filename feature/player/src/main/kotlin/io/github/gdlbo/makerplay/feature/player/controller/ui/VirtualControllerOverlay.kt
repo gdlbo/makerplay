@@ -1,7 +1,9 @@
 package io.github.gdlbo.makerplay.feature.player.controller.ui
 
-import android.view.KeyEvent
 import android.os.SystemClock
+import android.view.KeyEvent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -17,12 +19,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -39,25 +35,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Outline
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.unit.Density
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -139,6 +131,7 @@ internal fun VirtualControllerOverlay(
                         return@awaitEachGesture
                     }
                     val source = "virtual:game-touch"
+
                     // Normalized 0..1 overlay coords. input-bridge.js maps these
                     // through the CSS viewport / GameCanvas client rect.
                     fun normalized(localX: Float, localY: Float): Pair<Float, Float> =
@@ -174,10 +167,11 @@ internal fun VirtualControllerOverlay(
                 modifier = Modifier
                     .offset(x = maxWidth * frame.left, y = maxHeight * frame.top)
                     .size(width = maxWidth * frame.width, height = maxHeight * frame.height),
-                shape = RoundedCornerShape(16.dp),
-                color = Color(0xF2101218),
-                border = BorderStroke(1.dp, Color.White.copy(alpha = .14f)),
-                shadowElevation = 10.dp,
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = .92f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                tonalElevation = 2.dp,
+                shadowElevation = 6.dp,
             ) {}
         }
         profile.controls.forEach { control ->
@@ -260,9 +254,6 @@ private fun VirtualButton(
     var pressed by remember(control.id) { mutableStateOf(false) }
     val isKey = control.keyCode != null
     val circular = control.shape == VirtualControlShape.CIRCLE
-    val keyShape = if (isKey) RoundedCornerShape(6.dp) else RoundedCornerShape(10.dp)
-    val isModifierKey = isKey && (control.keyCode in listOf(59, 60, 113, 114, 57, 58, 61, 115, 67, 111, 82))
-    val isEnterKey = isKey && control.keyCode == 66
 
     val inputModifier = if (editMode) {
         Modifier
@@ -284,7 +275,7 @@ private fun VirtualButton(
                         pressed = true
                         // Letters and digits must not also press OK. That injected
                         // Enter and confirmed instead of typing the key.
-                        if (!isLiteralKeyCode(control.keyCode)) reducer.press(source, control.action)
+                        if (!isKeyOnlyCode(control.keyCode)) reducer.press(source, control.action)
                         control.keyCode?.let { reducer.pressKeyCode(source, it) }
                         onSnapshotChanged(reducer.snapshot())
                         try {
@@ -319,17 +310,25 @@ private fun VirtualButton(
         else -> control.opacity.coerceIn(.2f, 1f)
     }
     val buttonColor = when {
-        pressed -> Color(0xFF0284C7)
-        isEnterKey -> Color(0xFF1E3A5F).copy(alpha = fillAlpha)
-        isModifierKey -> Color(0xFF1B1D26).copy(alpha = fillAlpha)
-        isKey -> Color(0xFF282B36).copy(alpha = fillAlpha)
-        else -> controlColor.copy(alpha = fillAlpha)
+        pressed -> MaterialTheme.colorScheme.primary.copy(alpha = fillAlpha)
+        isKey -> MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = fillAlpha)
+        else -> MaterialTheme.colorScheme.inverseSurface.copy(alpha = fillAlpha)
     }
+    val labelColor = when {
+        pressed -> MaterialTheme.colorScheme.onPrimary
+        isKey -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.inverseOnSurface
+    }
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) 0.94f else 1f,
+        animationSpec = tween(120),
+        label = "press",
+    )
 
     val label: @Composable () -> Unit = {
         Text(
             text = controlDisplayLabel(control),
-            color = if (pressed) Color.White else if (darkControl || isKey) Color.White else Color.Black,
+            color = labelColor,
             style = MaterialTheme.typography.labelLarge.copy(
                 fontWeight = if (isKey) FontWeight.Medium else FontWeight.SemiBold,
                 fontSize = if (circular) 13.sp else if (isKey) 11.sp else 12.sp,
@@ -342,7 +341,12 @@ private fun VirtualButton(
     if (circular) {
         val border = controlBorder(editMode, selected, darkControl, pressed)
         Box(
-            modifier = modifier.then(inputModifier),
+            modifier = modifier
+                .then(inputModifier)
+                .graphicsLayer {
+                    scaleX = pressScale
+                    scaleY = pressScale
+                },
             contentAlignment = Alignment.Center,
         ) {
             Canvas(Modifier.fillMaxSize()) {
@@ -361,13 +365,17 @@ private fun VirtualButton(
         return
     }
     Surface(
-        modifier = modifier.then(inputModifier),
-        shape = keyShape,
+        modifier = modifier
+            .then(inputModifier)
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            },
+        shape = RoundedCornerShape(if (pressed) 10.dp else 14.dp),
         color = buttonColor,
-        contentColor = if (pressed) Color.White else if (darkControl || isKey) Color.White else Color.Black,
-        border = controlBorder(editMode, selected, darkControl, pressed),
-        tonalElevation = if (pressed) 0.dp else 1.dp,
-        shadowElevation = if (isKey && !pressed) 2.dp else 0.dp,
+        contentColor = labelColor,
+        border = if (isKey) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+        tonalElevation = if (pressed) 0.dp else 2.dp,
     ) {
         Box(
             contentAlignment = Alignment.Center,
@@ -396,7 +404,7 @@ private fun VirtualDPad(
     if (editMode) {
         val editAlpha = control.opacity.coerceIn(.2f, 1f)
         CircularPad(
-            fill = Color(0xFF12141C).copy(alpha = editAlpha),
+            fill = MaterialTheme.colorScheme.inverseSurface.copy(alpha = editAlpha),
             border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
             else BorderStroke(1.dp, Color.White.copy(alpha = 0.12f * editAlpha)),
             modifier = editModifier,
@@ -482,7 +490,8 @@ private fun VirtualDPad(
                                 )
                                 while (true) {
                                     val event = awaitPointerEvent()
-                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    val change =
+                                        event.changes.firstOrNull { it.id == down.id } ?: break
                                     if (!change.pressed) break
                                     change.consume()
                                     updateActions(
@@ -514,11 +523,11 @@ private fun VirtualDPad(
     ) {
         val playAlpha = control.opacity.coerceIn(.2f, 1f)
         CircularPad(
-            fill = Color(0xFF12141C).copy(alpha = playAlpha),
+            fill = MaterialTheme.colorScheme.inverseSurface.copy(alpha = playAlpha),
             border = BorderStroke(
                 1.dp,
-                if (activeActions.isNotEmpty()) Color(0xFF38BDF8).copy(alpha = 0.6f * playAlpha)
-                else Color.White.copy(alpha = 0.12f * playAlpha),
+                if (activeActions.isNotEmpty()) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f * playAlpha)
+                else MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.16f * playAlpha),
             ),
             modifier = Modifier
                 .offset(x = placement.x - touchLeft, y = placement.y - touchTop)
@@ -537,8 +546,8 @@ private fun DPadFace(
     val faceAlpha = opacity.coerceIn(.2f, 1f)
     val idleButtonColor = Color.White.copy(alpha = 0.09f * faceAlpha)
     val idleBorderColor = Color.White.copy(alpha = 0.18f * faceAlpha)
-    val activeButtonColor = Color(0xFF0284C7).copy(alpha = 0.92f * faceAlpha)
-    val activeGlowColor = Color(0xFF38BDF8).copy(alpha = faceAlpha)
+    val activeButtonColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f * faceAlpha)
+    val activeGlowColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f * faceAlpha)
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
@@ -765,9 +774,9 @@ private fun Offset.isInside(control: VirtualControl, canvasSize: IntSize): Boole
     val rawHeight = control.height * canvasSize.height
     if (!control.usesCircularBounds()) {
         return x >= left &&
-            x <= left + rawWidth &&
-            y >= top &&
-            y <= top + rawHeight
+                x <= left + rawWidth &&
+                y >= top &&
+                y <= top + rawHeight
     }
     val side = min(rawWidth, rawHeight)
     val centerX = left + rawWidth / 2f
@@ -781,14 +790,19 @@ private fun keyboardFrame(profile: VirtualControllerProfile): KeyboardFrame? {
     if (profile.id != "keyboard") return null
     val keys = profile.controls.filter { it.keyCode != null }
     if (keys.isEmpty()) return null
-    val paddingX = .008f
-    val paddingY = .012f
+    val paddingX = .006f
+    val paddingY = .008f
     val left = max(0f, keys.minOf { it.x } - paddingX)
     val top = max(0f, keys.minOf { it.y } - paddingY)
     val right = min(1f, keys.maxOf { it.x + it.width } + paddingX)
     val bottom = min(1f, keys.maxOf { it.y + it.height } + paddingY)
     return KeyboardFrame(left, top, right - left, bottom - top)
 }
+
+internal fun isKeyOnlyCode(keyCode: Int?): Boolean =
+    isLiteralKeyCode(keyCode) ||
+            keyCode == KeyEvent.KEYCODE_ALT_LEFT ||
+            keyCode == KeyEvent.KEYCODE_ALT_RIGHT
 
 internal fun isLiteralKeyCode(keyCode: Int?): Boolean = when (keyCode) {
     null -> false
@@ -799,10 +813,15 @@ internal fun isLiteralKeyCode(keyCode: Int?): Boolean = when (keyCode) {
     KeyEvent.KEYCODE_LEFT_BRACKET, KeyEvent.KEYCODE_RIGHT_BRACKET,
     KeyEvent.KEYCODE_BACKSLASH, KeyEvent.KEYCODE_SEMICOLON,
     KeyEvent.KEYCODE_APOSTROPHE, KeyEvent.KEYCODE_SLASH -> true
+
     else -> false
 }
 
-internal fun dPadActionsForPosition(x: Float, y: Float, captured: Boolean = false): Set<GameAction> {
+internal fun dPadActionsForPosition(
+    x: Float,
+    y: Float,
+    captured: Boolean = false
+): Set<GameAction> {
     val deltaX = x - .5f
     val deltaY = y - .5f
     val distance = hypot(deltaX, deltaY)
@@ -827,11 +846,18 @@ internal fun controlDisplayLabel(control: VirtualControl): String {
         KeyEvent.KEYCODE_TAB -> stringResource(R.string.key_tab)
         KeyEvent.KEYCODE_CAPS_LOCK -> stringResource(R.string.key_caps)
         KeyEvent.KEYCODE_ENTER -> stringResource(R.string.key_enter)
-        KeyEvent.KEYCODE_SHIFT_LEFT, KeyEvent.KEYCODE_SHIFT_RIGHT -> stringResource(R.string.key_shift)
-        KeyEvent.KEYCODE_CTRL_LEFT, KeyEvent.KEYCODE_CTRL_RIGHT -> stringResource(R.string.key_ctrl)
-        KeyEvent.KEYCODE_ALT_LEFT, KeyEvent.KEYCODE_ALT_RIGHT -> stringResource(R.string.key_alt)
+        KeyEvent.KEYCODE_SHIFT_LEFT -> "⇧L"
+        KeyEvent.KEYCODE_SHIFT_RIGHT -> "⇧R"
+        KeyEvent.KEYCODE_CTRL_LEFT -> "⌃L"
+        KeyEvent.KEYCODE_CTRL_RIGHT -> "⌃R"
+        KeyEvent.KEYCODE_ALT_LEFT -> "⌥L"
+        KeyEvent.KEYCODE_ALT_RIGHT -> "⌥R"
         KeyEvent.KEYCODE_SPACE -> stringResource(R.string.key_space)
         KeyEvent.KEYCODE_ESCAPE -> stringResource(R.string.key_escape)
+        KeyEvent.KEYCODE_DPAD_UP -> "↑"
+        KeyEvent.KEYCODE_DPAD_DOWN -> "↓"
+        KeyEvent.KEYCODE_DPAD_LEFT -> "←"
+        KeyEvent.KEYCODE_DPAD_RIGHT -> "→"
         KeyEvent.KEYCODE_MENU -> stringResource(R.string.key_menu)
         KeyEvent.KEYCODE_DEL -> "⌫"
         in KeyEvent.KEYCODE_0..KeyEvent.KEYCODE_9 -> (keyCode - KeyEvent.KEYCODE_0).toString()
@@ -946,7 +972,7 @@ internal fun controlsFitViewport(
         x >= 0f && y >= 0f && x + side <= canvasWidthPx && y + side <= canvasHeightPx
     } else {
         rawX >= 0f && rawY >= 0f &&
-            rawX + rawWidth <= canvasWidthPx && rawY + rawHeight <= canvasHeightPx
+                rawX + rawWidth <= canvasWidthPx && rawY + rawHeight <= canvasHeightPx
     }
 }
 

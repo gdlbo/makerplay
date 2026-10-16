@@ -1,12 +1,12 @@
 <resources>
     <string name="settings_title">Настройки</string>
     <string name="navigate_back">Назад</string>
-    <string name="appearance_section">ОФОРМЛЕНИЕ</string>
+    <string name="appearance_section">Оформление</string>
     <string name="app_theme">Тема приложения</string>
     <string name="theme_system">Как в системе</string>
     <string name="theme_light">Светлая</string>
     <string name="theme_dark">Тёмная</string>
-    <string name="library_section">БИБЛИОТЕКА</string>
+    <string name="library_section">Библиотека</string>
     <string name="default_game_folder">Папка по умолчанию</string>
     <string name="default_game_folder_example">/storage/emulated/0/Games</string>
     <string name="default_game_folder_description">Здесь будет открываться выбор папки при добавлении игры</string>
@@ -15,7 +15,7 @@
     <string name="default_import_mode">Режим импорта по умолчанию</string>
     <string name="default_copy_mode">Копировать</string>
     <string name="default_direct_mode">Напрямую</string>
-    <string name="display_section">ИЗОБРАЖЕНИЕ</string>
+    <string name="display_section">Изображение</string>
     <string name="orientation">Ориентация</string>
     <string name="orientation_auto">Авто</string>
     <string name="orientation_portrait">Портрет</string>
@@ -28,12 +28,12 @@
     <string name="pixel_smoothing_description">Делает увеличенную графику мягче. Отключите для чётких пикселей</string>
     <string name="immersive_mode">На весь экран</string>
     <string name="immersive_mode_description">Скрывает системные панели во время игры</string>
-    <string name="playback_section">ИГРА</string>
+    <string name="playback_section">Игра</string>
     <string name="pause_on_background">Останавливать игру при сворачивании</string>
     <string name="pause_on_background_description">Игра не будет продолжаться, пока приложение находится в фоне</string>
     <string name="game_vibration">Разрешить вибрацию</string>
     <string name="game_vibration_description">Игра сможет использовать вибрацию телефона</string>
-    <string name="compatibility_section">СОВМЕСТИМОСТЬ</string>
+    <string name="compatibility_section">Совместимость</string>
     <string name="engine_mode">Версия RPG Maker</string>
     <string name="engine_auto">Авто</string>
     <string name="engine_mv">MV</string>
@@ -45,7 +45,7 @@
     <string name="ignore_missing_files">Продолжать при отсутствующих файлах</string>
     <string name="ignore_missing_files_description">Не останавливает игру из-за необязательных ресурсов. Может скрыть настоящую ошибку</string>
     <string name="compatibility_restart_description">Эти изменения вступят в силу после следующего запуска игры</string>
-    <string name="performance_section">ПРОИЗВОДИТЕЛЬНОСТЬ</string>
+    <string name="performance_section">Производительность</string>
     <string name="fps_limit">Ограничение FPS</string>
     <string name="fps_value">%1$d FPS</string>
     <string name="fps_auto">Авто</string>
@@ -55,9 +55,9 @@
     <string name="use_common_settings">Использовать настройки приложения</string>
     <string name="use_common_settings_description">Не задавать отдельные параметры для этой игры</string>
     <string name="common_settings_summary">Используются настройки приложения: %1$s</string>
-    <string name="default_game_settings_section">НАСТРОЙКИ ИГР ПО УМОЛЧАНИЮ</string>
+    <string name="default_game_settings_section">Настройки игр по умолчанию</string>
     <string name="default_game_settings_description">Эти параметры применяются ко всем играм, которые используют настройки приложения</string>
-    <string name="default_controller_section">РАСКЛАДКА ПО УМОЛЧАНИЮ</string>
+    <string name="default_controller_section">Раскладка по умолчанию</string>
     <string name="default_controller_description">Игры без своей раскладки кнопок используют эту схему</string>
     <string name="default_controller_layout">Раскладка по умолчанию</string>
     <string name="default_controller_layout_builtin">Встроенные кнопки</string>
@@ -70,7 +70,7 @@
     <string name="game_folder">Папка игры</string>
     <string name="show_in_file_manager">Показать в файловом менеджере</string>
     <string name="open_in_file_manager">Открыть в файлах</string>
-    <string name="runtime_modules_section">ДОПОЛНИТЕЛЬНЫЕ ВОЗМОЖНОСТИ</string>
+    <string name="runtime_modules_section">Дополнительные возможности</string>
     <string name="runtime_modules_description">Отдельные компоненты для совместимости с играми. Отключите компонент, если он вызывает проблемы</string>
     <string name="module_steam">Поддержка Steam</string>
     <string name="module_steam_description">Позволяет запускать игры, которым нужны функции Steam</string>

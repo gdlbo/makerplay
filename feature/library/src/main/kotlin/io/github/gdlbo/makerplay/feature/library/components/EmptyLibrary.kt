@@ -60,7 +60,12 @@ internal fun EmptyLibrary(modifier: Modifier, importEnabled: Boolean, onImport: 
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
-        Button(onClick = onImport, enabled = importEnabled, modifier = Modifier.height(56.dp)) {
+        Button(
+            onClick = onImport,
+            enabled = importEnabled,
+            modifier = Modifier.height(56.dp),
+            shape = MaterialTheme.shapes.extraLarge,
+        ) {
             Icon(Icons.Default.Add, contentDescription = null)
             Text(stringResource(R.string.choose_game_folder), Modifier.padding(start = 8.dp))
         }

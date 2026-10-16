@@ -139,6 +139,7 @@
     <string name="world_tools">Мир</string>
     <string name="map_id">ID карты</string>
     <string name="teleport">Телепортироваться</string>
+    <string name="system_keyboard">Системная клавиатура</string>
     <string name="save_position">Сохранить позицию %1$d</string>
     <string name="recall_position">Вернуться к позиции %1$d</string>
     <string name="controller_controls">Управление</string>
@@ -212,6 +213,8 @@
     <string name="controller_action_value">Действие: %1$s</string>
     <string name="controller_keyboard_key_value">Клавиша: %1$s</string>
     <string name="controller_press_key">Нажмите клавишу</string>
+    <string name="controller_choose_key">Выберите клавишу</string>
+    <string name="controller_choose_key_hint">Нажмите букву или кнопку</string>
     <string name="controller_key_unset">Нет</string>
     <string name="controller_choose_action">Выберите действие</string>
     <string name="controller_delete_title">Удалить эту кнопку?</string>

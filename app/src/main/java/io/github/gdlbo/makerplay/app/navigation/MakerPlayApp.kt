@@ -30,6 +30,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavType
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
@@ -123,7 +128,22 @@ fun MakerPlayApp(graph: AppGraph) {
     )
     MakerPlayTheme(themeMode = themeMode) {
         Surface(modifier = Modifier.fillMaxSize()) {
-            NavHost(navController = navController, startDestination = "library") {
+            NavHost(
+                navController = navController,
+                startDestination = "library",
+                enterTransition = {
+                    fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 5 }
+                },
+                exitTransition = {
+                    fadeOut(tween(180)) + slideOutHorizontally(tween(180)) { -it / 8 }
+                },
+                popEnterTransition = {
+                    fadeIn(tween(220)) + slideInHorizontally(tween(220)) { -it / 8 }
+                },
+                popExitTransition = {
+                    fadeOut(tween(180)) + slideOutHorizontally(tween(180)) { it / 5 }
+                },
+            ) {
                 composable("library") { entry ->
                     DisposableEffect(entry) {
                         val observer = LifecycleEventObserver { _, event ->
