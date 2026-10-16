@@ -7,8 +7,7 @@
   globalThis.__makerplayVisualBoosts = true;
 
   const STYLE_ID = "makerplay-visual-boosts";
-  const FILTER =
-    "contrast(1.06) saturate(1.08) brightness(1.02)";
+  const FILTER = "contrast(1.06) saturate(1.08) brightness(1.02)";
 
   function ensureStyle() {
     let style = document.getElementById(STYLE_ID);
@@ -63,8 +62,7 @@
         }
       }
       if (pixi.BaseTexture && pixi.SCALE_MODES && pixi.SCALE_MODES.NEAREST != null) {
-        pixi.BaseTexture.defaultOptions =
-          pixi.BaseTexture.defaultOptions || {};
+        pixi.BaseTexture.defaultOptions = pixi.BaseTexture.defaultOptions || {};
         pixi.BaseTexture.defaultOptions.scaleMode = pixi.SCALE_MODES.NEAREST;
       }
     } catch (_) {

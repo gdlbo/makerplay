@@ -1,0 +1,12 @@
+# Bundled third-party code, kept byte-identical to its upstream release.
+runtime/webview/src/main/assets/runtime/rangetouch-2.0.1.js
+runtime/wolf/src/main/cpp/third-party/
+example/
+build/
+**/build/
+node_modules/
+
+# Fragments of one bundle: bootstrap.js opens the shared IIFE and loader.js closes it,
+# so neither file parses on its own. COMMON_JS_PARTS concatenates them at runtime.
+runtime/webview/src/main/assets/runtime/commonjs/bootstrap.js
+runtime/webview/src/main/assets/runtime/commonjs/loader.js

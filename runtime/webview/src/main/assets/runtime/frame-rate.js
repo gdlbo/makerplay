@@ -19,25 +19,25 @@
 
   const counterElement = () => {
     if (!showCounter) return null;
-    let counter = document.getElementById('makerplay-fps-counter');
+    let counter = document.getElementById("makerplay-fps-counter");
     if (counter) return counter;
-    counter = document.createElement('div');
-    counter.id = 'makerplay-fps-counter';
-    counter.setAttribute('aria-hidden', 'true');
-    counter.textContent = '-- FPS';
+    counter = document.createElement("div");
+    counter.id = "makerplay-fps-counter";
+    counter.setAttribute("aria-hidden", "true");
+    counter.textContent = "-- FPS";
     Object.assign(counter.style, {
-      position: 'fixed',
-      top: 'calc(12px + env(safe-area-inset-top))',
-      left: 'calc(12px + env(safe-area-inset-left))',
-      zIndex: '2147483647',
-      padding: '5px 8px',
-      borderRadius: '4px',
-      background: 'rgba(0, 0, 0, 0.72)',
-      color: '#ffffff',
-      font: '600 12px monospace',
-      lineHeight: '16px',
-      pointerEvents: 'none',
-      userSelect: 'none',
+      position: "fixed",
+      top: "calc(12px + env(safe-area-inset-top))",
+      left: "calc(12px + env(safe-area-inset-left))",
+      zIndex: "2147483647",
+      padding: "5px 8px",
+      borderRadius: "4px",
+      background: "rgba(0, 0, 0, 0.72)",
+      color: "#ffffff",
+      font: "600 12px monospace",
+      lineHeight: "16px",
+      pointerEvents: "none",
+      userSelect: "none",
     });
     document.documentElement?.appendChild(counter);
     return counter;
@@ -46,7 +46,7 @@
     const timestamp = performance.now();
     const elapsed = timestamp - sampleStartedAt;
     const counter = counterElement();
-    if (counter) counter.textContent = `${Math.round(sampledFrames * 1000 / elapsed)} FPS`;
+    if (counter) counter.textContent = `${Math.round((sampledFrames * 1000) / elapsed)} FPS`;
     sampledFrames = 0;
     sampleStartedAt = timestamp;
   };

@@ -29,7 +29,9 @@ class RuntimeInputFrameBridgeTest {
         assertTrue(source.contains("getBoundingClientRect()"))
         assertTrue(source.contains("normalized 0..1 fractions"))
         assertTrue(source.contains("clientWidth"))
-        assertTrue(source.contains("canvas.width / rect.width"))
+        // Bracket-insensitive: Prettier may parenthesise the scaled ratio.
+        assertTrue(source.contains("canvas.width"))
+        assertTrue(source.contains("/ rect.width"))
     }
 
     @Test

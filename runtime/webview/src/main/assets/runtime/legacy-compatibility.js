@@ -1,8 +1,11 @@
 (() => {
   "use strict";
   const eventScriptNames = [
-    "set_text_sound_name", "set_text_sound_volume", "set_text_sound_pitch",
-    "set_text_sound_interval", "set_text_sound_pan",
+    "set_text_sound_name",
+    "set_text_sound_volume",
+    "set_text_sound_pitch",
+    "set_text_sound_interval",
+    "set_text_sound_pan",
   ];
   const installEventScriptStubs = () => {
     eventScriptNames.forEach(name => {
@@ -10,7 +13,11 @@
         globalThis[name] = function () {};
       }
       const Interpreter = globalThis.Game_Interpreter;
-      if (Interpreter && Interpreter.prototype && typeof Interpreter.prototype[name] !== "function") {
+      if (
+        Interpreter &&
+        Interpreter.prototype &&
+        typeof Interpreter.prototype[name] !== "function"
+      ) {
         Interpreter.prototype[name] = function () {
           return globalThis[name].apply(this, arguments);
         };
@@ -27,13 +34,16 @@
     const script = document.createElement("script");
     script.src = (manager._path || "js/plugins/") + name + ".js";
     script.async = false;
-    script.onerror = () => { if (script.parentNode) script.parentNode.removeChild(script); };
+    script.onerror = () => {
+      if (script.parentNode) script.parentNode.removeChild(script);
+    };
     root.appendChild(script);
     scripts.push(name);
   };
   const bindKeyboardRequest = () => {
     const TouchInput = globalThis.TouchInput;
-    if (!TouchInput || (TouchInput.requestKeyboard && TouchInput.requestKeyboard.__makerplay)) return;
+    if (!TouchInput || (TouchInput.requestKeyboard && TouchInput.requestKeyboard.__makerplay))
+      return;
     TouchInput.requestKeyboard = function (variableId, title, defaultValue) {
       const bridge = globalThis.makerplayKeyboard;
       if (bridge && typeof bridge.request === "function") {
@@ -51,14 +61,17 @@
     tryLoadUnlistedPlugin("MessageTextSound");
     installEventScriptStubs();
     bindKeyboardRequest();
-    if (globalThis.Utils) Utils.isDesignMode = function() { return false; };
+    if (globalThis.Utils)
+      Utils.isDesignMode = function () {
+        return false;
+      };
   };
   const hookPluginManager = () => {
     const manager = globalThis.PluginManager;
     if (!manager || typeof manager.setup !== "function") return false;
     if (manager.setup.__makerplayEventStubs) return true;
     const originalSetup = manager.setup;
-    manager.setup = function(plugins) {
+    manager.setup = function (plugins) {
       const value = originalSetup.apply(this, arguments);
       afterPlugins();
       return value;
@@ -81,7 +94,8 @@
     globalThis.AudioContext = globalThis.webkitAudioContext;
   }
   if (!globalThis.requestAnimationFrame) {
-    globalThis.requestAnimationFrame = callback => setTimeout(() => callback(performance.now()), 16);
+    globalThis.requestAnimationFrame = callback =>
+      setTimeout(() => callback(performance.now()), 16);
     globalThis.cancelAnimationFrame = clearTimeout;
   }
   if (!Element.prototype.remove) {
@@ -93,8 +107,8 @@
   // This runs before rmmz_core.js creates Bitmap, so guard the Canvas setter
   // used by Bitmap.drawText and plugins instead of wrapping Bitmap itself.
   const canvasContext = globalThis.CanvasRenderingContext2D;
-  const textAlign = canvasContext &&
-    Object.getOwnPropertyDescriptor(canvasContext.prototype, "textAlign");
+  const textAlign =
+    canvasContext && Object.getOwnPropertyDescriptor(canvasContext.prototype, "textAlign");
   if (textAlign?.set && textAlign.configurable) {
     const validAlignments = ["left", "right", "center", "start", "end"];
     Object.defineProperty(canvasContext.prototype, "textAlign", {
@@ -102,9 +116,8 @@
       enumerable: textAlign.enumerable,
       get: textAlign.get,
       set(value) {
-        const compatibleValue = typeof value === "string" && validAlignments.indexOf(value) >= 0
-          ? value
-          : "left";
+        const compatibleValue =
+          typeof value === "string" && validAlignments.indexOf(value) >= 0 ? value : "left";
         textAlign.set.call(this, compatibleValue);
       },
     });
@@ -117,7 +130,12 @@
     const compatibleGetImageData = function (x, y) {
       const compatibleX = Number.isFinite(x) ? Math.trunc(x) : x;
       const compatibleY = Number.isFinite(y) ? Math.trunc(y) : y;
-      return getImageData.call(this, compatibleX, compatibleY, ...Array.prototype.slice.call(arguments, 2));
+      return getImageData.call(
+        this,
+        compatibleX,
+        compatibleY,
+        ...Array.prototype.slice.call(arguments, 2),
+      );
     };
     compatibleGetImageData.__makerplayIntegerCoordinates = true;
     canvasContext.prototype.getImageData = compatibleGetImageData;
@@ -137,7 +155,11 @@
   bindKeyboardRequest();
   const keyboardPoll = setInterval(() => {
     bindKeyboardRequest();
-    if (globalThis.TouchInput && TouchInput.requestKeyboard && TouchInput.requestKeyboard.__makerplay) {
+    if (
+      globalThis.TouchInput &&
+      TouchInput.requestKeyboard &&
+      TouchInput.requestKeyboard.__makerplay
+    ) {
       clearInterval(keyboardPoll);
     }
   }, 50);
@@ -157,30 +179,40 @@
     } else {
       ensureCanvasId();
     }
-    document.addEventListener("click", event => {
-      const target = event.target;
-      if (target && target.id === "_111_input") {
+    document.addEventListener(
+      "click",
+      event => {
+        const target = event.target;
+        if (target && target.id === "_111_input") {
+          const bridge = globalThis.makerplayKeyboard;
+          if (bridge && typeof bridge.request === "function") {
+            bridge.request("Input:", String(target.value || ""), "0");
+          }
+        }
+      },
+      true,
+    );
+    document.addEventListener(
+      "focusin",
+      event => {
+        const target = event.target;
+        if (!target || (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA")) return;
+        if (target.id === "textBox" || target.id === "_111_input") return;
+        if (target.dataset && target.dataset.makerplayNative === "1") return;
+        event.preventDefault();
+        try {
+          target.blur();
+        } catch (_) {}
         const bridge = globalThis.makerplayKeyboard;
         if (bridge && typeof bridge.request === "function") {
-          bridge.request("Input:", String(target.value || ""), "0");
+          bridge.request(
+            String(target.placeholder || target.name || "Input:"),
+            String(target.value || ""),
+            "0",
+          );
         }
-      }
-    }, true);
-    document.addEventListener("focusin", event => {
-      const target = event.target;
-      if (!target || (target.tagName !== "INPUT" && target.tagName !== "TEXTAREA")) return;
-      if (target.id === "textBox" || target.id === "_111_input") return;
-      if (target.dataset && target.dataset.makerplayNative === "1") return;
-      event.preventDefault();
-      try { target.blur(); } catch (_) {}
-      const bridge = globalThis.makerplayKeyboard;
-      if (bridge && typeof bridge.request === "function") {
-        bridge.request(
-          String(target.placeholder || target.name || "Input:"),
-          String(target.value || ""),
-          "0",
-        );
-      }
-    }, true);
+      },
+      true,
+    );
   }
 })();

@@ -1,4 +1,3 @@
-
 // Keeps the game loop alive across transient frame errors. A single uncaught
 // exception inside SceneManager.update would otherwise cancel MV's
 // requestAnimationFrame chain permanently, freezing the game on a black
@@ -60,16 +59,21 @@
   const timer = setInterval(() => {
     attempts += 1;
     const manager = globalThis.SceneManager;
-    if (manager && typeof manager.isGameActive === "function" &&
-        !manager.isGameActive.__makerplayAlwaysActive) {
+    if (
+      manager &&
+      typeof manager.isGameActive === "function" &&
+      !manager.isGameActive.__makerplayAlwaysActive
+    ) {
       const alwaysActive = function () {
         return true;
       };
       alwaysActive.__makerplayAlwaysActive = true;
       manager.isGameActive = alwaysActive;
     }
-    if ((manager && manager.isGameActive && manager.isGameActive.__makerplayAlwaysActive) ||
-        attempts >= 600) {
+    if (
+      (manager && manager.isGameActive && manager.isGameActive.__makerplayAlwaysActive) ||
+      attempts >= 600
+    ) {
       clearInterval(timer);
     }
   }, 4);

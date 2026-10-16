@@ -8,10 +8,11 @@
     try {
       const value = JSON.parse(localStorage.getItem(storageKey) || "{}");
       return {
-        achievements: value.achievements && typeof value.achievements === "object" ? value.achievements : {},
+        achievements:
+          value.achievements && typeof value.achievements === "object" ? value.achievements : {},
         stats: value.stats && typeof value.stats === "object" ? value.stats : {},
         cloud: value.cloud && typeof value.cloud === "object" ? value.cloud : {},
-        profile: value.profile && typeof value.profile === "object" ? value.profile : null
+        profile: value.profile && typeof value.profile === "object" ? value.profile : null,
       };
     } catch (_) {
       return { achievements: {}, stats: {}, cloud: {}, profile: null };
@@ -38,7 +39,7 @@
       screenName: "Player",
       accountId,
       staticAccountId: String(accountId),
-      steamId: String(76561197960265728n + BigInt(accountId))
+      steamId: String(76561197960265728n + BigInt(accountId)),
     };
   };
   if (!state.profile?.steamId) {
@@ -48,7 +49,7 @@
   const callback = (fn, value) => {
     if (typeof fn === "function") queueMicrotask(() => fn(value));
   };
-  const key = value => typeof value === "string" && value.length <= 256 ? value : "";
+  const key = value => (typeof value === "string" && value.length <= 256 ? value : "");
   const language = () => {
     const value = (navigator.language || "en").toLowerCase();
     if (value.startsWith("ru")) return "russian";
@@ -71,7 +72,10 @@
     isSteamRunning: () => true,
     activateAchievement: (name, success, failure) => {
       name = key(name);
-      if (!name) { callback(failure, false); return false; }
+      if (!name) {
+        callback(failure, false);
+        return false;
+      }
       state.achievements[name] = true;
       const saved = saveState();
       callback(saved ? success : failure, saved);
@@ -79,14 +83,20 @@
     },
     getAchievement: (name, success, failure) => {
       name = key(name);
-      if (!name) { callback(failure, false); return false; }
+      if (!name) {
+        callback(failure, false);
+        return false;
+      }
       const value = !!state.achievements[name];
       callback(success, value);
       return value;
     },
     clearAchievement: (name, success, failure) => {
       name = key(name);
-      if (!name) { callback(failure, false); return false; }
+      if (!name) {
+        callback(failure, false);
+        return false;
+      }
       delete state.achievements[name];
       const saved = saveState();
       callback(saved ? success : failure, saved);
@@ -96,7 +106,8 @@
       name = key(name);
       current = Number(current);
       maximum = Number(maximum);
-      if (!name || !Number.isFinite(current) || !Number.isFinite(maximum) || maximum <= 0) return false;
+      if (!name || !Number.isFinite(current) || !Number.isFinite(maximum) || maximum <= 0)
+        return false;
       state.stats[`achievement-progress:${name}`] = Math.max(0, Math.min(current, maximum));
       if (current >= maximum) state.achievements[name] = true;
       return saveState();
@@ -116,7 +127,7 @@
       callback(saved ? success : failure, saved);
       return saved;
     },
-    getNumberOfPlayers: (success) => {
+    getNumberOfPlayers: success => {
       callback(success, 1);
       return true;
     },
@@ -137,7 +148,10 @@
     isAppInstalled: () => true,
     saveTextToFile: (name, contents, success, failure) => {
       name = key(name);
-      if (!name || typeof contents !== "string") { callback(failure, "Invalid file"); return false; }
+      if (!name || typeof contents !== "string") {
+        callback(failure, "Invalid file");
+        return false;
+      }
       state.cloud[name] = contents;
       const saved = saveState();
       callback(saved ? success : failure, saved ? undefined : "Unable to save file");
@@ -162,15 +176,17 @@
       const saved = saveState();
       callback(saved ? success : failure, saved);
       return saved;
-    }
+    },
   };
   const nativeRequire = globalThis.require;
   if (typeof nativeRequire === "function" && !nativeRequire.__makerplayGreenworks) {
-    const compatibleRequire = function(id) {
+    const compatibleRequire = function (id) {
       if (/^(?:\.\/)?greenworks(?:\.js)?$/i.test(String(id))) return greenworks;
       return nativeRequire.apply(this, arguments);
     };
-    Object.keys(nativeRequire).forEach(name => { compatibleRequire[name] = nativeRequire[name]; });
+    Object.keys(nativeRequire).forEach(name => {
+      compatibleRequire[name] = nativeRequire[name];
+    });
     compatibleRequire.__makerplayCommonJs = nativeRequire.__makerplayCommonJs;
     compatibleRequire.__makerplayGreenworks = true;
     globalThis.require = compatibleRequire;

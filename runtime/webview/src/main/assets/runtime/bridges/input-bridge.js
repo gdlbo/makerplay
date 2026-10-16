@@ -20,7 +20,7 @@
     pointers: new Map(),
     pointerTargets: new Map(),
     current: { v: 1, actions: [], keys: [], pointers: [] },
-    nameConfirmLatch: false
+    nameConfirmLatch: false,
   };
   // Host overlay pointers are normalized 0..1 fractions of the fullscreen overlay /
   // WebView viewport. Expand to CSS client space, then through GameCanvas's client
@@ -36,27 +36,41 @@
       const rect = canvas.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
         return {
-          x: Math.round((x - rect.left) * canvas.width / rect.width),
-          y: Math.round((y - rect.top) * canvas.height / rect.height),
+          x: Math.round(((x - rect.left) * canvas.width) / rect.width),
+          y: Math.round(((y - rect.top) * canvas.height) / rect.height),
         };
       }
     }
-    if (graphics && typeof graphics.pageToCanvasX === "function" && typeof graphics.pageToCanvasY === "function") {
+    if (
+      graphics &&
+      typeof graphics.pageToCanvasX === "function" &&
+      typeof graphics.pageToCanvasY === "function"
+    ) {
       return { x: graphics.pageToCanvasX(x), y: graphics.pageToCanvasY(y) };
     }
     return { x: Math.round(x), y: Math.round(y) };
   };
   const apply = payload => {
-    if (!payload || payload.v !== 1 || !Array.isArray(payload.actions) || !Array.isArray(payload.keys) || !Array.isArray(payload.pointers)) return;
-    if (payload.actions.length > 16 || payload.keys.length > 80 || payload.pointers.length > 16) return;
+    if (
+      !payload ||
+      payload.v !== 1 ||
+      !Array.isArray(payload.actions) ||
+      !Array.isArray(payload.keys) ||
+      !Array.isArray(payload.pointers)
+    )
+      return;
+    if (payload.actions.length > 16 || payload.keys.length > 80 || payload.pointers.length > 16)
+      return;
     state.current = payload;
     // Some MV/MZ plugins poll input during boot before game objects exist.
     // Keep the latest snapshot and apply it on the next engine input poll.
-    if (!globalThis.$gameVariables || typeof globalThis.$gameVariables.setValue !== "function") return;
+    if (!globalThis.$gameVariables || typeof globalThis.$gameVariables.setValue !== "function")
+      return;
     const wanted = Object.create(null);
     const nextKeys = new Map();
     for (const descriptor of payload.keys) {
-      if (!descriptor || !Number.isInteger(descriptor.a) || !Number.isInteger(descriptor.d)) continue;
+      if (!descriptor || !Number.isInteger(descriptor.a) || !Number.isInteger(descriptor.d))
+        continue;
       nextKeys.set(descriptor.a, descriptor);
     }
     for (const name of payload.actions) {
@@ -77,18 +91,26 @@
         }
       }
     }
-    const wantsOk = wanted.ok || Array.from(nextKeys.values()).some(key => key && (key.d === 13 || key.k === "Enter"));
+    const wantsOk =
+      wanted.ok ||
+      Array.from(nextKeys.values()).some(key => key && (key.d === 13 || key.k === "Enter"));
     if (!wantsOk) state.nameConfirmLatch = false;
     else if (!state.nameConfirmLatch) {
       state.nameConfirmLatch = true;
       const scene = globalThis.SceneManager && SceneManager._scene;
       const sceneName = scene && scene.constructor && scene.constructor.name;
-      const field = globalThis.document && (document.activeElement || document.getElementById("textBox"));
-      const fieldIsInput = !!(field && (field.tagName === "INPUT" || field.tagName === "TEXTAREA" || field.id === "textBox"));
+      const field =
+        globalThis.document && (document.activeElement || document.getElementById("textBox"));
+      const fieldIsInput = !!(
+        field &&
+        (field.tagName === "INPUT" || field.tagName === "TEXTAREA" || field.id === "textBox")
+      );
       const nameScene = sceneName === "Scene_KorName" || sceneName === "Scene_Name";
       if (nameScene || fieldIsInput) {
         if (field && typeof field.blur === "function") {
-          try { field.blur(); } catch (_) {}
+          try {
+            field.blur();
+          } catch (_) {}
         }
         if (nameScene && scene && typeof scene.commandInput === "function") {
           scene.commandInput();
@@ -102,8 +124,14 @@
     const altKey = Array.from(nextKeys.values()).some(key => key && key.d === 18);
     const dispatchKey = (descriptor, down) => {
       const event = new KeyboardEvent(down ? "keydown" : "keyup", {
-        bubbles: true, cancelable: true, key: descriptor.k, code: descriptor.c,
-        location: descriptor.l, shiftKey, ctrlKey, altKey,
+        bubbles: true,
+        cancelable: true,
+        key: descriptor.k,
+        code: descriptor.c,
+        location: descriptor.l,
+        shiftKey,
+        ctrlKey,
+        altKey,
       });
       Object.defineProperty(event, "keyCode", { get: () => descriptor.d });
       Object.defineProperty(event, "which", { get: () => descriptor.d });
@@ -116,12 +144,15 @@
         if (typeof name === "string" && /^[a-z]+$/.test(name)) wanted[name] = true;
       }
     }
-    for (const [androidCode, descriptor] of state.keys) if (!nextKeys.has(androidCode)) dispatchKey(descriptor, false);
+    for (const [androidCode, descriptor] of state.keys)
+      if (!nextKeys.has(androidCode)) dispatchKey(descriptor, false);
     // RPG Maker opens the map menu from isTriggered('menu'), which is true
     // only when _latestButton is 'escape'. A cancel action is recorded after
     // the Escape key and would otherwise steal that trigger.
-    const escapeDown = !!wanted.escape || Array.from(nextKeys.values()).some((key) => key && key.d === 27);
-    const escapeWasDown = !!state.actions.escape || Array.from(state.keys.values()).some((key) => key && key.d === 27);
+    const escapeDown =
+      !!wanted.escape || Array.from(nextKeys.values()).some(key => key && key.d === 27);
+    const escapeWasDown =
+      !!state.actions.escape || Array.from(state.keys.values()).some(key => key && key.d === 27);
     if (escapeDown && !escapeWasDown && globalThis.Input) Input._virtualButton = "escape";
     state.keys = nextKeys;
     if (globalThis.Input && Input._currentState) {
@@ -134,7 +165,14 @@
     const viewportHeight = document.documentElement?.clientHeight || window.innerHeight || 0;
     const nextPointers = new Map();
     for (const point of payload.pointers) {
-      if (!point || typeof point.id !== "string" || point.id.length > 128 || !Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+      if (
+        !point ||
+        typeof point.id !== "string" ||
+        point.id.length > 128 ||
+        !Number.isFinite(point.x) ||
+        !Number.isFinite(point.y)
+      )
+        continue;
       const clientX = Math.round(point.x * viewportWidth);
       const clientY = Math.round(point.y * viewportHeight);
       const canvasPoint = toCanvasPoint(point.x, point.y);
@@ -147,44 +185,109 @@
           TouchInput._onTrigger(canvasPoint.x, canvasPoint.y);
         }
         if (globalThis.document && typeof document.elementFromPoint === "function") {
-          const target = document.elementFromPoint(clientX, clientY) || document.body || document.documentElement;
+          const target =
+            document.elementFromPoint(clientX, clientY) ||
+            document.body ||
+            document.documentElement;
           state.pointerTargets.set(point.id, target);
-          const mouseProps = { bubbles: true, cancelable: true, view: window, clientX, clientY, screenX: clientX, screenY: clientY, button: 0, buttons: 1 };
+          const mouseProps = {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX,
+            clientY,
+            screenX: clientX,
+            screenY: clientY,
+            button: 0,
+            buttons: 1,
+          };
           if (typeof PointerEvent === "function") {
-            try { target.dispatchEvent(new PointerEvent("pointerdown", { ...mouseProps, pointerId: 1, isPrimary: true })); } catch (_) {}
+            try {
+              target.dispatchEvent(
+                new PointerEvent("pointerdown", { ...mouseProps, pointerId: 1, isPrimary: true }),
+              );
+            } catch (_) {}
           }
-          try { target.dispatchEvent(new MouseEvent("mousedown", mouseProps)); } catch (_) {}
+          try {
+            target.dispatchEvent(new MouseEvent("mousedown", mouseProps));
+          } catch (_) {}
         }
-      }
-      else if (previous.clientX !== clientX || previous.clientY !== clientY) {
+      } else if (previous.clientX !== clientX || previous.clientY !== clientY) {
         if (globalThis.TouchInput && typeof TouchInput._onMove === "function") {
           TouchInput._onMove(canvasPoint.x, canvasPoint.y);
         }
-        const target = state.pointerTargets.get(point.id) || (globalThis.document && typeof document.elementFromPoint === "function" && document.elementFromPoint(clientX, clientY)) || document.body || document.documentElement;
+        const target =
+          state.pointerTargets.get(point.id) ||
+          (globalThis.document &&
+            typeof document.elementFromPoint === "function" &&
+            document.elementFromPoint(clientX, clientY)) ||
+          document.body ||
+          document.documentElement;
         if (target) {
-          const mouseProps = { bubbles: true, cancelable: true, view: window, clientX, clientY, screenX: clientX, screenY: clientY, button: 0, buttons: 1 };
+          const mouseProps = {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX,
+            clientY,
+            screenX: clientX,
+            screenY: clientY,
+            button: 0,
+            buttons: 1,
+          };
           if (typeof PointerEvent === "function") {
-            try { target.dispatchEvent(new PointerEvent("pointermove", { ...mouseProps, pointerId: 1, isPrimary: true })); } catch (_) {}
+            try {
+              target.dispatchEvent(
+                new PointerEvent("pointermove", { ...mouseProps, pointerId: 1, isPrimary: true }),
+              );
+            } catch (_) {}
           }
-          try { target.dispatchEvent(new MouseEvent("mousemove", mouseProps)); } catch (_) {}
+          try {
+            target.dispatchEvent(new MouseEvent("mousemove", mouseProps));
+          } catch (_) {}
         }
       }
     }
-    for (const [id, previous] of state.pointers) if (!nextPointers.has(id)) {
-      if (globalThis.TouchInput && typeof TouchInput._onRelease === "function") {
-        TouchInput._onRelease(previous.canvasPoint.x, previous.canvasPoint.y);
-      }
-      const target = state.pointerTargets.get(id) || (globalThis.document && typeof document.elementFromPoint === "function" && document.elementFromPoint(previous.clientX, previous.clientY)) || document.body || document.documentElement;
-      state.pointerTargets.delete(id);
-      if (target) {
-        const mouseProps = { bubbles: true, cancelable: true, view: window, clientX: previous.clientX, clientY: previous.clientY, screenX: previous.clientX, screenY: previous.clientY, button: 0, buttons: 0 };
-        if (typeof PointerEvent === "function") {
-          try { target.dispatchEvent(new PointerEvent("pointerup", { ...mouseProps, pointerId: 1, isPrimary: true })); } catch (_) {}
+    for (const [id, previous] of state.pointers)
+      if (!nextPointers.has(id)) {
+        if (globalThis.TouchInput && typeof TouchInput._onRelease === "function") {
+          TouchInput._onRelease(previous.canvasPoint.x, previous.canvasPoint.y);
         }
-        try { target.dispatchEvent(new MouseEvent("mouseup", mouseProps)); } catch (_) {}
-        try { target.dispatchEvent(new MouseEvent("click", mouseProps)); } catch (_) {}
+        const target =
+          state.pointerTargets.get(id) ||
+          (globalThis.document &&
+            typeof document.elementFromPoint === "function" &&
+            document.elementFromPoint(previous.clientX, previous.clientY)) ||
+          document.body ||
+          document.documentElement;
+        state.pointerTargets.delete(id);
+        if (target) {
+          const mouseProps = {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: previous.clientX,
+            clientY: previous.clientY,
+            screenX: previous.clientX,
+            screenY: previous.clientY,
+            button: 0,
+            buttons: 0,
+          };
+          if (typeof PointerEvent === "function") {
+            try {
+              target.dispatchEvent(
+                new PointerEvent("pointerup", { ...mouseProps, pointerId: 1, isPrimary: true }),
+              );
+            } catch (_) {}
+          }
+          try {
+            target.dispatchEvent(new MouseEvent("mouseup", mouseProps));
+          } catch (_) {}
+          try {
+            target.dispatchEvent(new MouseEvent("click", mouseProps));
+          } catch (_) {}
+        }
       }
-    }
     if (globalThis.TouchInput) {
       TouchInput._screenPressed = nextPointers.size > 0;
     }
@@ -200,14 +303,15 @@
   };
   globalThis.addEventListener("blur", clear);
   globalThis.addEventListener("pagehide", clear);
-  if (globalThis.document) globalThis.document.addEventListener("visibilitychange", () => {
-    if (globalThis.document.hidden) clear();
-  });
+  if (globalThis.document)
+    globalThis.document.addEventListener("visibilitychange", () => {
+      if (globalThis.document.hidden) clear();
+    });
   const install = () => {
     if (!globalThis.Input || typeof Input._pollGamepads !== "function") return false;
     if (Input.__makerplayInputWrapped) return true;
     const pollGamepads = Input._pollGamepads;
-    Input._pollGamepads = function() {
+    Input._pollGamepads = function () {
       const result = pollGamepads.call(this);
       apply(state.current);
       return result;

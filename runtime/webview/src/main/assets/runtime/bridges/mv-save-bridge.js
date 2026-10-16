@@ -1,4 +1,4 @@
-(function() {
+(function () {
   "use strict";
   var token = __MAKERPLAY_SESSION_TOKEN__;
   var nextId = 1;
@@ -113,13 +113,13 @@
       return;
     }
     Object.defineProperty(data, "__makerplayGlobalInfoFastPath", { value: true });
-    data.loadGlobalInfo = function() {
+    data.loadGlobalInfo = function () {
       if (this._globaInfoCache) return this._globaInfoCache;
       try {
         var json = StorageManager.load(0);
         if (json) {
           var globalInfo = JsonEx.parse(json);
-          if (Array.isArray(globalInfo)) return this._globaInfoCache = globalInfo;
+          if (Array.isArray(globalInfo)) return (this._globaInfoCache = globalInfo);
         }
       } catch (_) {
         // Preserve the game's full reconstruction fallback.
@@ -132,7 +132,7 @@
     var storage = window.StorageManager;
     var changed = false;
     if (storage && installedStorageFunctions) {
-      Object.keys(installedStorageFunctions).forEach(function(name) {
+      Object.keys(installedStorageFunctions).forEach(function (name) {
         if (storage[name] !== installedStorageFunctions[name]) {
           storage[name] = installedStorageFunctions[name];
           changed = true;
@@ -157,26 +157,26 @@
     }
     refreshKnownKeys();
 
-    storage.save = function(savefileId, json) {
+    storage.save = function (savefileId, json) {
       var key = keyFor(savefileId);
       var compressed = LZString.compressToBase64(json);
       transaction("write", key, encodeAscii(compressed));
       knownKeys.add(key);
       cachePut(key, json);
     };
-    storage.load = function(savefileId) {
+    storage.load = function (savefileId) {
       return loadByKey(keyFor(savefileId));
     };
-    storage.exists = function(savefileId) {
+    storage.exists = function (savefileId) {
       return knownKeys.has(keyFor(savefileId));
     };
-    storage.remove = function(savefileId) {
+    storage.remove = function (savefileId) {
       var key = keyFor(savefileId);
       transaction("delete", key);
       knownKeys.delete(key);
       cacheDelete(key);
     };
-    storage.backup = function(savefileId) {
+    storage.backup = function (savefileId) {
       var sourceKey = keyFor(savefileId);
       var targetKey = backupKey(savefileId);
       var data = transaction("read", sourceKey);
@@ -187,16 +187,16 @@
         if (cached !== undefined) cachePut(targetKey, cached);
       }
     };
-    storage.backupExists = function(savefileId) {
+    storage.backupExists = function (savefileId) {
       return knownKeys.has(backupKey(savefileId));
     };
-    storage.cleanBackup = function(savefileId) {
+    storage.cleanBackup = function (savefileId) {
       var key = backupKey(savefileId);
       transaction("delete", key);
       knownKeys.delete(key);
       cacheDelete(key);
     };
-    storage.restoreBackup = function(savefileId) {
+    storage.restoreBackup = function (savefileId) {
       var sourceKey = backupKey(savefileId);
       var targetKey = keyFor(savefileId);
       var data = transaction("read", sourceKey);
@@ -219,7 +219,7 @@
       backup: storage.backup,
       backupExists: storage.backupExists,
       cleanBackup: storage.cleanBackup,
-      restoreBackup: storage.restoreBackup
+      restoreBackup: storage.restoreBackup,
     };
     setTimeout(maintainStoragePatch, 0);
     setTimeout(installGlobalInfoFastPath, 0);
