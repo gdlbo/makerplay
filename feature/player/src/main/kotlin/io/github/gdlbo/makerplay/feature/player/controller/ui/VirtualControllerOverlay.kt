@@ -311,13 +311,11 @@ private fun VirtualButton(
     }
     val buttonColor = when {
         pressed -> MaterialTheme.colorScheme.primary.copy(alpha = fillAlpha)
-        isKey -> MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = fillAlpha)
-        else -> MaterialTheme.colorScheme.inverseSurface.copy(alpha = fillAlpha)
+        else -> MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = fillAlpha)
     }
     val labelColor = when {
         pressed -> MaterialTheme.colorScheme.onPrimary
-        isKey -> MaterialTheme.colorScheme.onSurface
-        else -> MaterialTheme.colorScheme.inverseOnSurface
+        else -> MaterialTheme.colorScheme.onSurface
     }
     val pressScale by animateFloatAsState(
         targetValue = if (pressed) 0.94f else 1f,
@@ -404,9 +402,9 @@ private fun VirtualDPad(
     if (editMode) {
         val editAlpha = control.opacity.coerceIn(.2f, 1f)
         CircularPad(
-            fill = MaterialTheme.colorScheme.inverseSurface.copy(alpha = editAlpha),
+            fill = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = editAlpha),
             border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary)
-            else BorderStroke(1.dp, Color.White.copy(alpha = 0.12f * editAlpha)),
+            else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = editAlpha)),
             modifier = editModifier,
         ) {
             DPadFace(activeActions = emptySet(), opacity = editAlpha)
@@ -523,11 +521,11 @@ private fun VirtualDPad(
     ) {
         val playAlpha = control.opacity.coerceIn(.2f, 1f)
         CircularPad(
-            fill = MaterialTheme.colorScheme.inverseSurface.copy(alpha = playAlpha),
+            fill = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = playAlpha),
             border = BorderStroke(
                 1.dp,
                 if (activeActions.isNotEmpty()) MaterialTheme.colorScheme.primary.copy(alpha = 0.8f * playAlpha)
-                else MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.16f * playAlpha),
+                else MaterialTheme.colorScheme.outlineVariant.copy(alpha = playAlpha),
             ),
             modifier = Modifier
                 .offset(x = placement.x - touchLeft, y = placement.y - touchTop)
@@ -544,10 +542,16 @@ private fun DPadFace(
     opacity: Float = 1f,
 ) {
     val faceAlpha = opacity.coerceIn(.2f, 1f)
-    val idleButtonColor = Color.White.copy(alpha = 0.09f * faceAlpha)
-    val idleBorderColor = Color.White.copy(alpha = 0.18f * faceAlpha)
+    val idleButtonColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f * faceAlpha)
+    val idleBorderColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f * faceAlpha)
     val activeButtonColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f * faceAlpha)
     val activeGlowColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.45f * faceAlpha)
+    val chevronIdleColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.9f)
+    val chevronActiveColor = MaterialTheme.colorScheme.onPrimary
+    val dotColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.22f * faceAlpha)
+    val hubFillColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.56f)
+    val hubRingColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f)
+    val hubDotColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.35f)
 
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
@@ -563,7 +567,7 @@ private fun DPadFace(
                 val dotX = cx + (diagDist * kotlin.math.cos(rad)).toFloat()
                 val dotY = cy + (diagDist * kotlin.math.sin(rad)).toFloat()
                 drawCircle(
-                    color = Color.White.copy(alpha = 0.22f * faceAlpha),
+                    color = dotColor,
                     radius = dotRadius,
                     center = Offset(dotX, dotY),
                 )
@@ -639,7 +643,7 @@ private fun DPadFace(
 
             fun drawChevron(midX: Float, midY: Float, angleDeg: Float, active: Boolean) {
                 val strokeW = (if (active) 3.dp else 2.2.dp).toPx()
-                val color = if (active) Color.White else Color.White.copy(alpha = 0.85f)
+                val color = if (active) chevronActiveColor else chevronIdleColor
                 rotate(angleDeg, pivot = Offset(midX, midY)) {
                     val path = Path().apply {
                         moveTo(midX - chevronArm, midY + chevronArm * 0.45f)
@@ -665,18 +669,18 @@ private fun DPadFace(
 
             // Recessed center hub
             drawCircle(
-                color = Color(0x9008090E),
+                color = hubFillColor,
                 radius = hubRadius * 0.85f,
                 center = Offset(cx, cy),
             )
             drawCircle(
-                color = Color.White.copy(alpha = 0.15f),
+                color = hubRingColor,
                 radius = hubRadius * 0.85f,
                 center = Offset(cx, cy),
                 style = Stroke(width = 1.dp.toPx()),
             )
             drawCircle(
-                color = Color.White.copy(alpha = 0.35f),
+                color = hubDotColor,
                 radius = 2.dp.toPx(),
                 center = Offset(cx, cy),
             )

@@ -106,9 +106,9 @@ internal fun PlayerToolbar(
             .zIndex(3f)
             .graphicsLayer { alpha = pillAlpha },
         shape = MaterialTheme.shapes.extraLarge,
-        color = MaterialTheme.colorScheme.inverseSurface,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         shadowElevation = 3.dp,
-        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         AnimatedContent(
             targetState = expanded,
@@ -137,14 +137,14 @@ internal fun PlayerToolbar(
                         tint = if (editControls) {
                             MaterialTheme.colorScheme.primary
                         } else {
-                            MaterialTheme.colorScheme.inverseOnSurface
+                            MaterialTheme.colorScheme.onSurfaceVariant
                         },
                     )
                     Icon(
                         Icons.Default.KeyboardArrowDown,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.7f),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             } else {
@@ -222,7 +222,7 @@ internal fun PlayerToolbar(
                         onClick = { expanded = false },
                         icon = Icons.Default.KeyboardArrowUp,
                         contentDescription = stringResource(R.string.player_tools_hide),
-                        tint = MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.8f),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
                     )
                 }
             }
@@ -263,7 +263,7 @@ private fun ToolbarIconButton(
                 !enabled -> LocalContentColor.current.copy(alpha = 0.38f)
                 active -> activeContentColor
                 tint != null -> tint
-                else -> MaterialTheme.colorScheme.inverseOnSurface
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
             },
         )
     }
@@ -276,7 +276,7 @@ private fun ToolbarDivider() {
             .padding(horizontal = 3.dp)
             .width(1.dp)
             .height(18.dp)
-            .background(MaterialTheme.colorScheme.inverseOnSurface.copy(alpha = 0.24f)),
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.24f)),
     )
 }
 
@@ -291,9 +291,9 @@ internal fun PlayerBackButton(
             .padding(top = 8.dp, end = 12.dp)
             .zIndex(3f),
         shape = MaterialTheme.shapes.extraLarge,
-        color = MaterialTheme.colorScheme.inverseSurface,
+        color = MaterialTheme.colorScheme.surfaceContainer,
         shadowElevation = 3.dp,
-        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
     ) {
         IconButton(
             onClick = onBack,
@@ -303,7 +303,7 @@ internal fun PlayerBackButton(
                 Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = stringResource(R.string.navigate_back),
                 modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.inverseOnSurface,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

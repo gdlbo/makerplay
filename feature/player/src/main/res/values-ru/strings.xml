@@ -110,6 +110,8 @@
     <string name="refresh_catalog">Обновить данные игры</string>
     <string name="show_catalog">Показать данные игры</string>
     <string name="hide_catalog">Скрыть данные игры</string>
+    <string name="show_search">Показать поиск</string>
+    <string name="hide_search">Скрыть поиск</string>
     <string name="search_catalog">Поиск по ID, имени или значению</string>
     <string name="catalog_variables">Переменные</string>
     <string name="catalog_switches">Переключатели</string>

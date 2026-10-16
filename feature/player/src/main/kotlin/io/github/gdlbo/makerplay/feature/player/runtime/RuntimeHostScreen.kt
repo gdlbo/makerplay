@@ -1,6 +1,5 @@
 package io.github.gdlbo.makerplay.feature.player.runtime
 
-import android.view.KeyEvent as AndroidKeyEvent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -34,7 +33,6 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
@@ -57,6 +55,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import androidx.compose.ui.zIndex
 import io.github.gdlbo.makerplay.feature.player.R
 import io.github.gdlbo.makerplay.feature.player.controller.data.ControllerLayoutStore
 import io.github.gdlbo.makerplay.feature.player.controller.model.ControllerLayouts
@@ -84,7 +83,6 @@ import io.github.gdlbo.makerplay.runtime.api.LaunchRequest
 import io.github.gdlbo.makerplay.runtime.api.PreparedSession
 import io.github.gdlbo.makerplay.runtime.api.RuntimeEvent
 import io.github.gdlbo.makerplay.runtime.api.RuntimeMemoryCleaner
-import kotlin.math.roundToInt
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -93,6 +91,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
+import kotlin.math.roundToInt
+import android.view.KeyEvent as AndroidKeyEvent
 
 @Composable
 fun RuntimeHostScreen(
@@ -137,7 +137,8 @@ fun RuntimeHostScreen(
         )
     }
     val layoutStore = remember(layoutFile) { layoutFile?.let(::ControllerLayoutStore) }
-    val defaultStore = remember(defaultLayoutFile) { defaultLayoutFile?.let(::ControllerLayoutStore) }
+    val defaultStore =
+        remember(defaultLayoutFile) { defaultLayoutFile?.let(::ControllerLayoutStore) }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val savedAsDefaultMessage = stringResource(R.string.controller_saved_as_default)
@@ -147,11 +148,13 @@ fun RuntimeHostScreen(
             layoutStore?.saveOrClear(value, inherited)
         }
     }
+
     fun persistDefaultLayouts(value: ControllerLayouts) {
         scope.launch(Dispatchers.IO) {
             defaultStore?.saveOrClear(value)
         }
     }
+
     val clipboard = LocalClipboardManager.current
     val preparationFailure = stringResource(R.string.runtime_preparation_failed)
     val rendererCrashed = stringResource(R.string.renderer_stopped_unexpectedly)
@@ -190,6 +193,7 @@ fun RuntimeHostScreen(
             else -> confirmExit = true
         }
     }
+
     fun sendEscapeToGame() {
         scope.launch {
             val down = LogicalInputSnapshot(
@@ -212,6 +216,7 @@ fun RuntimeHostScreen(
                 keyCapture = null
                 capture(AndroidKeyEvent.KEYCODE_ESCAPE)
             }
+
             failure != null || showCheats || editControls || !gameReady -> handleBack()
             else -> sendEscapeToGame()
         }
@@ -344,6 +349,7 @@ fun RuntimeHostScreen(
                     virtualInput = LogicalInputSnapshot(actions, virtualInput.pointers, keys)
                     true
                 }
+
                 KeyEventType.KeyUp -> {
                     val actions = virtualInput.pressedActions.toMutableSet()
                     val keys = virtualInput.pressedKeyCodes.toMutableSet()
@@ -352,6 +358,7 @@ fun RuntimeHostScreen(
                     virtualInput = LogicalInputSnapshot(actions, virtualInput.pointers, keys)
                     true
                 }
+
                 else -> false
             }
         }
@@ -516,50 +523,51 @@ fun RuntimeHostScreen(
             }
         }
         val overlayVisible = session != null &&
-            shouldHostRuntimeOverlay(gameReady, runtimeViewport, imeVisible)
+                shouldHostRuntimeOverlay(gameReady, runtimeViewport, imeVisible)
         val overlayNeedsPopup = overlayVisible &&
-            shouldHostRuntimeOverlayPopup(
-                backendId = backend.descriptor.id,
-                gameReady = gameReady,
-                runtimeViewport = runtimeViewport,
-                imeVisible = imeVisible,
-            )
+                shouldHostRuntimeOverlayPopup(
+                    backendId = backend.descriptor.id,
+                    gameReady = gameReady,
+                    runtimeViewport = runtimeViewport,
+                    imeVisible = imeVisible,
+                )
+
         @Composable
         fun OverlayChrome(modifier: Modifier) {
-            Box(
-                modifier.onGloballyPositioned { coordinates ->
-                    val position = coordinates.positionOnScreen()
-                    val offset = IntOffset(position.x.roundToInt(), position.y.roundToInt())
-                    if (overlayPositionOnScreen != offset) overlayPositionOnScreen = offset
-                },
-            ) {
-                if (showControls && layoutLoaded && !showCheats) {
-                    val pageOffset = overlayPageOffsetPx(
-                        overlayPositionOnScreen = overlayPositionOnScreen,
-                        runtimeSurfacePositionOnScreen = runtimeSurfacePositionOnScreen,
-                    )
-                    VirtualControllerOverlay(
-                        profile = layouts.activeProfile(),
-                        editMode = editControls,
-                        selectedControlId = selectedControlId,
-                        onControlMoved = { controlId, deltaX, deltaY ->
-                            layouts = layouts.updateActive(
-                                moveVirtualControl(
-                                    layouts.activeProfile(),
-                                    controlId,
-                                    deltaX,
-                                    deltaY,
+            RuntimeOverlayTheme {
+                Box(
+                    modifier.onGloballyPositioned { coordinates ->
+                        val position = coordinates.positionOnScreen()
+                        val offset = IntOffset(position.x.roundToInt(), position.y.roundToInt())
+                        if (overlayPositionOnScreen != offset) overlayPositionOnScreen = offset
+                    },
+                ) {
+                    if (showControls && layoutLoaded && !showCheats) {
+                        val pageOffset = overlayPageOffsetPx(
+                            overlayPositionOnScreen = overlayPositionOnScreen,
+                            runtimeSurfacePositionOnScreen = runtimeSurfacePositionOnScreen,
+                        )
+                        VirtualControllerOverlay(
+                            profile = layouts.activeProfile(),
+                            editMode = editControls,
+                            selectedControlId = selectedControlId,
+                            onControlMoved = { controlId, deltaX, deltaY ->
+                                layouts = layouts.updateActive(
+                                    moveVirtualControl(
+                                        layouts.activeProfile(),
+                                        controlId,
+                                        deltaX,
+                                        deltaY,
+                                    ),
                                 )
-                            )
-                        },
-                        onControlSelected = { selectedControlId = it },
-                        onSnapshotChanged = { virtualInput = it },
-                        pointerPageOffsetX = pageOffset.first,
-                        pointerPageOffsetY = pageOffset.second,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                    if (editControls) {
-                        RuntimeOverlayTheme {
+                            },
+                            onControlSelected = { selectedControlId = it },
+                            onSnapshotChanged = { virtualInput = it },
+                            pointerPageOffsetX = pageOffset.first,
+                            pointerPageOffsetY = pageOffset.second,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                        if (editControls) {
                             ControllerEditorPanel(
                                 profile = layouts.activeProfile(),
                                 selectedId = selectedControlId,
@@ -591,76 +599,81 @@ fun RuntimeHostScreen(
                                 modifier = Modifier
                                     .align(Alignment.TopCenter)
                                     .safeDrawingPadding()
-                                    .padding(start = 12.dp, top = 76.dp, bottom = 12.dp, end = 12.dp)
+                                    .padding(
+                                        start = 12.dp,
+                                        top = 76.dp,
+                                        bottom = 12.dp,
+                                        end = 12.dp
+                                    )
                                     .widthIn(max = 380.dp)
                                     .heightIn(max = editorMaxHeight),
                             )
                         }
                     }
-                }
-                if (!showCheats) {
-                    PlayerToolbar(
-                        showControls = showControls,
-                        editControls = editControls,
-                        cheatsAvailable = request.settings.modules.cheatBridge &&
-                            cheatsAvailable == true,
-                        layoutLoaded = layoutLoaded,
-                        controllerMode = layouts.mode,
-                        onToggleControls = {
-                            if (showControls && editControls) {
-                                persistGameLayouts(layouts)
-                            }
-                            showControls = !showControls
-                            editControls = false
-                            virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                        },
-                        onToggleEditing = {
-                            if (!showControls) showControls = true
-                            val enteringEditing = !editControls
-                            android.util.Log.i(
-                                "MakerPlay",
-                                "runtime.controls.edit entering=$enteringEditing",
-                            )
-                            editControls = enteringEditing
-                            if (enteringEditing &&
-                                layouts.activeProfile().controls.none { it.id == selectedControlId }
-                            ) {
-                                selectedControlId =
-                                    layouts.activeProfile().controls.firstOrNull()?.id
-                            }
-                            virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                            if (!editControls) {
-                                persistGameLayouts(layouts)
-                            }
-                        },
-                        onOpenCheats = {
-                            if (request.settings.modules.cheatBridge) {
-                                if (editControls) {
+                    if (!showCheats) {
+                        PlayerToolbar(
+                            showControls = showControls,
+                            editControls = editControls,
+                            cheatsAvailable = request.settings.modules.cheatBridge &&
+                                    cheatsAvailable == true,
+                            layoutLoaded = layoutLoaded,
+                            controllerMode = layouts.mode,
+                            onToggleControls = {
+                                if (showControls && editControls) {
                                     persistGameLayouts(layouts)
                                 }
+                                showControls = !showControls
                                 editControls = false
                                 virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                                showCheats = true
-                            }
-                        },
-                        onSwitchMode = {
-                            layouts = layouts.copy(
-                                mode = if (layouts.mode == ControllerMode.GAMEPAD) {
-                                    ControllerMode.KEYBOARD
-                                } else {
-                                    ControllerMode.GAMEPAD
-                                },
-                            )
-                            selectedControlId =
-                                layouts.activeProfile().controls.firstOrNull()?.id
-                            showControls = true
-                            virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                            persistGameLayouts(layouts)
-                        },
-                        onRestart = { showRestartConfirm = true },
-                        onBack = ::handleBack,
-                        modifier = Modifier.align(Alignment.TopCenter),
-                    )
+                            },
+                            onToggleEditing = {
+                                if (!showControls) showControls = true
+                                val enteringEditing = !editControls
+                                android.util.Log.i(
+                                    "MakerPlay",
+                                    "runtime.controls.edit entering=$enteringEditing",
+                                )
+                                editControls = enteringEditing
+                                if (enteringEditing &&
+                                    layouts.activeProfile().controls.none { it.id == selectedControlId }
+                                ) {
+                                    selectedControlId =
+                                        layouts.activeProfile().controls.firstOrNull()?.id
+                                }
+                                virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                                if (!editControls) {
+                                    persistGameLayouts(layouts)
+                                }
+                            },
+                            onOpenCheats = {
+                                if (request.settings.modules.cheatBridge) {
+                                    if (editControls) {
+                                        persistGameLayouts(layouts)
+                                    }
+                                    editControls = false
+                                    virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                                    showCheats = true
+                                }
+                            },
+                            onSwitchMode = {
+                                layouts = layouts.copy(
+                                    mode = if (layouts.mode == ControllerMode.GAMEPAD) {
+                                        ControllerMode.KEYBOARD
+                                    } else {
+                                        ControllerMode.GAMEPAD
+                                    },
+                                )
+                                selectedControlId =
+                                    layouts.activeProfile().controls.firstOrNull()?.id
+                                showControls = true
+                                virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                                persistGameLayouts(layouts)
+                            },
+                            onRestart = { showRestartConfirm = true },
+                            onBack = ::handleBack,
+                            modifier = Modifier.align(Alignment.TopCenter),
+                        )
+                    }
                 }
             }
         }
@@ -691,7 +704,9 @@ fun RuntimeHostScreen(
                 )
             }
         } else if (overlayVisible) {
-            OverlayChrome(Modifier.fillMaxSize().zIndex(1f))
+            OverlayChrome(Modifier
+                .fillMaxSize()
+                .zIndex(1f))
         }
 
         // Cheats need a real dialog window so IME insets/focus work. Keeping them inside
@@ -726,50 +741,54 @@ fun RuntimeHostScreen(
     }
 
     if (confirmExit) {
-        AlertDialog(
-            onDismissRequest = { confirmExit = false },
-            title = { Text(stringResource(R.string.exit_game_title)) },
-            text = { Text(stringResource(R.string.exit_game_message)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    confirmExit = false
-                    onBack()
-                }) {
-                    Text(stringResource(R.string.exit_game))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmExit = false }) {
-                    Text(stringResource(R.string.continue_playing))
-                }
-            },
-        )
+        RuntimeOverlayTheme {
+            AlertDialog(
+                onDismissRequest = { confirmExit = false },
+                title = { Text(stringResource(R.string.exit_game_title)) },
+                text = { Text(stringResource(R.string.exit_game_message)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmExit = false
+                        onBack()
+                    }) {
+                        Text(stringResource(R.string.exit_game))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmExit = false }) {
+                        Text(stringResource(R.string.continue_playing))
+                    }
+                },
+            )
+        }
     }
 
     if (showRestartConfirm) {
-        AlertDialog(
-            onDismissRequest = { showRestartConfirm = false },
-            icon = { Icon(Icons.Default.RestartAlt, contentDescription = null) },
-            title = { Text(stringResource(R.string.restart_game)) },
-            text = { Text(stringResource(R.string.exit_game_message)) },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showRestartConfirm = false
-                        bootRecoveries = 0
-                        virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
-                        launchAttempt++
-                    },
-                ) {
-                    Text(stringResource(R.string.restart_game))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRestartConfirm = false }) {
-                    Text(stringResource(R.string.continue_playing))
-                }
-            },
-        )
+        RuntimeOverlayTheme {
+            AlertDialog(
+                onDismissRequest = { showRestartConfirm = false },
+                icon = { Icon(Icons.Default.RestartAlt, contentDescription = null) },
+                title = { Text(stringResource(R.string.restart_game)) },
+                text = { Text(stringResource(R.string.exit_game_message)) },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            showRestartConfirm = false
+                            bootRecoveries = 0
+                            virtualInput = LogicalInputSnapshot(emptySet(), emptySet())
+                            launchAttempt++
+                        },
+                    ) {
+                        Text(stringResource(R.string.restart_game))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRestartConfirm = false }) {
+                        Text(stringResource(R.string.continue_playing))
+                    }
+                },
+            )
+        }
     }
 }
 
@@ -788,4 +807,4 @@ internal fun shouldHostRuntimeOverlayPopup(
     runtimeViewport: IntSize,
     imeVisible: Boolean,
 ): Boolean = backendId != WEBVIEW_BACKEND_ID &&
-    shouldHostRuntimeOverlay(gameReady, runtimeViewport, imeVisible)
+        shouldHostRuntimeOverlay(gameReady, runtimeViewport, imeVisible)

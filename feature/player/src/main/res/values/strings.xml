@@ -111,6 +111,8 @@
     <string name="refresh_catalog">Refresh game data</string>
     <string name="show_catalog">Show game data</string>
     <string name="hide_catalog">Hide game data</string>
+    <string name="show_search">Show search</string>
+    <string name="hide_search">Hide search</string>
     <string name="search_catalog">Search by ID, name, or value</string>
     <string name="catalog_variables">Variables</string>
     <string name="catalog_switches">Switches</string>
