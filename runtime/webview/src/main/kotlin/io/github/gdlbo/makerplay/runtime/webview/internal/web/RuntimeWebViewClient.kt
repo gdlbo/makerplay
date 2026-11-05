@@ -99,9 +99,9 @@ internal class RuntimeWebViewClient(
             if (response.statusCode >= 400) {
                 onRuntimeError(
                     "runtime.resource.http_error",
-                    request.fields() + mapOf(
-                        "statusCode" to response.statusCode.toString(),
-                        "reason" to response.reasonPhrase,
+                    request.fields() + runtimeResourceFailureFields(
+                        request.isForMainFrame,
+                        mapOf("statusCode" to response.statusCode.toString(), "reason" to response.reasonPhrase),
                     ),
                 )
             }
@@ -116,7 +116,10 @@ internal class RuntimeWebViewClient(
         } catch (error: Exception) {
             onRuntimeError(
                 "runtime.resource.open_failed",
-                request.fields() + ("failureClass" to error.javaClass.name),
+                request.fields() + runtimeResourceFailureFields(
+                    request.isForMainFrame,
+                    mapOf("failureClass" to error.javaClass.name),
+                ),
             )
             WebResourceResponse(
                 "text/plain",
@@ -158,9 +161,12 @@ internal class RuntimeWebViewClient(
     ) {
         onRuntimeError(
             "runtime.resource.unavailable",
-            request.fields() + mapOf(
-                "errorCode" to error.errorCode.toString(),
-                "description" to error.description.toString(),
+            request.fields() + runtimeResourceFailureFields(
+                request.isForMainFrame,
+                mapOf(
+                    "errorCode" to error.errorCode.toString(),
+                    "description" to error.description.toString(),
+                ),
             ),
         )
     }
@@ -171,12 +177,12 @@ internal class RuntimeWebViewClient(
         errorResponse: WebResourceResponse,
     ) {
         if (responder != null) return
-        onRuntimeError(
-            "runtime.resource.http_error",
-            request.fields() + mapOf(
-                "statusCode" to errorResponse.statusCode.toString(),
-                "reason" to errorResponse.reasonPhrase.orEmpty(),
-            ),
+        reportRuntimeHttpFailure(
+            onRuntimeError,
+            request.fields(),
+            request.isForMainFrame,
+            errorResponse.statusCode,
+            errorResponse.reasonPhrase.orEmpty(),
         )
     }
 

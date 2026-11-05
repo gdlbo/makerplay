@@ -42,6 +42,8 @@
     <string name="webgl_description">Ускоряет графику. Отключите, если изображение мерцает или пропадает</string>
     <string name="legacy_compatibility">Поддержка старых игр</string>
     <string name="legacy_compatibility_description">Помогает запускать старые игры и плагины RPG Maker MV</string>
+    <string name="file_system_sandbox">Изоляция файловой системы</string>
+    <string name="file_system_sandbox_description">Ограничивает доступ игры её виртуальными папками. Отключите, чтобы разрешить чтение и изменение других файлов, доступных приложению. Требуется перезапуск игры</string>
     <string name="ignore_missing_files">Продолжать при отсутствующих файлах</string>
     <string name="ignore_missing_files_description">Не останавливает игру из-за необязательных ресурсов. Может скрыть настоящую ошибку</string>
     <string name="compatibility_restart_description">Эти изменения вступят в силу после следующего запуска игры</string>

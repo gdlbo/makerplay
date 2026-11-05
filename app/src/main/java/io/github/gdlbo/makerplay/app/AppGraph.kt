@@ -204,6 +204,7 @@ class AppGraph(context: Context) {
         webGlEnabled = preferences.getBoolean(prefix + WEBGL_ENABLED, true),
         legacyCompatibility = preferences.getBoolean(prefix + LEGACY_COMPATIBILITY, true),
         ignoreMissingFiles = preferences.getBoolean(prefix + IGNORE_MISSING_FILES, true),
+        fileSystemSandboxEnabled = preferences.getBoolean(prefix + FILE_SYSTEM_SANDBOX_ENABLED, true),
         fpsLimit = preferences.getInt(prefix + FPS_LIMIT, FPS_AUTO)
             .takeIf { it in SUPPORTED_FPS_LIMITS },
         showFpsCounter = preferences.getBoolean(prefix + SHOW_FPS_COUNTER, false),
@@ -234,6 +235,7 @@ class AppGraph(context: Context) {
             putBoolean(prefix + WEBGL_ENABLED, value.webGlEnabled)
             putBoolean(prefix + LEGACY_COMPATIBILITY, value.legacyCompatibility)
             putBoolean(prefix + IGNORE_MISSING_FILES, value.ignoreMissingFiles)
+            putBoolean(prefix + FILE_SYSTEM_SANDBOX_ENABLED, value.fileSystemSandboxEnabled)
             putInt(prefix + FPS_LIMIT, value.fpsLimit ?: FPS_AUTO)
             putBoolean(prefix + SHOW_FPS_COUNTER, value.showFpsCounter)
             putBoolean(prefix + RECORD_LOGS, value.recordLogs)
@@ -292,6 +294,7 @@ class AppGraph(context: Context) {
         const val WEBGL_ENABLED = "runtime_webgl_enabled"
         const val LEGACY_COMPATIBILITY = "runtime_legacy_compatibility"
         const val IGNORE_MISSING_FILES = "runtime_ignore_missing_files"
+        const val FILE_SYSTEM_SANDBOX_ENABLED = "runtime_file_system_sandbox_enabled"
         const val FPS_LIMIT = "runtime_fps_limit"
         const val SHOW_FPS_COUNTER = "runtime_show_fps_counter"
         const val RECORD_LOGS = "runtime_record_logs"
@@ -314,6 +317,7 @@ class AppGraph(context: Context) {
             WEBGL_ENABLED,
             LEGACY_COMPATIBILITY,
             IGNORE_MISSING_FILES,
+            FILE_SYSTEM_SANDBOX_ENABLED,
             FPS_LIMIT,
             SHOW_FPS_COUNTER,
             RECORD_LOGS,

@@ -180,6 +180,7 @@ class WebViewRuntimeBackend(
                     dataRoot = dataRoot,
                     gameId = request.gameId.takeIf { writeBehindStore != null },
                     saveStore = writeBehindStore,
+                    fileSystemSandboxEnabled = request.settings.fileSystemSandboxEnabled,
                 )
             }
             val stagedPrefetch = NativeAssetPrefetch()

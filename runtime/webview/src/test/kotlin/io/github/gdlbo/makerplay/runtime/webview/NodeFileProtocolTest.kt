@@ -76,6 +76,36 @@ class NodeFileProtocolTest {
     }
 
     @Test
+    fun hostPathsRequireExplicitlyDisablingTheFilesystemSandbox() {
+        val game = temporaryFolder.newFolder("host-game")
+        File(game, "asset.txt").writeText("game asset")
+        val outside = temporaryFolder.newFolder("host-outside")
+        val external = File(outside, "external.txt").apply { writeText("external") }
+        val enabled = protocol(game)
+        assertFalse(response(enabled, "read", external.absolutePath).ok())
+        assertFalse(response(enabled, "write", external.absolutePath, data = base64("blocked")).ok())
+        assertEquals("external", external.readText())
+
+        val disabled = protocol(game, dataRoot = temporaryFolder.newFolder("unrestricted-data"), fileSystemSandboxEnabled = false)
+        assertEquals("external", readText(disabled, external.absolutePath))
+        assertTrue(response(disabled, "write", external.absolutePath, data = base64("updated")).ok())
+        assertEquals("updated", external.readText())
+        assertTrue(response(disabled, "readdir", outside.absolutePath).toString().contains("external.txt"))
+        assertTrue(response(disabled, "stat", external.absolutePath).ok())
+        val copy = File(outside, "copy.txt")
+        assertTrue(response(disabled, "copy", external.absolutePath, target = copy.absolutePath).ok())
+        assertEquals("updated", copy.readText())
+        assertTrue(response(disabled, "unlink", copy.absolutePath).ok())
+        assertFalse(copy.exists())
+        // Virtual game and save paths retain their existing semantics in both modes.
+        assertEquals("game asset", readText(disabled, "/game/asset.txt"))
+        assertTrue(response(disabled, "write", "/data/local.txt", data = base64("local")).ok())
+        assertEquals("local", readText(disabled, "/data/local.txt"))
+        // New sessions with default settings restore the boundary.
+        assertFalse(response(protocol(game, dataRoot = temporaryFolder.newFolder("restored-data")), "read", external.absolutePath).ok())
+    }
+
+    @Test
     fun reportsMissingFilesAsEnoentCompatibleFailures() {
         val protocol = protocol(temporaryFolder.newFolder("game"))
 
@@ -578,11 +608,13 @@ class NodeFileProtocolTest {
         gameRoot: File,
         dataRoot: File = temporaryFolder.newFolder("data"),
         saveStore: GameSaveStore? = null,
+        fileSystemSandboxEnabled: Boolean = true,
     ) = NodeFileProtocol(
         GameFileSystem(GameFileIndex.build(gameRoot)),
         dataRoot,
         gameId = "game".takeIf { saveStore != null },
         saveStore = saveStore,
+        fileSystemSandboxEnabled = fileSystemSandboxEnabled,
     )
 
     private fun request(

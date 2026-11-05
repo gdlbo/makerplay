@@ -6,6 +6,16 @@ import java.nio.file.Files
 
 class LegacyCompatibilityScriptTest {
     @Test
+    fun `isolates startup plugin failures and reports recovery`() {
+        val scriptFile = java.io.File("src/test/js/startup-recovery.test.cjs").absoluteFile
+        val process = ProcessBuilder("node", "--test", scriptFile.path)
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().readText()
+        assertEquals(output, 0, process.waitFor())
+    }
+
+    @Test
     fun `normalizes invalid canvas text alignment before Bitmap exists`() {
         val compatibilityScript = runtimeAsset("legacy-compatibility.js")
         val harness = """

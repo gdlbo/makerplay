@@ -43,6 +43,8 @@
     <string name="webgl_description">Speeds up graphics. Turn it off if the picture flickers or disappears</string>
     <string name="legacy_compatibility">Support older games</string>
     <string name="legacy_compatibility_description">Helps older RPG Maker MV games and plugins run correctly</string>
+    <string name="file_system_sandbox">Filesystem sandbox</string>
+    <string name="file_system_sandbox_description">Restrict game file access to its virtual folders. Turn off to allow reading and modifying other files accessible to this app. Restart the game to apply</string>
     <string name="ignore_missing_files">Continue when files are missing</string>
     <string name="ignore_missing_files_description">Keeps optional missing resources from stopping the game. It may hide a real error</string>
     <string name="compatibility_restart_description">These changes take effect the next time the game starts</string>

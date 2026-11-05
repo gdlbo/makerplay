@@ -61,6 +61,7 @@ internal class NodeFileProtocol(
     dataRoot: File,
     private val gameId: String? = null,
     private val saveStore: GameSaveStore? = null,
+    private val fileSystemSandboxEnabled: Boolean = true,
 ) {
     internal fun overlayAsset(rawPath: String): OverlayAsset = overlayAsset(rawPath, metadataOnly = false)
 
@@ -992,6 +993,10 @@ internal class NodeFileProtocol(
     }
 
     private fun writableFile(path: VirtualPath.Data, allowRoot: Boolean): File {
+        if (path.host) {
+            check(!fileSystemSandboxEnabled) { "Host filesystem access is disabled" }
+            return File(path.path).canonicalFile
+        }
         require(!isReservedDataPath(path.path)) { "Path is reserved for runtime internals" }
         val unresolved = File(dataRoot, path.path).absoluteFile
         requireNoSymbolicLinkComponents(dataRoot, unresolved)
@@ -1143,8 +1148,10 @@ internal class NodeFileProtocol(
                 GamePath.parse("logs/" + normalized.removePrefix("/logs/")).value,
             )
 
-            normalized.startsWith('/') || DRIVE_PATH.matches(normalized) ->
-                throw IllegalArgumentException("Path is outside the virtual roots")
+            normalized.startsWith('/') || DRIVE_PATH.matches(normalized) -> {
+                require(!fileSystemSandboxEnabled) { "Path is outside the virtual roots" }
+                VirtualPath.Data(File(normalized).canonicalPath, host = true)
+            }
 
             else -> VirtualPath.Game(GamePath.parse(normalized).value)
         }
@@ -1302,7 +1309,7 @@ internal class NodeFileProtocol(
         data object GameRoot : VirtualPath
         data class Game(val path: String) : VirtualPath
         data object DataRoot : VirtualPath
-        data class Data(val path: String) : VirtualPath
+        data class Data(val path: String, val host: Boolean = false) : VirtualPath
     }
 
     private companion object {

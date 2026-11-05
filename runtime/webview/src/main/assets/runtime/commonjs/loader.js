@@ -110,6 +110,10 @@
   root.clearImmediate = root.clearImmediate || clearTimeout;
   // NW.js surfaces page failures as Node process events so game-side crash handlers run.
   root.addEventListener("error", function(event) {
+    // The compatibility shim owns failures of plugins still being loaded.
+    // This listener is registered first, so defer before invoking game crash hooks.
+    var loadingPlugins = root.__makerplayLoadingPlugins;
+    if (event && event.error && loadingPlugins && loadingPlugins.has(event.filename)) return;
     var reason = event && event.error
       ? event.error
       : new Error(String((event && event.message) || "Uncaught error"));

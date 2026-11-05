@@ -84,6 +84,7 @@ data class RuntimeSettings(
     val webGlEnabled: Boolean = true,
     val legacyCompatibility: Boolean = true,
     val ignoreMissingFiles: Boolean = true,
+    val fileSystemSandboxEnabled: Boolean = true,
     val fpsLimit: Int? = null,
     val showFpsCounter: Boolean = false,
     /** Fraction of the Java heap that triggers a cache trim for this game. */

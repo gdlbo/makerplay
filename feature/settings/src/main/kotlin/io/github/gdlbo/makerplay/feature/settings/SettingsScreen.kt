@@ -495,6 +495,12 @@ private fun ColumnScope.RuntimeSettingsOptions(
                 onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(legacyCompatibility = it)) },
             )
             ToggleSetting(
+                title = stringResource(R.string.file_system_sandbox),
+                description = stringResource(R.string.file_system_sandbox_description),
+                checked = runtimeSettings.fileSystemSandboxEnabled,
+                onCheckedChange = { onRuntimeSettingsChange(runtimeSettings.copy(fileSystemSandboxEnabled = it)) },
+            )
+            ToggleSetting(
                 title = stringResource(R.string.ignore_missing_files),
                 description = stringResource(R.string.ignore_missing_files_description),
                 checked = runtimeSettings.ignoreMissingFiles,
