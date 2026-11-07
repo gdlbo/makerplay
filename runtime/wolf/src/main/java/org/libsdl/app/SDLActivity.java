@@ -1104,6 +1104,12 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      * This method is called by SDL using JNI.
      */
     public static boolean setActivityTitle(String title) {
+        // MakerPlay patch: an embedder that supplies its own ANativeWindow has no
+        // SDLActivity, so mSingleton is null. Aborting here would take the process
+        // down for a cosmetic call.
+        if (mSingleton == null) {
+            return false;
+        }
         // Called from SDLMain() thread and can't directly affect the view
         return mSingleton.sendCommand(COMMAND_CHANGE_TITLE, title);
     }
@@ -1112,6 +1118,10 @@ public class SDLActivity extends Activity implements View.OnSystemUiVisibilityCh
      * This method is called by SDL using JNI.
      */
     public static void setWindowStyle(boolean fullscreen) {
+        // MakerPlay patch: see setActivityTitle -- no SDLActivity when embedded.
+        if (mSingleton == null) {
+            return;
+        }
         // Called from SDLMain() thread and can't directly affect the view
         mSingleton.sendCommand(COMMAND_CHANGE_WINDOW_STYLE, fullscreen ? 1 : 0);
     }

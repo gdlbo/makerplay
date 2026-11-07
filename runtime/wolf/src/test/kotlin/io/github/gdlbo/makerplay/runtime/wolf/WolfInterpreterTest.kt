@@ -47,6 +47,8 @@ class WolfInterpreterTest {
         val effects = mutableListOf<EventCommand>()
         val chipChanges = mutableListOf<EventCommand>()
         val banInput = mutableListOf<Boolean>()
+        val autoInputs = mutableListOf<EventCommand>()
+        var saveLoads = 0
         var returnToTitle = 0
         var endGames = 0
         var keyWaitPolls = 0
@@ -74,6 +76,8 @@ class WolfInterpreterTest {
         override fun onEffect(command: EventCommand) { effects.add(command) }
         override fun onChipChange(command: EventCommand) { chipChanges.add(command) }
         override fun onBanInput(banned: Boolean) { banInput.add(banned) }
+        override fun onAutoInput(command: EventCommand) { autoInputs.add(command) }
+        override fun onSaveLoad(): Boolean { saveLoads++; return true }
         override fun onReturnToTitle() { returnToTitle++ }
         override fun onEndGame() { endGames++ }
         override fun onKeyWait(command: EventCommand): Boolean {
@@ -81,6 +85,13 @@ class WolfInterpreterTest {
             return keyWaitResult
         }
         override fun onKeyPoll(): Int = keyPollResult
+        var pointer: Pair<Int, Int>? = null
+        val hovered = mutableListOf<Int>()
+        override fun onPointerPosition(): Pair<Int, Int>? = pointer
+        override fun onPictureAt(x: Int, y: Int, firstSlot: Int, count: Int): Int {
+            hovered.add(firstSlot + count + x * 0 + y * 0)
+            return if (pointer != null && count > 0) count - 1 else -1
+        }
     }
 
     private fun host() = RecordingHost()
@@ -625,5 +636,106 @@ class WolfInterpreterTest {
         assertEquals(1, h.returnToTitle)
         assertEquals(1, h.endGames)
         assertTrue(h.unhandled.isEmpty())
+    }
+
+    // --- remaining reached families ---------------------------------------
+
+    @Test
+    fun autoInputAndSaveLoadReachTheirHooks() {
+        val h = host()
+        val interpreter = WolfInterpreter(h)
+        interpreter.start(
+            listOf(
+                cmd(125, params = listOf(1, 0)),
+                cmd(220),
+            ),
+        )
+        interpreter.tick()
+        assertEquals(1, h.autoInputs.size)
+        assertEquals(1, h.saveLoads)
+        assertTrue("125/220 must not fall through to onUnhandled", h.unhandled.isEmpty())
+    }
+
+    @Test
+    fun setVariableExUsesTheSameVariableBank() {
+        val h = host()
+        val interpreter = WolfInterpreter(h)
+        // 124 assigns from a special/ex value; the interpreter must resolve its
+        // destination like 121 does rather than treating it as unhandled.
+        interpreter.start(listOf(cmd(124, params = listOf(7, 0, 0, 0, 1))))
+        interpreter.tick()
+        assertTrue("124 must be handled", h.unhandled.isEmpty())
+    }
+
+    @Test
+    fun transitionTrioReachesTheScreenEffectHook() {
+        val h = host()
+        val interpreter = WolfInterpreter(h)
+        // 160 sets the transition, 161 prepares it, 162 executes it. All three
+        // share the host screen-effect channel, as the engine's own
+        // sub_A1F130/sub_A1F1A0/sub_A1F1E0 trio do.
+        interpreter.start(
+            listOf(
+                cmd(160, params = listOf(1)),
+                cmd(161, params = listOf(1)),
+                cmd(162, params = listOf(1)),
+            ),
+        )
+        interpreter.tick()
+        assertEquals(3, h.screenEffects.size)
+        assertTrue(h.unhandled.isEmpty())
+    }
+
+    @Test
+    fun pictureHitTestReportsHoveredSlotOrMinusOne() {
+        val h = host()
+        val interpreter = WolfInterpreter(h)
+        // WOLF's picture menus read the cursor: [dest, 0x4000, firstSlot, count]
+        // yields the hovered picture index, or -1 with no pointer.
+        interpreter.start(listOf(cmd(124, params = listOf(7, 0x4000, 1, 3))))
+        interpreter.tick()
+        assertEquals("no cursor must report -1", -1, interpreter.variables[7])
+
+        val h2 = host()
+        h2.pointer = 100 to 200
+        val i2 = WolfInterpreter(h2)
+        i2.start(listOf(cmd(124, params = listOf(7, 0x4000, 1, 3))))
+        i2.tick()
+        // The recording host returns count-1, so a hit is a non-negative index.
+        assertEquals(2, i2.variables[7])
+        assertTrue("host must be asked to hit test", h2.hovered.isNotEmpty())
+    }
+
+    @Test
+    fun pointerButtonCodeIsVisibleToInputKey() {
+        // 123 polls whatever the host reports; the runtime returns mouse button
+        // codes (20/21/22) while the pointer is down so picture menus match.
+        val h = host()
+        h.keyPollResult = 20
+        val interpreter = WolfInterpreter(h)
+        interpreter.start(listOf(cmd(123, params = listOf(5, 1))))
+        interpreter.tick()
+        assertEquals("pressed code must be stored", 20, interpreter.variables[5])
+    }
+
+    @Test
+    fun everyReachedOpcodeHasAHandler() {
+        // The opcodes a real play session reached on device (task-1 census).
+        // None may fall through to onUnhandled, which is the task-5 gate.
+        val reached = listOf(
+            0, 99, 101, 102, 103, 106, 111, 112, 121, 122, 123, 124, 130, 140,
+            150, 151, 170, 171, 172, 176, 179, 180, 201, 210, 212, 213, 250,
+            290, 300, 401, 420, 498, 499,
+        )
+        for (opcode in reached) {
+            val h = host()
+            val interpreter = WolfInterpreter(h)
+            interpreter.start(listOf(cmd(opcode, params = listOf(0, 0, 0, 0, 0))))
+            interpreter.tick()
+            assertTrue(
+                "opcode $opcode reached in real play but hit onUnhandled",
+                h.unhandled.isEmpty(),
+            )
+        }
     }
 }

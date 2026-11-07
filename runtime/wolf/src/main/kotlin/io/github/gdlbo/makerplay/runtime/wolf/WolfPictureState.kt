@@ -24,8 +24,39 @@ class WolfPictureState {
         val divisionWidth: Int = 1,
         val divisionHeight: Int = 1,
         val pattern: Int = 0,
-        /** Percent zoom (100 = native). */
+        /** Percent zoom, horizontal (100 = native). */
         val zoom: Int = 100,
+        /** Percent zoom, vertical. Only honoured while unrotated. */
+        val zoomY: Int = zoom,
+        /**
+         * Rotation in tenths of a degree (450 = 45 degrees), from `params[10]`.
+         * Negative and >3600 values are legal and wrap.
+         */
+        val angleTenths: Int = 0,
+        /** Blend mode from the option word: 0 normal, 1 add, 2 subtract, 3 multiply, 0x0F same. */
+        val blendMode: Int = PictureBlend.NORMAL,
+        /**
+         * Display type from the low byte of the option word, or 0 when the low
+         * byte is not a documented display type. Synthetic commands (and older
+         * fixtures) use other values there as markers, and treating those as a
+         * display type would change how they render.
+         */
+        val displayType: Int = 0,
+        /**
+         * Per-channel colour correction, each in -200..200 (params[15..17] on the
+         * 18-parameter form). Measured, not assumed: those three values are
+         * bounded 0..200 and vary independently, e.g. (200,0,0).
+         */
+        /**
+         * Per-channel colour correction in the engine's percent scale, where 100 is
+         * neutral (decompiled from `sub_990570`: `(v - 100) * 2.55`). Defaulting
+         * these to 0 would subtract 254 from every channel, so neutral is 100.
+         */
+        val colourR: Int = PictureBlend.COLOUR_NEUTRAL,
+        val colourG: Int = PictureBlend.COLOUR_NEUTRAL,
+        val colourB: Int = PictureBlend.COLOUR_NEUTRAL,
+        /** 発動ディレイ: frames to wait before a tween starts. 0 means start now. */
+        val delayFrames: Int = 0,
         /** When true, [fileName] is display text rather than an image path. */
         val isText: Boolean = false,
         /** Built-in &lt;SQUARE&gt; fill size/color; null for normal pictures. */
@@ -56,7 +87,44 @@ class WolfPictureState {
     /** Monotonic change counter; the renderer recomposes when it advances. */
     fun version(): Long = revision
 
-    fun all(): List<Picture> = slots.values.toList()
+    /**
+     * Pictures in draw order.
+     *
+     * The manual states that when several pictures overlap, the larger number is
+     * drawn on top. `slots` is a LinkedHashMap whose order is insertion order, so
+     * it must be sorted by slot id rather than used directly.
+     */
+    fun all(): List<Picture> = slots.values.sortedBy { it.slot }
+
+    /**
+     * Screen-space bounds of each picture slot as last drawn, in the game's
+     * virtual pixel coordinates. Kept so the interpreter can answer WOLF's
+     * picture-under-cursor query (SetVariableEx source 0x4000), which the
+     * picture-driven menus use to decide what the mouse is over.
+     */
+    private val drawnBounds = java.util.concurrent.ConcurrentHashMap<Int, android.graphics.Rect>()
+
+    fun recordDrawnBounds(slot: Int, left: Int, top: Int, right: Int, bottom: Int) {
+        drawnBounds[slot] = android.graphics.Rect(left, top, right, bottom)
+    }
+
+    fun clearDrawnBounds() = drawnBounds.clear()
+
+    /**
+     * Index of the topmost picture under (x, y) among slots
+     * `first until first + count`, or -1 when none contains the cursor.
+     * Later slots win, matching draw order.
+     */
+    fun pictureAt(x: Int, y: Int, first: Int, count: Int): Int {
+        if (count <= 0) return -1
+        var found = -1
+        for (offset in 0 until count) {
+            val slot = first + offset
+            val rect = drawnBounds[slot] ?: continue
+            if (rect.contains(x, y)) found = offset
+        }
+        return found
+    }
 
     /** Puts a picture read from an official save. Replaces any picture in the same slot. */
     fun restoreSaved(picture: WolfOfficialSave.SavedPicture) {
@@ -177,6 +245,13 @@ class WolfPictureState {
     fun advanceEffects() {
         var changed = false
         for ((slot, picture) in slots) {
+            // 発動ディレイ: a delayed tween counts down before it starts, so the
+            // picture holds its starting values until the delay expires.
+            if (picture.delayFrames > 0) {
+                slots[slot] = picture.copy(delayFrames = picture.delayFrames - 1)
+                changed = true
+                continue
+            }
             if (picture.tweenFramesLeft <= 0 || picture.tweenFramesTotal <= 0) continue
             val left = picture.tweenFramesLeft - 1
             val done = picture.tweenFramesTotal - left
@@ -240,17 +315,30 @@ class WolfPictureState {
                 }
             }
             process == 1 -> {
-                // Move: reposition the existing picture.
+                // Move: reposition the existing picture. 相対モード (bit 16 of the
+                // option word) means the given coordinates are an offset from the
+                // picture's current position rather than a screen position.
                 val existing = slots[slot] ?: return false
-                val x = command.params.getOrNull(7) ?: command.params.getOrNull(2) ?: existing.x
-                val y = command.params.getOrNull(8) ?: command.params.getOrNull(3) ?: existing.y
+                val relative = ((packed ushr 16) and 0x01) != 0
+                val rawX = command.params.getOrNull(7) ?: command.params.getOrNull(2) ?: existing.x
+                val rawY = command.params.getOrNull(8) ?: command.params.getOrNull(3) ?: existing.y
+                val (x, y) = PicturePlacement.resolvePosition(
+                    x = rawX,
+                    y = rawY,
+                    relative = relative,
+                    currentX = existing.x,
+                    currentY = existing.y,
+                )
                 val opacity = normalizeOpacity(command.params.getOrNull(6), existing.opacity)
                 slots[slot] = existing.copy(
                     x = x,
                     y = y,
                     anchor = (packed ushr 12) and 0xF,
                     opacity = opacity,
-                    zoom = command.params.getOrNull(9)?.takeIf { it in 1..400 } ?: existing.zoom,
+                    zoom = command.params.getOrNull(9)?.takeIf { it in 0..1000 } ?: existing.zoom,
+                    angleTenths = command.params.getOrNull(10) ?: existing.angleTenths,
+                    blendMode = PictureOptions.decode(packed).blendMode,
+                    displayType = documentedDisplayType(packed),
                 )
                 revision++
                 true
@@ -299,7 +387,19 @@ class WolfPictureState {
                     divisionWidth = command.params.getOrNull(3)?.coerceIn(1, 64) ?: 1,
                     divisionHeight = command.params.getOrNull(4)?.coerceIn(1, 64) ?: 1,
                     pattern = command.params.getOrNull(5)?.coerceAtLeast(0) ?: 0,
-                    zoom = command.params.getOrNull(9)?.takeIf { it in 1..400 } ?: 100,
+                    zoom = command.params.getOrNull(9)?.takeIf { it in 0..1000 } ?: 100,
+                    angleTenths = command.params.getOrNull(10) ?: 0,
+                    // params[15..17] carry R/G/B in the engine's percent scale.
+                    // They were previously declared and read by the renderer but
+                    // never assigned here, so colour correction could not trigger.
+                    colourR = command.params.getOrNull(15)?.takeIf { it != -1_000_000 }
+                        ?: PictureBlend.COLOUR_NEUTRAL,
+                    colourG = command.params.getOrNull(16)?.takeIf { it != -1_000_000 }
+                        ?: PictureBlend.COLOUR_NEUTRAL,
+                    colourB = command.params.getOrNull(17)?.takeIf { it != -1_000_000 }
+                        ?: PictureBlend.COLOUR_NEUTRAL,
+                    blendMode = PictureOptions.decode(packed).blendMode,
+                    displayType = documentedDisplayType(packed),
                 )
                 revision++
                 true
@@ -402,6 +502,16 @@ class WolfPictureState {
         internal fun normalizeOpacity(raw: Int?, fallback: Int): Int {
             val value = raw ?: return fallback.coerceIn(0, 255)
             return if (value in 0..255) value else fallback.coerceIn(0, 255)
+        }
+
+        /**
+         * The documented display types. 0 is a normal picture; 4 is
+         * お手軽ウィンドウ (easy window / 9-slice). Values outside this set come
+         * from synthetic fixtures and are treated as 0.
+         */
+        internal fun documentedDisplayType(optionWord: Int): Int {
+            val low = optionWord and 0xFF
+            return if (low in 0..4) low else 0
         }
 
         internal fun isSquarePrimitive(fileName: String): Boolean =

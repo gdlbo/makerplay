@@ -11,6 +11,11 @@ crate-type = ["staticlib"]
 [dependencies]
 
 jni = { version = "0.21", default-features = false }
+# PNG decoding for the Rust scene compositor. The game ships only PNG, and
+# `flate2` (backed by `miniz_oxide`) is the only inflate implementation needed.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+ttf-parser = "0.25.1"
+jpeg-decoder = "0.3.2"
 
 [profile.release]
 opt-level = "z"

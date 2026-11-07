@@ -1,0 +1,58 @@
+# Database (250/251/252) and XY-array (255/256/257) corpus.
+#
+# Requires the deployment: these commands address real types by name, which is
+# what the battle scripts do. Run with the game root loaded so the commands
+# execute in the interpreter instead of reaching the host hook.
+#
+# Parameter shapes and flag words are copied from CE 144 '■バトル' and the BTL*
+# family, e.g.   250 p=7,1600018,4,331776,1600011 s=|BTL_member||hp
+# Flag words used below, from the real scripts:
+#   0x10000  write, bank 0, name=type
+#   0x50000  write, bank 0, name=type+field
+#   0x51000  read,  bank 0, name=type+field
+#   0x113300 XY write, action 3, bank 3
+#   0x300    XY read,  action 0, bank 3
+
+# --- write a real field by name, then read it back -------------------------
+250|7,0,4,327680,1234|,BTL_member,,hp
+250|7,0,4,331776,1600011|,BTL_member,,hp
+@vars
+
+# --- the entry index can come from a CSelf variable ------------------------
+250|7,1600018,4,331776,1600011|,BTL_member,,hp
+@vars
+
+# --- name sentinels: type name and entry name -----------------------------
+250|0,-3,-3,65536,3000001|
+@strings
+250|0,0,-3,65536,3000002|
+@strings
+
+# --- entry count and field count ------------------------------------------
+250|7,-3,-1,65536,1600005|
+250|7,-1,-3,65536,1600006|
+@vars
+
+# --- clear a type, then read a field back ---------------------------------
+250|7,-2,0,65536,0|
+250|7,0,4,331776,1600011|,BTL_member,,hp
+@vars
+
+# --- XY arrays: write then read a cell ------------------------------------
+257|13,0,1,1127168,7|
+255|13,0,1,768,1600003|
+@vars
+
+# --- XY array operators ---------------------------------------------------
+257|13,2,2,1127168,10|
+257|13,2,2,1127216,5|
+255|13,2,2,768,1600004|
+@vars
+
+# --- an unknown bank is ignored rather than treated as a user type --------
+250|0,0,0,1127168,1600009|
+@vars
+
+# --- opcode 251 with a missing CSV is a no-op -----------------------------
+251||/definitely/not/a/file.csv,unit
+@vars

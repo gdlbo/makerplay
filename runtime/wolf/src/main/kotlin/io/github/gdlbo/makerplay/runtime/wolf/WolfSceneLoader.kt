@@ -26,7 +26,28 @@ object WolfSceneLoader {
 
     data class StaticFrame(val rgba: ByteArray, val width: Int, val height: Int)
 
-    private const val MAX_FRAME_PIXELS = 2048L * 2048
+    /**
+     * Largest frame the composer will allocate.
+     *
+     * This is a memory ceiling, not a layout rule. It used to be applied as
+     * `coerceIn(1, 2048)` on the width and height, which silently cropped any map
+     * larger than 51 tiles at 40 px -- every dungeon in this deployment (Map146 is
+     * 60x62) rendered as a mostly-black frame with a diagonal band, and the
+     * crop looked like a rendering bug rather than a clamp. Dimensions are now
+     * validated instead of clamped so an oversized request fails loudly.
+     */
+    // Measured across this deployment's 305 maps: the largest is Map034 at
+    // 104x72 tiles = 4160x2880 px (13516800 px, ~54 MB as ARGB_8888), and 75 maps
+    // exceed 2048 px in at least one axis. The ceiling must clear the real maximum
+    // or whole-map composition is impossible for a quarter of the game.
+    private const val MAX_FRAME_PIXELS = 4608L * 4608
+    private const val MAX_FRAME_EDGE = 4608
+
+    /**
+     * Display type for お手軽ウィンドウ (easy window), the 9-slice picture form.
+     * Read from the low byte of the picture option word.
+     */
+    private const val DISPLAY_TYPE_EASY_WINDOW = 4
 
     fun loadStaticFrame(source: GameDataSource, project: GameDat): StaticFrame {
         val map = loadInitialMap(source)
@@ -55,15 +76,32 @@ object WolfSceneLoader {
         cameraExtraY: Int = 0,
         lockedCamX: Int? = null,
         lockedCamY: Int? = null,
+        /**
+         * Receives each picture's drawn bounds (slot, left, top, right, bottom)
+         * in virtual screen pixels. The runtime records these so the engine's
+         * "picture under the cursor" query can be answered, which is how WOLF's
+         * mouse-driven picture menus decide what was clicked.
+         */
+        onPictureBounds: ((Int, Int, Int, Int, Int) -> Unit)? = null,
     ): StaticFrame {
         val tileset = tilesets.tilesets.getOrNull(map.tilesetId)
             ?: throw WolfFormatException("Map references unknown tileset ${map.tilesetId}")
 
         val tileSize = project.tileSize
-        val width = (project.screenWidth.takeIf { it > 0 } ?: (map.width * tileSize)).coerceIn(1, 2048)
-        val height = (project.screenHeight.takeIf { it > 0 } ?: (map.height * tileSize)).coerceIn(1, 2048)
-        if (width.toLong() * height > MAX_FRAME_PIXELS) {
-            throw WolfFormatException("Map frame $width x $height exceeds limit")
+        val width = (project.screenWidth.takeIf { it > 0 } ?: (map.width * tileSize))
+        val height = (project.screenHeight.takeIf { it > 0 } ?: (map.height * tileSize))
+        if (width <= 0 || height <= 0) {
+            throw WolfFormatException("Map frame has a non-positive size ${width}x$height")
+        }
+        // Refuse rather than clamp: a silent crop renders a plausible-looking but
+        // wrong frame, which is far harder to notice than an error.
+        if (width > MAX_FRAME_EDGE || height > MAX_FRAME_EDGE ||
+            width.toLong() * height > MAX_FRAME_PIXELS
+        ) {
+            throw WolfFormatException(
+                "Map frame $width x $height exceeds the ${MAX_FRAME_EDGE}px/" +
+                    "${MAX_FRAME_PIXELS}px limit",
+            )
         }
 
         val baseTileset = cachedDecode(source, "Data/" + tileset.baseTilesetFile.removePrefix("/"))
@@ -90,6 +128,9 @@ object WolfSceneLoader {
         val camY = (lockedCamY ?: followY) + cameraExtraY
 
         val passabilityList = tileset.tilePassability
+        // Base-chip entries come first; the 32 entries after them belong to the
+        // autotile slots (verified for all 53 tilesets in this deployment).
+        val autotileBase = (passabilityList.size - WolfGameEngine.AUTOTILE_SLOTS).coerceAtLeast(0)
         val columns = 8
         val srcTileSize = (baseTileset.width / columns).coerceAtLeast(1)
 
@@ -110,9 +151,14 @@ object WolfSceneLoader {
                     continue
                 }
 
-                // If on layer 1 or 2, skip tiles marked as Star (*) for overhead pass
-                if (layerIndex > 0 && raw < 100000) {
-                    val pass = passabilityList.getOrNull(raw)
+                // If on layer 1 or 2, skip tiles marked as Star (*) for overhead pass.
+                // Autotiles carry their own entry appended after the base sheet.
+                if (layerIndex > 0) {
+                    val pass = if (raw < 100000) {
+                        passabilityList.getOrNull(raw)
+                    } else {
+                        passabilityList.getOrNull(autotileBase + (raw / 100000 - 1))
+                    }
                     if (pass?.star == true) continue
                 }
 
@@ -161,7 +207,16 @@ object WolfSceneLoader {
             }
 
             if (page.graphicFile.isNotBlank()) {
-                val chipPath = "Data/CharaChip/" + page.graphicFile.removePrefix("/")
+                // `graphicFile` may be Data-relative with its own folder
+                // ("CharaChip/[npc]f2_1.png", "CharaChipA/b_02.png",
+                // "SystemFile/[mapchip]dummy.png") or a bare chip name. Prefixing
+                // "CharaChip/" unconditionally produced
+                // Data/CharaChip/CharaChip/..., which does not exist -- so NPC event
+                // sprites never drew. Accept the name as-is when it already resolves,
+                // and only fall back to the CharaChip/ prefix otherwise.
+                val rel = page.graphicFile.removePrefix("/")
+                val direct = "Data/$rel"
+                val chipPath = if (source.has(direct)) direct else "Data/CharaChip/$rel"
                 entities.add(EntityDraw(event.y.toDouble() * tileSize + tileSize) {
                     drawCharaChip(
                         source = source,
@@ -220,7 +275,12 @@ object WolfSceneLoader {
                 val drewChip = heroFile != null && runCatching {
                     drawCharaChip(
                         source = source,
-                        path = "Data/CharaChip/$heroFile",
+                        // `startingHeroGraphic` is already Data-relative and carries
+                        // its own folder ("CharaChipA/a_02.png"). Prefixing
+                        // "CharaChip/" produced Data/CharaChip/CharaChipA/a_02.png,
+                        // which does not exist -- so the hero never drew and the
+                        // renderer fell back to its missing-sprite marker.
+                        path = "Data/" + heroFile.removePrefix("/"),
                         canvas = canvas,
                         anchorX = px,
                         anchorY = py + tileSize,
@@ -269,7 +329,8 @@ object WolfSceneLoader {
                     val pass = passabilityList.getOrNull(raw)
                     if (!isTopLayer && pass?.star != true) continue
                 } else if (!isTopLayer) {
-                    continue
+                    val pass = passabilityList.getOrNull(autotileBase + (raw / 100000 - 1))
+                    if (pass?.star != true) continue
                 }
 
                 val tileMapX = (i % map.width) * tileSize - camX
@@ -342,32 +403,138 @@ object WolfSceneLoader {
             val pattern = picture.pattern.coerceIn(0, cells - 1)
             val srcX = (pattern % cols) * cellW
             val srcY = (pattern / cols) * cellH
-            val zoom = picture.zoom.coerceIn(1, 400)
-            val dstW = (cellW * zoom) / 100
-            val dstH = (cellH * zoom) / 100
-            val originX = when (picture.anchor) {
-                1 -> picture.x - dstW / 2
-                2 -> picture.x
-                3 -> picture.x - dstW
-                4 -> picture.x - dstW
-                else -> picture.x
-            }
-            val originY = when (picture.anchor) {
-                1 -> picture.y - dstH / 2
-                2 -> picture.y - dstH
-                3 -> picture.y
-                4 -> picture.y - dstH
-                else -> picture.y
-            }
+            // Zoom and rotation. The manual's rule that separate X/Y zoom is
+            // ignored once the picture is rotated is applied by effectiveZoom().
+            val transform = PictureTransform.fromCommand(
+                zoomPercent = picture.zoom,
+                angleTenths = picture.angleTenths,
+                zoomYPercent = picture.zoomY,
+            )
+            val (zoomX, zoomY) = transform.effectiveZoom()
+            val dstW = (cellW * zoomX) / 100
+            val dstH = (cellH * zoomY) / 100
+            // Anchor decides which part of the picture sits on (x, y). The old
+            // when-block here only handled five cases and mapped two of them
+            // wrongly; PictureAnchor covers all seven documented modes and is
+            // tested against the deployment's own recorded rectangles.
+            val (originX, originY) = PicturePlacement.topLeft(
+                x = picture.x,
+                y = picture.y,
+                width = dstW,
+                height = dstH,
+                anchor = PictureAnchor.fromCode(picture.anchor),
+            )
             val prevAlpha = paint.alpha
             paint.alpha = picture.opacity.coerceIn(0, 255)
-            canvas.drawBitmap(
-                decoded,
-                Rect(srcX, srcY, srcX + cellW, srcY + cellH),
-                Rect(originX, originY, originX + dstW, originY + dstH),
-                paint,
-            )
+
+            // お手軽ウィンドウ (easy window): a 9-slice, where the corners keep
+            // their scale and the edges/centre stretch to the target box. The
+            // manual describes it as a three-part split; rendering it as a plain
+            // stretch would distort the frame's corners.
+            if (picture.displayType == DISPLAY_TYPE_EASY_WINDOW &&
+                picture.fillWidth != null && picture.fillHeight != null
+            ) {
+                val boxW = picture.fillWidth
+                val boxH = picture.fillHeight
+                val slices = PictureGeometry.nineSlice(
+                    srcW = cellW,
+                    srcH = cellH,
+                    dstX = originX,
+                    dstY = originY,
+                    dstW = boxW,
+                    dstH = boxH,
+                )
+                for (slice in slices) {
+                    if (slice.dstRight <= slice.dstLeft || slice.dstBottom <= slice.dstTop) continue
+                    canvas.drawBitmap(
+                        decoded,
+                        Rect(
+                            srcX + slice.srcLeft, srcY + slice.srcTop,
+                            srcX + slice.srcRight, srcY + slice.srcBottom,
+                        ),
+                        Rect(slice.dstLeft, slice.dstTop, slice.dstRight, slice.dstBottom),
+                        paint,
+                    )
+                }
+                paint.alpha = prevAlpha
+                pictureState.recordDrawnBounds(
+                    picture.slot, originX, originY, originX + boxW, originY + boxH,
+                )
+                onPictureBounds?.invoke(picture.slot, originX, originY, originX + boxW, originY + boxH)
+                picturesDrawn++
+                continue
+            }
+            // Blend mode from the option word. The old code had no picture blend
+            // at all, so additive/subtractive/multiply overlays all drew as plain
+            // replacements.
+            val prevXfermode = paint.xfermode
+            val prevColorFilter = paint.colorFilter
+            // Per-picture colour correction. The parameters are percent with 100
+            // neutral, and the engine converts each with `(v - 100) * 2.55` before
+            // adding it to the channel (sub_990570), so the offset must be the
+            // converted delta, not the raw parameter.
+            val tintR = PictureBlend.engineColourChannel(picture.colourR)
+            val tintG = PictureBlend.engineColourChannel(picture.colourG)
+            val tintB = PictureBlend.engineColourChannel(picture.colourB)
+            if (tintR != 0 || tintG != 0 || tintB != 0) {
+                val matrix = android.graphics.ColorMatrix().apply {
+                    set(floatArrayOf(
+                        1f, 0f, 0f, 0f, tintR.toFloat(),
+                        0f, 1f, 0f, 0f, tintG.toFloat(),
+                        0f, 0f, 1f, 0f, tintB.toFloat(),
+                        0f, 0f, 0f, 1f, 0f,
+                    ))
+                }
+                paint.colorFilter = android.graphics.ColorMatrixColorFilter(matrix)
+            }
+            when (PictureBlend.resolveMode(picture.blendMode, PictureBlend.NORMAL)) {
+                PictureBlend.ADD -> paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.ADD)
+                PictureBlend.MULTIPLY -> paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.MULTIPLY)
+                PictureBlend.SUBTRACT -> paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC_OUT)
+                else -> paint.xfermode = null
+            }
+            if (transform.isRotated) {
+                // Rotate about the anchor: save, move the origin to the anchor
+                // point, rotate, then draw the source rect centred on that point.
+                val anchor = PictureAnchor.fromCode(picture.anchor)
+                val ax = (dstW * anchor.xFactor).toFloat()
+                val ay = (dstH * anchor.yFactor).toFloat()
+                canvas.save()
+                canvas.rotate(transform.angleDegrees.toFloat(), originX + ax, originY + ay)
+                canvas.drawBitmap(
+                    decoded,
+                    Rect(srcX, srcY, srcX + cellW, srcY + cellH),
+                    Rect(originX, originY, originX + dstW, originY + dstH),
+                    paint,
+                )
+                canvas.restore()
+            } else {
+                canvas.drawBitmap(
+                    decoded,
+                    Rect(srcX, srcY, srcX + cellW, srcY + cellH),
+                    Rect(originX, originY, originX + dstW, originY + dstH),
+                    paint,
+                )
+            }
             paint.alpha = prevAlpha
+            paint.xfermode = prevXfermode
+            paint.colorFilter = prevColorFilter
+            // Remember where this slot landed so the interpreter can answer the
+            // engine's "picture under the cursor" query.
+            pictureState.recordDrawnBounds(
+                picture.slot,
+                originX,
+                originY,
+                originX + dstW,
+                originY + dstH,
+            )
+            onPictureBounds?.invoke(
+                picture.slot,
+                originX,
+                originY,
+                originX + dstW,
+                originY + dstH,
+            )
             picturesDrawn++
         }
         if (picturesSkipped > 0 && picturesDrawn == 0) {
@@ -476,7 +643,18 @@ object WolfSceneLoader {
     }
 
     /**
-     * Renders 4 quadrants of an autotile (modes 0..9 for TL, TR, BL, BR).
+     * Renders an autotile cell.
+     *
+     * The four digits of `raw % 10000` are the quadrant modes (TL, TR, BL, BR)
+     * and each mode selects one **whole** autotile frame from the sheet. Sheets
+     * are `tileSize` wide by `10 * tileSize` tall (the shipped ones are 40x200:
+     * ten 40x40 frames); `200`, `202`, `214` and `4444` in Map114 are the same
+     * autotile with different quadrant combinations.
+     *
+     * Each quadrant then samples the corresponding quarter of that frame. The
+     * previous implementation used a half-tile row stride (`height / 10`), which
+     * sampled at y = mode * 20 and produced the repeating speckled pattern seen
+     * against the original's coherent grass and foliage.
      */
     private fun drawAutotile(
         canvas: Canvas,
@@ -488,15 +666,15 @@ object WolfSceneLoader {
         tickCount: Long,
         paint: Paint,
     ) {
-        val dstHalf = tileSize / 2
-        val srcHalf = (bitmap.height / 10).coerceAtLeast(1)
-        val srcTileW = srcHalf * 2
-        if (dstHalf <= 0 || bitmap.width < srcHalf || bitmap.height < srcHalf) return
+        val frame = tileSize
+        if (frame <= 0 || bitmap.width < frame || bitmap.height < frame) return
+        val dstHalf = frame / 2
+        val srcHalf = frame / 2
 
-        // 3-frame animated autotiles (width >= srcTileW * 3)
-        val frameCount = (bitmap.width / srcTileW).coerceAtLeast(1)
+        // Horizontally animated sheets hold several frames side by side.
+        val frameCount = (bitmap.width / frame).coerceAtLeast(1)
         val frameIndex = if (frameCount > 1) ((tickCount / 16) % frameCount).toInt() else 0
-        val srcBaseX = frameIndex * srcTileW
+        val srcBaseX = frameIndex * frame
 
         val modes = intArrayOf(
             packedModes / 1_000,
@@ -507,17 +685,19 @@ object WolfSceneLoader {
 
         for (index in modes.indices) {
             val mode = modes[index]
-            val srcY = mode * srcHalf
-            if (srcY + srcHalf > bitmap.height) continue
+            // Whole-frame row: mode 0..9 selects one of ten frames.
+            val srcY = mode * frame
+            if (srcY + frame > bitmap.height) continue
             val isRight = index == 1 || index == 3
             val isBottom = index >= 2
             val srcX = srcBaseX + if (isRight) srcHalf else 0
             if (srcX + srcHalf > bitmap.width) continue
+            val srcYOffset = srcY + if (isBottom) srcHalf else 0
             val x = dstX + if (isRight) dstHalf else 0
             val y = dstY + if (isBottom) dstHalf else 0
             canvas.drawBitmap(
                 bitmap,
-                Rect(srcX, srcY, srcX + srcHalf, srcY + srcHalf),
+                Rect(srcX, srcYOffset, srcX + srcHalf, srcYOffset + srcHalf),
                 Rect(x, y, x + dstHalf, y + dstHalf),
                 paint,
             )
@@ -633,9 +813,9 @@ object WolfSceneLoader {
     private const val MAX_CACHED_BITMAPS = 256
     private val bitmapCache = object : LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Bitmap>): Boolean {
-            val evict = size > MAX_CACHED_BITMAPS
-            if (evict) eldest.value.recycle()
-            return evict
+            // Eviction must not recycle either: a bitmap evicted here may still
+            // be referenced by an in-flight compose pass. See clearCache().
+            return size > MAX_CACHED_BITMAPS
         }
     }
     /** Positive + negative picture path lookups; misses are expensive on Direct mode. */
@@ -645,17 +825,15 @@ object WolfSceneLoader {
     }
 
     fun clearCache() {
-        synchronized(bitmapCache) {
-            for (bitmap in bitmapCache.values) {
-                if (!bitmap.isRecycled) {
-                    bitmap.recycle()
-                }
-            }
-            bitmapCache.clear()
-        }
-        synchronized(picturePathCache) {
-            picturePathCache.clear()
-        }
+        // Do NOT recycle here. composeFrame runs on a worker coroutine and can be
+        // mid-draw holding a previously fetched bitmap when a map change calls
+        // this; recycling it out from under Canvas.drawBitmap aborts the process
+        // with SIGABRT from android::CanvasJNI::drawBitmapRect (observed on
+        // device: WolfSceneLoader.kt drawBitmap after a teleport). Dropping the
+        // references is enough: the GC reclaims unreferenced bitmaps, and the
+        // cache is rebuilt lazily on the next compose.
+        synchronized(bitmapCache) { bitmapCache.clear() }
+        synchronized(picturePathCache) { picturePathCache.clear() }
     }
 
     private fun cachedDecode(source: GameDataSource, path: String): Bitmap =
