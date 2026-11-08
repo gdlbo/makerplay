@@ -9,16 +9,57 @@ import io.github.gdlbo.makerplay.wolfformat.GameDataSource
  * Mutable runtime view of the three standard database files plus helpers for
  * opcode 250 (and no-op stubs for the import family).
  *
- * Flag packing for params[3] (little-endian bytes):
+ * Flag packing for params[3] (little-endian bytes), confirmed against
+ * `GamePro.exe` in docs/wolf-ida-vm-reference.md (case 250 of sub_9E20C0 and
+ * the executor sub_A0CFE0):
  * - b0: operator (hi nibble) + rhs kind (lo nibble: 0 number, 1 indirect, 2 string)
- * - b1: mode (hi nibble: 0 write, 1 read, …) + db kind (lo: 0 changeable, 1 system, 2 user)
+ * - b1: name-presence flags + **bank select** (low nibble)
  * - b2: name flags (1 type, 2 entry, 4 field)
+ *
+ * The bank nibble is not just "which DB": the engine has four stores, and
+ * `0, 1, 2` are the changeable, system and user databases while `3` is the XY
+ * array (`case 255000..255300` -> sub_AED340 in sub_A0CFE0).
  */
 class WolfDatabase private constructor(
     private val banks: Array<Bank?>,
     private val source: GameDataSource? = null,
 ) {
+    /** XY array store (bank nibble 3). */
+    private val xyArrays = HashMap<Int, XyArray>()
+
     enum class Kind { CHANGEABLE, SYSTEM, USER }
+
+    /**
+     * XY arrays are not database types: they are 2-D integer arrays addressed by
+     * `(array index, x, y)` with no field layout. `GamePro.exe` grows them lazily
+     * (`sub_AED340` extends rows and columns on first write).
+     */
+    class XyArray {
+        private val rows = HashMap<Int, HashMap<Int, Int>>()
+
+        fun read(x: Int, y: Int): Int = rows[x]?.get(y) ?: 0
+
+        fun write(x: Int, y: Int, value: Int, operator: Int) {
+            val row = rows.getOrPut(x) { HashMap() }
+            val current = row[y] ?: 0
+            // Operators arrive on two different scales: the DB path hands over
+            // the low-byte nibble (0x10/0x20/...) while the engine constants in
+            // sub_AED340 are 0x100..0x400. Normalise to the latter.
+            val op = if (operator in 1..0xF) operator shl 8 else if (operator <= 0xF0) operator shl 4 else operator
+            row[y] = when (op) {
+                0x100 -> current + value
+                0x200 -> current - value
+                0x300 -> current * value
+                // sub_AED340 substitutes 1 for a zero divisor instead of
+                // faulting: `v12 = a4; if (a4 == 0) v12 = 1;`
+                0x400 -> current / (if (value != 0) value else 1)
+                0x500 -> current % (if (value != 0) value else 1)
+                else -> value
+            }
+        }
+
+        fun clear() = rows.clear()
+    }
 
     class Bank(
         val kind: Kind,
@@ -184,7 +225,10 @@ class WolfDatabase private constructor(
         when (command.commandType) {
             250, 252 -> executeAssign(command, readNumber, writeNumber, readString, writeString)
             251 -> importCsv(command)
-            255 -> clearNamedType(command)
+            // 255/256/257 are the XY-array family, handled by their own
+            // engine routines (sub_A2ACA0 / sub_A2BD90 / sub_A2C500), not by
+            // the database path.
+            255, 256, 257 -> executeXyArray(command, readNumber, writeNumber)
             else -> Unit
         }
     }
@@ -213,7 +257,15 @@ class WolfDatabase private constructor(
         type.replaceFromRows(body)
     }
 
-    /** Opcode 255. Dragon Blood clears a named type (MiniMapA and friends) before rebuilding it. */
+    /**
+     * Clears a named type's values before it is rebuilt.
+     *
+     * Opcode 255 is an XY-array operation in this engine build
+     * (sub_A2ACA0), so this helper is no longer dispatched from `execute`.
+     * It is kept because the entry/field sentinel path in [handleMeta] still
+     * uses the same notion of an empty type.
+     */
+    @Suppress("unused")
     private fun clearNamedType(command: EventCommand) {
         val typeName = command.strings.getOrNull(1)?.takeIf { it.isNotBlank() }
             ?: command.strings.firstOrNull { it.isNotBlank() }
@@ -298,7 +350,10 @@ class WolfDatabase private constructor(
             0 -> Kind.CHANGEABLE
             1 -> Kind.SYSTEM
             2, 3 -> Kind.USER
-            else -> return // XY array not implemented yet
+            // GamePro.exe's opcode-250 handler (case 250 of sub_9E20C0) maps
+            // banks 0/1/2 and jumps out for anything else; XY arrays are
+            // separate opcodes (255/256/257), not a bank of this command.
+            else -> return
         }
         val bank = bank(dbKind)
         val typeName = s.getOrNull(1).orEmpty()
@@ -455,6 +510,47 @@ class WolfDatabase private constructor(
     }
 
     private fun resolveLiteralOrRef(raw: Int, readNumber: (Int) -> Int): Int =
+        if (raw >= 1_000_000 || raw in 1_600_000..1_699_999) readNumber(raw) else raw
+
+    /**
+     * XY array access (bank nibble 3).
+     *
+     * `GamePro.exe` models these as 2-D integer arrays keyed by an array
+     * selector plus x/y (see sub_AED340 in docs/wolf-ida-vm-reference.md).
+     * Param roles here follow the same slot order the DB path uses:
+     * `p[0]` array selector, `p[1]` x/column, `p[2]` y/row, `p[4]` value or
+     * destination. Direction comes from the operator byte: an assignment
+     * operator reads into `p[4]`, a modifying operator writes from it.
+     */
+    private fun executeXyArray(
+        command: EventCommand,
+        readNumber: (Int) -> Int,
+        writeNumber: (Int, Int) -> Unit,
+    ) {
+        val p = command.params
+        if (p.size < 4) return
+        val flags = p[3]
+        // Engine layout (sub_A2C500): bits 12..15 select the action.
+        //   0 = read a cell into the destination operand
+        //   1..3 = write forms used by the 255/256/257 variants
+        val action = (flags ushr 12) and 0xF
+        val operator = (flags ushr 4) and 0xF
+        val arrayIndex = p.getOrElse(0) { 0 }
+        val x = resolveXyCoordinate(p.getOrElse(1) { 0 }, readNumber)
+        val y = resolveXyCoordinate(p.getOrElse(2) { 0 }, readNumber)
+        val array = xyArrays.getOrPut(arrayIndex) { XyArray() }
+        if (action == 0) {
+            val dest = p.getOrElse(4) { return }
+            writeNumber(dest, array.read(x, y))
+            return
+        }
+        val raw = p.getOrElse(4) { 0 }
+        val rhsKind = flags and 0xF
+        array.write(x, y, resolveRhsNumber(raw, rhsKind, readNumber), operator)
+    }
+
+    /** Indirect coordinates arrive as a variable reference rather than a literal. */
+    private fun resolveXyCoordinate(raw: Int, readNumber: (Int) -> Int): Int =
         if (raw >= 1_000_000 || raw in 1_600_000..1_699_999) readNumber(raw) else raw
 
     private fun resolveRhsNumber(raw: Int, rhsKind: Int, readNumber: (Int) -> Int): Int =

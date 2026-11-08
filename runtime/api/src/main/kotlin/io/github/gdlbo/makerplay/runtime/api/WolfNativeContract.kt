@@ -34,6 +34,21 @@ interface WolfNativeBridge {
     // --- Rendering ---------------------------------------------------------------
 
     /**
+     * Composes a scene with the Rust renderer and returns `[w, h, RGBA...]`, or null
+     * when the renderer is unavailable.
+     *
+     * Optional: a bridge that does not implement it falls back to the Kotlin
+     * compositor via the default below.
+     */
+    fun composeScene(
+        gameRoot: String,
+        mapName: String,
+        spec: String,
+        width: Int,
+        height: Int,
+    ): ByteArray? = null
+
+    /**
      * Supplies a pre-composed RGBA (8888) frame — e.g. the static boot frame
      * composited from parsed map/tileset data — that [renderFrame] presents.
      * The native side copies the buffer before returning.

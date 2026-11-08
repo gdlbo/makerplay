@@ -146,8 +146,14 @@ data class MapFile(
                 val all = IntArray(totalPixels * layerCount)
                 all[0] = firstPixel.toInt()
                 for (i in 1 until totalPixels * layerCount) all[i] = reader.readU4().toInt()
+                // Serialized cells run down each column. Expose row-major
+                // layers to rendering and collision (engine uses [layer][x][y]).
                 List(layerCount) { plane ->
-                    all.copyOfRange(plane * totalPixels, (plane + 1) * totalPixels)
+                    IntArray(totalPixels) { index ->
+                        val x = index % width
+                        val y = index / width
+                        all[plane * totalPixels + x * height + y]
+                    }
                 }
             }
 

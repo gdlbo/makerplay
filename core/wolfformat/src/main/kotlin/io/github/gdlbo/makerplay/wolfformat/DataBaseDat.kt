@@ -74,21 +74,31 @@ data class DataBaseDat(
                 throw WolfFormatException("Database type missing sub-header")
             }
             val dataIdMethod = reader.readU4().toInt()
+            // Layout order matters: the header is
+            //   [u4 TYPE_HEADER][u4 dataID method][u4 field count]
+            //                [optional type string][u4 field positions...]
+            // The type string follows the field count, not the method word.
+            // Reading it before the count desynchronises the stream, which is
+            // what produced "property position count ... exceeds limit" on
+            // CDataBase.dat and "type missing sub-header" on SysDatabase.dat.
+            val propertyCount = reader.readCount("property position")
             val dataIdString = if (dataIdMethod == STRING_INDICATOR) {
                 reader.readString(v3)
             } else {
                 null
             }
-            val propertyCount = reader.readCount("property position")
             if (propertyCount > BoundedReader.Limits.DEFAULT.maxStringBytes / 4) {
                 throw WolfFormatException("Property count too large")
             }
             val positions = IntArray(propertyCount) { reader.readU4().toInt() }
             val entryCount = reader.readCount("database entry")
 
-            // Number pool = positions in [1000, 2000); string pool = >= 2000.
-            // Invalid slots (< 1000) contribute to neither pool.
-            val numberCount = positions.count { it in INT_START until STRING_START }
+            // Slot classification matches the editor: anything below
+            // STRING_START is a number slot, everything else is a string
+            // slot. Unused slots keep their raw value (0, or another small
+            // marker) and still occupy a number position, so they must be
+            // counted here or every entry shifts and the stream desyncs.
+            val numberCount = positions.count { it < STRING_START }
             val stringCount = positions.count { it >= STRING_START }
 
             val entries = ArrayList<Entry>(entryCount)

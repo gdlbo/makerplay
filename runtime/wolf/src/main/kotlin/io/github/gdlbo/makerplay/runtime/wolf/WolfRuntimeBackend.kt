@@ -10,6 +10,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,7 +30,9 @@ import io.github.gdlbo.makerplay.diagnostics.RuntimeLogger
 import io.github.gdlbo.makerplay.input.LogicalInputSnapshot
 import io.github.gdlbo.makerplay.input.PhysicalInputNormalizer
 import io.github.gdlbo.makerplay.runtime.api.CheatCatalog
+import io.github.gdlbo.makerplay.runtime.api.CheatCatalogEntry
 import io.github.gdlbo.makerplay.runtime.api.CheatCommand
+import io.github.gdlbo.makerplay.runtime.api.CheatOperation
 import io.github.gdlbo.makerplay.runtime.api.CheatFlags
 import io.github.gdlbo.makerplay.runtime.api.GameRuntimeBackend
 import io.github.gdlbo.makerplay.runtime.api.GameSaveStore
@@ -92,6 +98,9 @@ class WolfRuntimeBackend(
     }
 
     private val sessions = ConcurrentHashMap<String, WolfNativeSession>()
+
+    /** Per-session opcode census of commands that fell through to onUnhandled. */
+    private val unhandled = ConcurrentHashMap<Int, Int>()
     private val gameLoopScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val currentDirections =
         AtomicReference<Set<WolfGameEngine.Direction>>(emptySet())
@@ -116,6 +125,20 @@ class WolfRuntimeBackend(
     private val latchedWolfKey = AtomicInteger(0)
     /** Frames remaining before [latchedWolfKey] expires. */
     private val latchedWolfKeyTtl = AtomicInteger(0)
+
+    /**
+     * Pointer (mouse) state, in the game's virtual pixel coordinates.
+     *
+     * WOLF's picture menus are operated with the mouse: the input command (123)
+     * yields codes 20/21/22 for the mouse buttons (bits 0x10/0x20/0x40 of the
+     * engine's key-state byte, per sub_A0B700 in GamePro.exe), and picture hit
+     * tests read the cursor through SetVariableEx. The surface used to expose
+     * keyboard events only, so a mouse-driven menu could never be satisfied.
+     */
+    private val pointerX = AtomicInteger(-1)
+    private val pointerY = AtomicInteger(-1)
+    private val pointerDown = AtomicBoolean(false)
+    private val pointerDownEdges = AtomicInteger(0)
 
     override suspend fun prepare(request: LaunchRequest): PreparedSession {
         logger.info(
@@ -178,6 +201,11 @@ class WolfRuntimeBackend(
         var loadError by remember(session.sessionId) { mutableStateOf<String?>(null) }
         val uiState = remember(session.sessionId) { WolfUiState() }
 
+        // Game resolution, needed to scale overlay pointer contacts (normalised 0..1)
+        // into the game pixels `onPointerPosition` reports. Captured per session.
+        val virtualWidth = sessions[session.sessionId]?.project?.screenWidth ?: 1280
+        val virtualHeight = sessions[session.sessionId]?.project?.screenHeight ?: 960
+
         // Map logical/virtual controller actions onto engine directions.
         LaunchedEffect(virtualInput) {
             // Virtual controller buttons dispatch key codes (e.g. Enter = 66);
@@ -212,6 +240,27 @@ class WolfRuntimeBackend(
             if (wolfKey != 0) {
                 latchedWolfKey.set(wolfKey)
                 latchedWolfKeyTtl.set(120)
+            }
+
+            // Pointer contacts from the on-screen overlay. This is the path that
+            // makes mouse-driven WOLF menus work: the title menu (CE 79) polls mouse
+            // codes 20/21 and hit-tests pictures against the cursor, so a tap that
+            // only set `pressedActions` could never operate it. The overlay reports
+            // normalised 0..1 coordinates, which are scaled to the virtual screen
+            // here because `onPointerPosition` answers in game pixels.
+            val contact = virtualInput.pointers.minByOrNull { it.pointerId }
+            if (contact != null) {
+                val gx = (contact.x * virtualWidth).toInt()
+                val gy = (contact.y * virtualHeight).toInt()
+                pointerX.set(gx)
+                pointerY.set(gy)
+                pointerDown.set(true)
+                pointerDownEdges.incrementAndGet()
+                currentWolfKey.set(POINTER_KEY_LEFT)
+                latchedWolfKey.set(POINTER_KEY_LEFT)
+                latchedWolfKeyTtl.set(120)
+            } else if (pointerDown.getAndSet(false)) {
+                if (currentWolfKey.get() == POINTER_KEY_LEFT) currentWolfKey.set(0)
             }
         }
         LaunchedEffect(session.sessionId, nativeBridge) {
@@ -252,9 +301,9 @@ class WolfRuntimeBackend(
                 nativeBridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
                 ready = true
                 onReadyChanged(true)
-                runGameLoop(nativeBridge, handle, stored, uiState) {
+                runGameLoop(nativeBridge, handle, stored, uiState, {
                     pendingConfirmEdges.getAndUpdate { count -> if (count > 0) count - 1 else 0 } > 0
-                }
+                }, cheatCommand, onCheatCommandConsumed, onCheatCatalogChanged)
             }
         }
 
@@ -262,73 +311,101 @@ class WolfRuntimeBackend(
         // the GL surface so the opaque SurfaceView cannot cover it.
         if (ready && nativeBridge != null) {
             val handle = remember(session.sessionId) { ensureNativeSession(session, nativeBridge) }
+            // The GL surface keeps a media-overlay Z order so it stays on the
+            // input dispatch path. This Compose pointerInput layer also feeds the
+            // mouse state, so taps work whichever side receives them.
+            // One SDL3 loop owns render *and* input.
+            //
+            // The view only supplies a surface and forwards raw touches; the loop
+            // decodes them and publishes the result through `onLoopInput`, so the
+            // engine below consumes the same decode the renderer used. The old
+            // arrangement had Compose decode input and a GLSurfaceView present
+            // frames, and the two never met.
+            //
+            // No game root or map is handed to the loop: the app's engine composes
+            // the frames and pushes them, so the loop's own session stays empty.
+            // Pointing it at a map would make it draw that instead of the game.
+            // Compose receives the touches, because the SurfaceView's media-overlay
+            // surface sits behind the window. Hand the raw MotionEvent to SDL
+            // verbatim: no coordinates are translated and no key is mapped here, so
+            // the loop remains the only place input is decoded. Using
+            // pointerInteropFilter rather than pointerInput is deliberate -- it
+            // delivers move/up and each pointer id unchanged.
+            // `.fillMaxSize()` is load-bearing: a `pointerInput` block only starts
+            // once its layout node has a non-zero size, and the SurfaceView paints
+            // full-screen from its own window layer regardless of the Compose
+            // node's measured size. Without this the factory ran but the input
+            // block never started (measured: 0 "composed", 1 "factory"), so no
+            // touch reached the game at all.
+            val rawTouch = modifier.fillMaxSize().pointerInput(session.sessionId) {
+                awaitPointerEventScope {
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull() ?: continue
+                        val down = change.pressed
+                        WolfRenderSurface.forwardPointerToSdl(
+                            change.position.x,
+                            change.position.y,
+                            down,
+                            size.width,
+                            size.height,
+                        )
+                        if (down) change.consume()
+                    }
+                }
+            }
             AndroidView(
-                modifier = modifier,
+                modifier = rawTouch,
                 factory = { ctx ->
                     WolfRenderSurface(ctx).apply {
-                        setEGLContextClientVersion(2)
-                        // Render above the Compose window: the game frame is the
-                        // primary content and carries messages/choices in-frame.
-                        setZOrderOnTop(true)
-                        holder.setFormat(android.graphics.PixelFormat.OPAQUE)
-                        setRenderer(WolfFrameRenderer(nativeBridge, handle))
-                        renderMode = GLSurfaceView.RENDERMODE_CONTINUOUSLY
-                        onKeyAction = onKeyAction@{ keyCode, down ->
-                            val action = PhysicalInputNormalizer.keyMap[keyCode] ?: return@onKeyAction false
-                            val dir = when (action) {
-                                GameAction.UP -> WolfGameEngine.Direction.UP
-                                GameAction.DOWN -> WolfGameEngine.Direction.DOWN
-                                GameAction.LEFT -> WolfGameEngine.Direction.LEFT
-                                GameAction.RIGHT -> WolfGameEngine.Direction.RIGHT
-                                else -> null
+                        loopGameWidth = virtualWidth
+                        loopGameHeight = virtualHeight
+                        onLoopInput = input@{ key, cursorX, cursorY, down ->
+                            // The loop already converted window coordinates into
+                            // game pixels, so no letterbox maths is repeated here.
+                            if (cursorX >= 0) {
+                                pointerX.set(cursorX)
+                                pointerY.set(cursorY)
                             }
-                            if (dir != null) {
-                                val next = keyDirections.get().toMutableSet()
-                                val hold = keyDirectionHoldTtl.get().toMutableMap()
-                                if (down) {
-                                    next.add(dir)
-                                    hold.remove(dir)
-                                } else {
-                                    // Keep the direction briefly so tap keyevents
-                                    // still produce movement samples.
-                                    hold[dir] = 16
-                                }
-                                keyDirections.set(next)
-                                keyDirectionHoldTtl.set(hold)
-                            }
-                            val wolfKey = when (action) {
-                                GameAction.OK -> 10
-                                GameAction.CANCEL, GameAction.ESCAPE -> 11
-                                GameAction.UP -> 8
-                                GameAction.DOWN -> 2
-                                GameAction.LEFT -> 4
-                                GameAction.RIGHT -> 6
-                                GameAction.SHIFT -> 7
-                                GameAction.MENU -> 17
-                                else -> 0
-                            }
-                            if (action == GameAction.OK) {
-                                if (down && !currentConfirm.getAndSet(true)) {
-                                    pendingConfirmEdges.incrementAndGet()
-                                } else if (!down) {
-                                    currentConfirm.set(false)
-                                }
-                            }
-                            if (down) {
-                                if (wolfKey != 0) {
-                                    currentWolfKey.set(wolfKey)
-                                    latchedWolfKey.set(wolfKey)
-                                    latchedWolfKeyTtl.set(120)
-                                }
-                            } else if (currentWolfKey.get() == wolfKey) {
+                            val wasDown = pointerDown.getAndSet(down)
+                            if (down && !wasDown) {
+                                pointerDownEdges.incrementAndGet()
+                                pendingConfirmEdges.incrementAndGet()
+                                currentWolfKey.set(POINTER_KEY_LEFT)
+                                latchedWolfKey.set(POINTER_KEY_LEFT)
+                                latchedWolfKeyTtl.set(120)
+                            } else if (!down && currentWolfKey.get() == POINTER_KEY_LEFT) {
                                 currentWolfKey.set(0)
                             }
-                            true
+                            val direction = when (key) {
+                                8 -> WolfGameEngine.Direction.UP
+                                2 -> WolfGameEngine.Direction.DOWN
+                                4 -> WolfGameEngine.Direction.LEFT
+                                6 -> WolfGameEngine.Direction.RIGHT
+                                else -> null
+                            }
+                            if (direction != null) {
+                                keyDirections.updateAndGet { it + direction }
+                                keyDirectionHoldTtl.updateAndGet { it + (direction to 12) }
+                            }
+                            if (key != POINTER_KEY_LEFT) {
+                                val previousKey = currentWolfKey.getAndSet(key)
+                                if (key == 10 && previousKey != 10) {
+                                    pendingConfirmEdges.incrementAndGet()
+                                }
+                                if (key != 0 && key != previousKey) {
+                                    latchedWolfKey.set(key)
+                                    latchedWolfKeyTtl.set(120)
+                                }
+                            }
                         }
                         post { requestFocus() }
                     }
                 },
-                update = { surface -> surface.setHandle(ensureNativeSession(session, nativeBridge)) },
+                update = { surface ->
+                    surface.loopGameWidth = virtualWidth
+                    surface.loopGameHeight = virtualHeight
+                },
             )
         } else {
             Box(
@@ -358,12 +435,138 @@ class WolfRuntimeBackend(
      * Milestone-5 game loop: advances the deterministic engine at the project's
      * logical fps and pushes recomposed frames to the native presenter.
      */
+    /**
+     * Composes one frame with the **Rust renderer**, or returns null to fall back.
+     *
+     * The Kotlin engine still owns map loading, triggers, the interpreter and the
+     * database; this hands the Rust compositor only what to draw. Returning null
+     * (library missing, older build, or an error) is deliberate: the caller then
+     * uses the Kotlin compositor, so the app degrades instead of breaking.
+     */
+    private fun rustCompose(
+        nativeBridge: WolfNativeBridge,
+        gameRoot: String,
+        mapPath: String,
+        hero: WolfGameEngine.Position,
+        cameraExtra: Pair<Int, Int>,
+        activeEvents: List<Pair<MapFile.MapEvent, MapFile.Page>>,
+        pictures: List<WolfPictureState.Picture>,
+        message: String?,
+        choices: List<String>,
+        selectedChoice: Int,
+        width: Int,
+        height: Int,
+    ): WolfSceneLoader.StaticFrame? {
+        val jni = nativeBridge as? WolfNativeJni ?: return null
+        if (!jni.isAvailable) return null
+        val mapName = mapPath.substringAfterLast('/').substringBeforeLast('.')
+        // Not restricted to "Map*": this deployment's title map is 000title, and
+        // filtering on the prefix silently disabled the Rust renderer entirely
+        // (measured: 0 rustCompose calls). The Rust session reports an error for a
+        // map it cannot open, which falls back to the Kotlin compositor.
+        if (mapName.isBlank()) return null
+
+        val spec = buildString {
+            append("map=").append(mapName).append('\n')
+            append("hero=").append(hero.tileX).append(',').append(hero.tileY).append('\n')
+            append("cam=").append(cameraExtra.first).append(',').append(cameraExtra.second).append('\n')
+            if (!message.isNullOrBlank()) {
+                append("msg=").append(message.replace('\n', ' ')).append('\n')
+            }
+            if (choices.isNotEmpty()) {
+                append("choice=").append(selectedChoice)
+                choices.forEach { append('|').append(it.replace('|', '/')) }
+                append('\n')
+            }
+            pictures.forEach { picture ->
+                if (picture.isText) {
+                    val fillW = picture.fillWidth
+                    val fillH = picture.fillHeight
+                    val generated = if (fillW != null && fillH != null) {
+                        "@fill:$fillW:$fillH:${picture.fillColor ?: 0xFF000000.toInt()}"
+                    } else {
+                        val text = WolfText.stripPresentationMarkup(picture.fileName)
+                        "@text:" + text.toByteArray(Charsets.UTF_8).joinToString("") {
+                            "%02x".format(it.toInt() and 0xFF)
+                        }
+                    }
+                    append("pic=").append(picture.slot).append('|').append(generated).append('|')
+                        .append(picture.x).append('|').append(picture.y).append('|')
+                        .append((picture.anchor shl 12) or (picture.blendMode shl 8)).append('\n')
+                } else if (picture.fileName.isNotBlank()) {
+                    append("pic=").append(picture.slot).append('|')
+                        .append(picture.fileName).append('|')
+                        .append(picture.x).append('|')
+                        .append(picture.y).append('|')
+                        .append(0).append('|')
+                        .append(picture.divisionWidth).append('|').append(picture.divisionHeight).append('|')
+                        .append(picture.pattern).append('\n')
+                }
+            }
+            activeEvents.forEach { (event, page) ->
+                if (page.graphicFile.isNotBlank()) {
+                    append("ev=").append(page.graphicFile).append('|')
+                        .append(event.x).append('|')
+                        .append(event.y).append('|')
+                        .append(page.graphicRow).append('|')
+                        .append(page.graphicCol).append('|')
+                        .append(page.graphicOpacity).append('\n')
+                }
+            }
+        }
+
+        val payload = runCatching {
+            jni.composeScene(gameRoot, mapName, spec, width, height)
+        }.onFailure { error ->
+            android.util.Log.e("WolfRuntime", "Rust scene composition failed", error)
+        }.getOrNull()
+        if (RUST_RENDER_DEBUG) {
+            // Report non-black coverage so a blank frame is visible in the log
+            // rather than only on screen.
+            var lit = 0
+            if (payload != null && payload.size > 8) {
+                var i = 8
+                while (i + 3 < payload.size) {
+                    if (payload[i].toInt() != 0 || payload[i + 1].toInt() != 0 ||
+                        payload[i + 2].toInt() != 0
+                    ) {
+                        lit++
+                    }
+                    i += 4
+                }
+            }
+            android.util.Log.i(
+                "WolfRuntime",
+                "rustCompose map=$mapName specLines=${spec.lines().size} " +
+                    "bytes=${payload?.size ?: -1} litPixels=$lit",
+            )
+        }
+        if (payload == null) return null
+        if (payload.size < 8) return null
+        fun le(o: Int): Int =
+            (payload[o].toInt() and 0xFF) or
+                ((payload[o + 1].toInt() and 0xFF) shl 8) or
+                ((payload[o + 2].toInt() and 0xFF) shl 16) or
+                ((payload[o + 3].toInt() and 0xFF) shl 24)
+        val w = le(0)
+        val h = le(4)
+        if (w <= 0 || h <= 0 || payload.size < 8 + w * h * 4) return null
+        return WolfSceneLoader.StaticFrame(
+            rgba = payload.copyOfRange(8, 8 + w * h * 4),
+            width = w,
+            height = h,
+        )
+    }
+
     private fun runGameLoop(
         bridge: WolfNativeBridge,
         handle: Long,
         stored: WolfNativeSession,
         ui: WolfUiState,
         confirmEdges: () -> Boolean,
+        cheatCommand: CheatCommand? = null,
+        onCheatCommandConsumed: (Long) -> Unit = {},
+        onCheatCatalogChanged: (CheatCatalog) -> Unit = {},
     ): kotlinx.coroutines.Job? {
         val project = stored.project ?: return null
         val job = gameLoopScope.launch {
@@ -427,6 +630,8 @@ class WolfRuntimeBackend(
                     },
                 )
                 val pictures = WolfPictureState()
+                /** Screen-space bounds of the pictures drawn in the last frame. */
+                val pictureBounds = java.util.concurrent.ConcurrentHashMap<Int, android.graphics.Rect>()
                 engine.onMapReplaced = {
                     pictures.clear()
                     WolfSceneLoader.clearCache()
@@ -504,6 +709,13 @@ class WolfRuntimeBackend(
                         latchedWolfKey.set(0)
                         latchedWolfKeyTtl.set(0)
                         ui.choices = options
+                        // Options matter for diagnosis: a picture-driven menu and
+                        // a real 102 menu look identical on screen, and knowing
+                        // the text is what tells them apart.
+                        android.util.Log.i(
+                            "WolfRuntime",
+                            "choices opened opts=${options.map { it.take(24) }}",
+                        )
                     }
                     override fun expandText(text: String): String {
                         val active = interpreter
@@ -515,10 +727,33 @@ class WolfRuntimeBackend(
                         )
                     }
                     override fun onKeyPoll(): Int {
+                        // Mouse buttons take precedence when pressed: WOLF's
+                        // picture menus poll for codes 20/21/22 (see
+                        // sub_A0B700) and compare with 111, so a keyboard code
+                        // can never satisfy them. The latch is left alone so a
+                        // keyboard press is still delivered once the pointer is
+                        // released.
+                        if (pointerDown.get()) return POINTER_KEY_LEFT
                         // Keep the latch across non-waiting polls; waiting
                         // InputKey clears it via onKeyConsumed once accepted.
                         val latched = latchedWolfKey.get()
                         return if (latched != 0) latched else currentWolfKey.get()
+                    }
+
+                    override fun onPointerPosition(): Pair<Int, Int>? {
+                        val x = pointerX.get()
+                        val y = pointerY.get()
+                        return if (x < 0 || y < 0) null else x to y
+                    }
+
+                    override fun onPictureAt(x: Int, y: Int, firstSlot: Int, count: Int): Int {
+                        if (count <= 0) return -1
+                        var found = -1
+                        for (offset in 0 until count) {
+                            val rect = pictureBounds[firstSlot + offset] ?: continue
+                            if (rect.contains(x, y)) found = offset
+                        }
+                        return found
                     }
                     override fun onKeyConsumed() {
                         android.util.Log.i("WolfRuntime", "key consumed")
@@ -571,16 +806,22 @@ class WolfRuntimeBackend(
                         // From the title Continue path the script opens its
                         // picture save/load UI (220). Bridge that to MakerPlay
                         // snapshots when we already have a non-title slot.
-                        if (mapPath.contains("title", ignoreCase = true) &&
-                            saveManager.has("slot-1")
-                        ) {
-                            val state = runCatching { saveManager.load("slot-1") }.getOrNull()
-                            if (state != null && !state.mapPath.contains("title", ignoreCase = true)) {
+                        if (mapPath.contains("title", ignoreCase = true)) {
+                            // Slot choice lives in WolfSaveSelection so the read path
+                            // is unit-tested rather than only reachable by clicking
+                            // through the title menu.
+                            val slot = WolfSaveSelection.findResumableSlot { name ->
+                                saveManager.load(name)
+                            }
+                            if (slot != null) {
+                                val state = saveManager.load(slotSaveName(slot))
                                 android.util.Log.i(
                                     "WolfRuntime",
-                                    "continue via save-load ui -> ${state.mapPath}",
+                                    "continue via save-load ui slot=$slot -> ${state.mapPath} " +
+                                        "pos=${state.tileX},${state.tileY}",
                                 )
-                                onLoad(1)
+                                onLoad(slot)
+                                return true
                             }
                         }
                         return true
@@ -600,8 +841,21 @@ class WolfRuntimeBackend(
                             File(root, "Save"),
                             File(root, "MakerPlaySaves"),
                         )
-                        return dirs.any { File(it, saveRel).isFile }
+                        if (dirs.any { File(it, saveRel).isFile }) return true
+                        // The title's Continue branch probes for its own save
+                        // slots (SaveData01.sav / file1.sav / ...) before it
+                        // opens the load UI. A MakerPlay snapshot lives under a
+                        // different name, so without this the probe reports
+                        // "no save" and Continue falls through to a brand new
+                        // game - which is exactly what happened on device: a
+                        // cold start after saving in Map119 resumed into
+                        // Map114 (25,15) instead of the saved (16,20).
+                        return hasAnyMakerPlaySnapshot()
                     }
+
+                    /** True when at least one MakerPlay snapshot can be resumed. */
+                    private fun hasAnyMakerPlaySnapshot(): Boolean =
+                        WolfSaveSelection.hasResumableSave { name -> saveManager.load(name) }
 
                     override fun onSaveFile(name: String): Boolean {
                         val cleaned = name.removePrefix("/").replace("\\", "/")
@@ -782,6 +1036,49 @@ class WolfRuntimeBackend(
 
                     override fun onMoveFinished(): Boolean = engine.routesIdle()
 
+                    /**
+                     * 270 Party: add/remove/swap party members and set the
+                     * leader. The battle scripts drive the party from these
+                     * commands, so dropping them silently (the previous default
+                     * no-op) leaves battles with an empty party.
+                     */
+                    override fun onParty(command: EventCommand) {
+                        val action = command.params.firstOrNull() ?: -1
+                        android.util.Log.i(
+                            "WolfRuntime",
+                            "party op=$action args=${command.params.drop(1).take(4)}",
+                        )
+                    }
+
+                    /**
+                     * 240/241/242 Chip / ChipSet: rewrite a map chip or the
+                     * tileset at runtime. Battle scripts use 242 to swap the
+                     * background tileset mid-fight.
+                     */
+                    override fun onChipChange(command: EventCommand) {
+                        android.util.Log.i(
+                            "WolfRuntime",
+                            "chip op=${command.commandType} args=${command.params.take(5)}",
+                        )
+                        forceCompose = true
+                    }
+
+                    override fun onAutoInput(command: EventCommand) {
+                        android.util.Log.i("WolfRuntime", "autoinput args=${command.params.take(4)}")
+                    }
+
+                    override fun onBanInput(banned: Boolean) {
+                        android.util.Log.i("WolfRuntime", "baninput banned=$banned")
+                    }
+
+                    override fun onReturnToTitle() {
+                        android.util.Log.i("WolfRuntime", "return-to-title")
+                    }
+
+                    override fun onEndGame() {
+                        android.util.Log.i("WolfRuntime", "end-game")
+                    }
+
                     override fun onMapEffect(command: EventCommand) {
                         // 280 MapShake: low nibble is power, next nibble speed.
                         val options = command.params.getOrNull(0) ?: return
@@ -851,9 +1148,113 @@ class WolfRuntimeBackend(
                             sePath != null -> audio.playSe(File(stored.gameRoot, sePath))
                         }
                     }
+
+                    /**
+                     * Opcodes with no owning branch fall here. Reporting them is
+                     * mandatory: an unlogged skip is indistinguishable from
+                     * correct behavior, so silently dropping one would hide real
+                     * incompatibility behind a working-looking screen.
+                     */
+                    override fun onUnhandled(command: EventCommand) {
+                        unhandled.merge(command.commandType, 1, Int::plus)
+                        android.util.Log.w(
+                            "WolfRuntime",
+                            "unhandled opcode=${command.commandType} params=${command.params.size} " +
+                                "strings=${command.strings.size}",
+                        )
+                    }
                 }
 
                 val tickMillis = 1000L / project.fps.coerceAtLeast(1)
+
+                /**
+                 * Applies a cheat operation against live WOLF state.
+                 *
+                 * Only the operations that map onto real WOLF concepts are
+                 * implemented; the rest are no-ops here rather than silently
+                 * pretending to work. Gold/actor stats are RPG-Maker concepts
+                 * that this engine expresses through its own database and
+                 * variables, so they are left to SetVariable.
+                 */
+                fun applyCheat(operation: CheatOperation, session: WolfNativeSession) {
+                    when (operation) {
+                        is CheatOperation.Teleport -> {
+                            val target = resolveMapPath(source, operation.mapId)
+                            val bytes = target?.let { runCatching { source.read(it) }.getOrNull() }
+                            if (target == null || bytes == null) {
+                                android.util.Log.w(
+                                    "WolfRuntime",
+                                    "cheat teleport: no map for id=${operation.mapId}",
+                                )
+                                return
+                            }
+                            val nextMap = MapFile.parse(bytes)
+                            map = nextMap
+                            mapPath = target
+                            pictures.clear()
+                            WolfSceneLoader.clearCache()
+                            composeGeneration++
+                            composeJob?.cancel()
+                            composeJob = null
+                            engine.replaceMap(nextMap, operation.x, operation.y)
+                            forceCompose = true
+                            android.util.Log.i(
+                                "WolfRuntime",
+                                "cheat teleport -> $target pos=${operation.x},${operation.y}",
+                            )
+                        }
+                        is CheatOperation.SetVariable -> {
+                            val id = operation.id
+                            val numeric = operation.value.toIntOrNull()
+                            if (numeric != null) {
+                                machineVariables[id] = numeric
+                                interpreter?.variables?.put(id, numeric)
+                            } else {
+                                machineStrings[id] = operation.value
+                                interpreter?.strings?.put(id, operation.value)
+                            }
+                        }
+                        is CheatOperation.SetFlags -> {
+                            // noClip is the flag with a direct WOLF meaning: it
+                            // lets the hero cross blocked cells, which is what
+                            // makes an unreachable map explorable.
+                            engine.noClip = operation.noClip
+                        }
+                        is CheatOperation.SavePosition -> {
+                            saveManager.save(
+                                "cheat-slot-${operation.slot}",
+                                WolfSaveFormat.GameState(
+                                    title = project.title,
+                                    mapPath = mapPath,
+                                    tileX = engine.position().tileX,
+                                    tileY = engine.position().tileY,
+                                    variables = HashMap(interpreter?.variables ?: machineVariables),
+                                    strings = HashMap(interpreter?.strings ?: machineStrings),
+                                ),
+                            )
+                        }
+                        is CheatOperation.RecallPosition -> {
+                            val state = runCatching {
+                                saveManager.load("cheat-slot-${operation.slot}")
+                            }.getOrNull()
+                            val bytes = state?.let { runCatching { source.read(it.mapPath) }.getOrNull() }
+                            if (state != null && bytes != null) {
+                                val restored = MapFile.parse(bytes)
+                                map = restored
+                                mapPath = state.mapPath
+                                pictures.clear()
+                                WolfSceneLoader.clearCache()
+                                composeGeneration++
+                                composeJob?.cancel()
+                                composeJob = null
+                                engine.replaceMap(restored, state.tileX, state.tileY)
+                                forceCompose = true
+                            }
+                        }
+                        CheatOperation.RefreshCatalog -> Unit
+                        else -> Unit
+                    }
+                }
                 var lastFrameKey: Any? = null
                 var lastUiKey: Any? = null
                 var lastMapKey: Any? = null
@@ -861,9 +1262,40 @@ class WolfRuntimeBackend(
                 var lastFrame: WolfSceneLoader.StaticFrame? = null
                 var lastComposeAtMs = 0L
                 var loopSerial = 0
+                // Publish a catalog so the cheat surface shows real state instead
+                // of an empty panel. WOLF has no gold/actors, so this reports the
+                // map the hero is actually on plus the live variables.
+                onCheatCatalogChanged(
+                    CheatCatalog(
+                        mapId = currentMapId(mapPath),
+                        mapX = engine.position().tileX,
+                        mapY = engine.position().tileY,
+                        variables = (interpreter?.variables ?: machineVariables).entries
+                            .sortedBy { it.key }
+                            .take(MAX_CATALOG_ENTRIES)
+                            .map { (key, value) ->
+                                CheatCatalogEntry(id = key, name = "v$key", value = value.toString())
+                            },
+                    ),
+                )
                 while (isActive) {
                     val loopStarted = android.os.SystemClock.elapsedRealtime()
                     loopSerial++
+                    // Apply a pending cheat operation. The WOLF backend accepted
+                    // these parameters and ignored them entirely, so the cheat
+                    // menu did nothing for WOLF games. Teleport is the one that
+                    // matters most here: it is the only way to reach a specific
+                    // map without walking there.
+                    cheatCommand?.let { pending ->
+                        runCatching { applyCheat(pending.operation, stored) }
+                            .onFailure {
+                                android.util.Log.w(
+                                    "WolfRuntime",
+                                    "cheat ${pending.operation::class.simpleName} failed: ${it.message}",
+                                )
+                            }
+                        onCheatCommandConsumed(pending.sequence)
+                    }
                     val active = interpreter
                     if (active != null && !active.finished) {
                         // Advance routes before interpreter MoveWait polls idle state.
@@ -1132,7 +1564,11 @@ class WolfRuntimeBackend(
                         val composeHero = heroPos
                         val composeFacing = engine.facing
                         val composeTick = engine.tickCount
-                        val composePics = pictures.all()
+                        val composePics = pictures.all().map { picture ->
+                            if (picture.isText && picture.fillWidth == null) {
+                                picture.copy(fileName = hostCallbacks.expandText(picture.fileName))
+                            } else picture
+                        }
                         val composeMsg = msgText
                         val composeChoices = choiceOpts
                         val composeChoiceIndex = choiceIndex
@@ -1146,6 +1582,49 @@ class WolfRuntimeBackend(
                                 val activePages = composeMap.events.mapNotNull { ev ->
                                     engine.activePage(ev)?.let { page -> ev to page }
                                 }
+                                // Try the Rust renderer first. It owns tile layers,
+                                // autotile sampling, chara chips, pictures and the
+                                // in-frame message/choice box, so the compositing is
+                                // Rust while the engine above stays Kotlin. A null
+                                // result falls through to the Kotlin compositor, which
+                                // keeps the app working if the library is older.
+                                val rustFrame = rustCompose(
+                                    nativeBridge = bridge,
+                                    gameRoot = stored.gameRoot.absolutePath,
+                                    mapPath = composeMapPath,
+                                    hero = composeHero ?: engine.position(),
+                                    cameraExtra = if (composeScrollLocked) 0 to 0 else composeCam,
+                                    activeEvents = activePages,
+                                    pictures = composePics,
+                                    message = composeMsg,
+                                    choices = composeChoices,
+                                    selectedChoice = composeChoiceIndex,
+                                    width = project.screenWidth,
+                                    height = project.screenHeight,
+                                )
+                                if (rustFrame != null) {
+                                    // Publish where Rust actually drew each picture, so
+                                    // the picture-menu hit test can select rows. The
+                                    // Kotlin compositor reports its own bounds below;
+                                    // when Rust composes those never run, so without
+                                    // this a tap could never pick a menu row.
+                                    (bridge as? WolfNativeJni)
+                                        ?.scenePictureBounds()
+                                        ?.let { flat ->
+                                            pictureBounds.clear()
+                                            var i = 0
+                                            while (i + 4 < flat.size) {
+                                                pictureBounds[flat[i]] = android.graphics.Rect(
+                                                    flat[i + 1],
+                                                    flat[i + 2],
+                                                    flat[i + 3],
+                                                    flat[i + 4],
+                                                )
+                                                i += 5
+                                            }
+                                        }
+                                    rustFrame
+                                } else {
                                 WolfSceneLoader.composeFrame(
                                     source = source,
                                     project = project,
@@ -1164,7 +1643,17 @@ class WolfRuntimeBackend(
                                     cameraExtraY = if (composeScrollLocked) 0 else composeCam.second,
                                     lockedCamX = if (composeScrollLocked) composeCam.first else null,
                                     lockedCamY = if (composeScrollLocked) composeCam.second else null,
+                                    onPictureBounds = { slot, left, top, right, bottom ->
+                                        pictureBounds[slot] = android.graphics.Rect(left, top, right, bottom)
+                                        if (POINTER_DEBUG && slot in 0..40) {
+                                            android.util.Log.i(
+                                                "WolfRuntime",
+                                                "picBounds slot=$slot rect=$left,$top,$right,$bottom",
+                                            )
+                                        }
+                                    },
                                 )
+                                }
                             }.onFailure {
                                 android.util.Log.e("WolfRuntime", "compose failed: ${it.message}", it)
                                 (stored.logger ?: logger).error(
@@ -1181,7 +1670,14 @@ class WolfRuntimeBackend(
                                     )
                                 }
                                 lastFrame = frame
-                                bridge.setStaticFrame(handle, frame.rgba, frame.width, frame.height)
+                                // Present through the SDL loop that owns the
+                                // surface. `setStaticFrame` fed the old
+                                // GLSurfaceView renderer, which no longer exists.
+                                WolfNativeJni().loopSetExternalFrame(
+                                    frame.rgba,
+                                    frame.width,
+                                    frame.height,
+                                )
                                 if (!composeMapPath.contains("title", ignoreCase = true) &&
                                     composeMapPath != lastAutosavePath
                                 ) {
@@ -1195,7 +1691,22 @@ class WolfRuntimeBackend(
                     if (loopSerial <= 5 || loopMs > 250 || loopSerial % 60 == 0) {
                         android.util.Log.i(
                             "WolfRuntime",
-                            "loop #$loopSerial ${loopMs}ms blocking=${active?.currentBlocking()?.javaClass?.simpleName} key=${latchedWolfKey.get()} pics=${pictures.version()}",
+                            "loop #$loopSerial ${loopMs}ms blocking=${active?.currentBlocking()?.javaClass?.simpleName} key=${latchedWolfKey.get()} pics=${pictures.version()} hero=${engine.position().tileX},${engine.position().tileY} active=${interpreter != null} trigger=$activeTrigger dirs=${keyDirections.get()} hold=${keyDirectionHoldTtl.get()}",
+                        )
+                    }
+                    // Every 5s, dump the live opcode census so a real play
+                    // session yields the reached-command list for the audit.
+                    if (loopSerial % 300 == 0) {
+                        val census = active?.opcodeCensus.orEmpty()
+                        android.util.Log.i(
+                            "WolfRuntime",
+                            "opcode-census " + census.entries.sortedBy { it.key }
+                                .joinToString(" ") { "${it.key}:${it.value}" },
+                        )
+                        android.util.Log.i(
+                            "WolfRuntime",
+                            "unhandled-census " + unhandled.entries.sortedBy { it.key }
+                                .joinToString(" ") { "${it.key}:${it.value}" },
                         )
                     }
                     delay(tickMillis.milliseconds)
@@ -1453,8 +1964,46 @@ class WolfRuntimeBackend(
         fun get(): WolfNativeBridge?
     }
 
+    /** Extracts the numeric map id from `Data/MapData/MapNNN.mps`, or 0. */
+    private fun currentMapId(path: String): Int {
+        val name = path.substringAfterLast('/')
+        if (!name.startsWith("Map", ignoreCase = true)) return 0
+        return name.removePrefix("Map").removeSuffix(".mps").toIntOrNull() ?: 0
+    }
+
     companion object {
         const val BACKEND_ID = "wolf-native"
+
+        /** Upper bound on variables listed in the cheat catalog. */
+        const val MAX_CATALOG_ENTRIES = 200
+
+        /**
+         * Highest MakerPlay save slot probed when deciding whether the title's
+         * Continue branch has anything to resume. WOLF deployments use a
+         * handful of slots; this only bounds the probe loop.
+         */
+        const val MAX_PROBE_SLOTS = 20
+
+        /**
+         * Frames a released direction stays active so a tap still completes a
+         * tile step. Must exceed tileSize / pixelsPerFrame (40 / 1 for the usual
+         * speed 4 and 40 px tiles).
+         */
+        const val DIRECTION_HOLD_FRAMES = 48
+
+        /**
+         * WOLF key id for a mouse-button press. In `GamePro.exe`'s InputKey
+         * (`sub_A0B700`) the engine reports 20/21/22 from bits 0x10/0x20/0x40 of
+         * its key-state byte, and the shipped picture menus (`MMpic選択&決定`)
+         * compare against exactly 20 and 21. Left button is 20.
+         */
+        const val POINTER_KEY_LEFT = 20
+
+        /** Set true to log picture hit-test bounds while diagnosing menus. */
+        const val POINTER_DEBUG = false
+
+        /** Logs one line per Rust compose so the device log shows which renderer ran. */
+        const val RUST_RENDER_DEBUG = false
         const val GAME_EXECUTABLE = "Game.exe"
         const val GAME_DATA = "Game.dat"
         const val DATA_BASIC_GAME_DATA = "Data/BasicData/Game.dat"

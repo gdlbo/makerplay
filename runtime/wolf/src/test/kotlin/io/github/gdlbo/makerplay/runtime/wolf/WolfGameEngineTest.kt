@@ -5,6 +5,7 @@ import io.github.gdlbo.makerplay.wolfformat.MapFile
 import io.github.gdlbo.makerplay.wolfformat.MoveRoute
 import io.github.gdlbo.makerplay.wolfformat.TileSetData
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -85,6 +86,45 @@ class WolfGameEngineTest {
 
     private fun flatMapLayer(width: Int = 4, height: Int = 4, value: () -> Int) =
         List(width * height) { value() }
+
+    @Test
+    fun refusedMoveIntoATouchEventStillFiresIt() {
+        // WOLF fires a "player touch" trigger on the ATTEMPT to enter a tile.
+        // Doors and exits are routinely authored on fully blocked cells, so
+        // firing only after a successful move makes them unreachable.
+        val blocked = passability("up", "down", "left", "right")
+        val tilesets = TileSetData(v3 = true, tilesets = listOf(
+            TileSetData.Tileset("t", "base.png", emptyList(), emptyList(), listOf(blocked, blocked)),
+        ))
+        // Hero starts at (1,1); the door event sits on the blocked tile (2,1).
+        val layer0 = flatMapLayer { 0 }.toMutableList().also { it[1 * 4 + 2] = 1 }
+        val door = event(7, 2, 1, listOf(page(triggerCondition = 3)))
+        val engine = WolfGameEngine(
+            project = project(),
+            map = map(layer0 = layer0, events = listOf(door)),
+            tilesets = tilesets,
+            initialX = 1,
+            initialY = 1,
+        )
+        // The tile really is impassable.
+        assertFalse(
+            "the door tile must be blocked for this test to mean anything",
+            engine.walkable(2, 1, WolfGameEngine.Direction.RIGHT),
+        )
+        engine.setInput(setOf(WolfGameEngine.Direction.RIGHT), confirmPressed = false)
+        val fired = mutableListOf<WolfGameEngine.FiredTrigger>()
+        repeat(40) {
+            engine.tick()
+            fired += engine.drainFiredTriggers()
+        }
+        assertEquals(
+            "pressing into a blocked door tile must fire its player-touch event exactly once",
+            1,
+            fired.count { it.eventId == 7 },
+        )
+        // And the hero must not have entered the tile.
+        assertEquals(1, engine.position().tileX)
+    }
 
     @Test
     fun replaceMapResetsTransferAndPlacesHero() {

@@ -34,6 +34,13 @@ class WolfGameEngine(
          * editor's own speed table, e.g. setting 8 moves 2 px/frame).
          */
         const val PIXELS_PER_FRAME_PER_SPEED_UNIT = 0.25
+
+        /**
+         * Autotile passability slots appended after the base chip sheet in
+         * every tileset. Verified against the deployment: all 53 tilesets have
+         * exactly `baseTiles + 32` entries.
+         */
+        const val AUTOTILE_SLOTS = 32
     }
 
     enum class Direction { UP, DOWN, LEFT, RIGHT }
@@ -63,7 +70,21 @@ class WolfGameEngine(
     var pendingTransfer: Pair<Int, Pair<Int, Int>>? = null // mapId to (tileX, tileY)
         private set
 
+    /**
+     * When true, tile passability is ignored and the hero may cross blocked
+     * cells. Exposed for the cheat surface: it is what makes an otherwise
+     * unreachable map explorable for diagnosis.
+     */
+    var noClip: Boolean = false
+
     private val firedTriggers: Deque<FiredTrigger> = ArrayDeque()
+
+    /**
+     * Tile of the last refused player-touch attempt, so holding a direction into
+     * a blocked door fires once instead of every frame. Cleared whenever the
+     * player actually moves.
+     */
+    private var lastRefusedTouch: Pair<Int, Int>? = null
     /** Autorun pages fire once per activation; cleared on map replace. */
     private val completedAutoruns = HashSet<Int>()
     private val heldDirections = mutableSetOf<Direction>()
@@ -79,6 +100,30 @@ class WolfGameEngine(
     /** Tile passability cache for the current map's tileset. */
     private var passability: List<TileSetData.Passability>? =
         tilesets.tilesets.getOrNull(map.tilesetId)?.tilePassability
+
+    init {
+        refreshTilesetState()
+    }
+
+    /**
+     * Number of base-chip passability entries for the current tileset.
+     *
+     * Every tileset stores `baseTilesetTileCount + 32` entries: the base chip
+     * sheet's tiles, then one entry per autotile slot (the sheet is limited to
+     * 32 slots per tileset). Verified for all 53 tilesets this deployment
+     * ships, with zero mismatches, so the count can be recovered without
+     * decoding the base image:
+     *
+     *     baseTiles = passability.size - AUTOTILE_SLOTS
+     *     autotile passability entry = baseTiles + (raw / 100000 - 1)
+     */
+    private var baseTileCount: Int = 0
+
+    private fun refreshTilesetState() {
+        val list = tilesets.tilesets.getOrNull(map.tilesetId)?.tilePassability
+        passability = list
+        baseTileCount = ((list?.size ?: 0) - AUTOTILE_SLOTS).coerceAtLeast(0)
+    }
 
     private data class RoutePlayback(
         val steps: List<io.github.gdlbo.makerplay.wolfformat.MoveRoute.Step>,
@@ -100,7 +145,7 @@ class WolfGameEngine(
     /** Applies a successful map transfer and discards triggers from the prior map. */
     fun replaceMap(nextMap: MapFile, tileX: Int, tileY: Int) {
         map = nextMap
-        passability = tilesets.tilesets.getOrNull(nextMap.tilesetId)?.tilePassability
+        refreshTilesetState()
         val ts = project.tileSize.toDouble()
         val clampedX = tileX.coerceIn(0, (nextMap.width - 1).coerceAtLeast(0))
         val clampedY = tileY.coerceIn(0, (nextMap.height - 1).coerceAtLeast(0))
@@ -108,6 +153,7 @@ class WolfGameEngine(
         playerPixelY = clampedY * ts
         pendingTransfer = null
         firedTriggers.clear()
+        lastRefusedTouch = null
         completedAutoruns.clear()
         heldDirections.clear()
         heroRoute = null
@@ -351,10 +397,30 @@ class WolfGameEngine(
         // player may rest flush against a blocking tile but never enter it.
         val destTileX = ((targetX + if (dx > 0) ts - 0.01 else 0.0) / ts).toInt()
         val destTileY = ((targetY + if (dy > 0) ts - 0.01 else 0.0) / ts).toInt()
-        if (!slipThrough && !walkable(destTileX, destTileY, direction)) return
+        if (!slipThrough && !walkable(destTileX, destTileY, direction)) {
+            // WOLF's "player touch" trigger fires on the ATTEMPT to enter a tile,
+            // not only after a successful move. Door and exit events are routinely
+            // placed on fully blocked cells (Map089's exit at (30,18) is raw
+            // 204141, blocked on all four sides), so firing only after a
+            // successful move makes those events unreachable: the player can
+            // stand next to the door and press into it forever with nothing
+            // happening. Fire the trigger on the refused attempt instead.
+            // Only fire once per held attempt: the direction stays pressed for
+            // several frames and each refused frame would otherwise restart the
+            // event. The guard clears as soon as the player actually moves.
+            if (!slipThrough) {
+                val key = destTileX to destTileY
+                if (lastRefusedTouch != key) {
+                    lastRefusedTouch = key
+                    fireTriggerAt(destTileX, destTileY, Trigger.PLAYER_TOUCH)
+                }
+            }
+            return
+        }
 
         playerPixelX = targetX.coerceIn(0.0, (map.width * ts) - ts)
         playerPixelY = targetY.coerceIn(0.0, (map.height * ts) - ts)
+        lastRefusedTouch = null
 
         // Crossing into a new tile may fire touch triggers on that event.
         detectTouchTriggersOnAdjacentTiles()
@@ -362,11 +428,21 @@ class WolfGameEngine(
 
     internal fun walkable(tileX: Int, tileY: Int, direction: Direction): Boolean {
         if (tileX < 0 || tileY < 0 || tileX >= map.width || tileY >= map.height) return false
+        if (noClip) return true
         val passability = this.passability ?: return true
         val layer0 = map.layers.firstOrNull() ?: return true
         val raw = layer0[tileY * map.width + tileX]
-        if (raw >= 100000) return true // autotiles treated as walkable for now
-        val entry = passability.getOrNull(raw) ?: return true
+        // Autotiles carry their own passability entries, appended after the
+        // base chip sheet: entry = baseTiles + (autotileIndex). Treating every
+        // autotile as walkable let the player cross trees, flowers and fences
+        // that the editor marks fully blocked (raw 0xF).
+        val entry = if (raw >= 100000) {
+            val autoIndex = raw / 100000 - 1
+            if (autoIndex < 0) return true
+            passability.getOrNull(baseTileCount + autoIndex)
+        } else {
+            passability.getOrNull(raw)
+        } ?: return true
         return !when (direction) {
             Direction.UP -> entry.upwardsNotPassable
             Direction.DOWN -> entry.downwardsNotPassable

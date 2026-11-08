@@ -101,6 +101,21 @@ class WolfInterpreter(
         fun onReturnToTitle() {}
         fun onEndGame() {}
 
+        /**
+         * Cursor position in the game's virtual pixel space, or null when no
+         * pointer is present. WOLF's picture menus hit-test pictures against
+         * the mouse cursor (SetVariableEx with source 0x4000), so a host that
+         * cannot report a cursor can never satisfy them.
+         */
+        fun onPointerPosition(): Pair<Int, Int>? = null
+
+        /**
+         * Index (relative to [firstSlot]) of the picture under the cursor among
+         * `firstSlot until firstSlot + count`, or -1. Later slots win, matching
+         * draw order.
+         */
+        fun onPictureAt(x: Int, y: Int, firstSlot: Int, count: Int): Int = -1
+
         /** Called for opcodes this interpreter does not implement yet. */
         fun onUnhandled(command: EventCommand) {}
     }
@@ -115,6 +130,13 @@ class WolfInterpreter(
 
     // Machine state exposed for saves and cheat surfaces.
     val variables: MutableMap<Int, Int> = sharedVariables ?: HashMap(initialVariables)
+
+    /**
+     * Live census of executed opcodes for this run: opcode -> execution count.
+     * Diagnostics read this to state which commands a real play session
+     * actually reached, instead of inferring coverage from static data.
+     */
+    val opcodeCensus: MutableMap<Int, Int> = HashMap()
     val strings: MutableMap<Int, String> = sharedStrings ?: HashMap(initialStrings)
 
     private val frames = ArrayDeque<Frame>()
@@ -310,6 +332,7 @@ class WolfInterpreter(
     }
 
     private fun execute(command: EventCommand) {
+        opcodeCensus.merge(command.commandType, 1, Int::plus)
         when (command.commandType) {
             0 -> Unit // blank padding line
             99 -> Unit // checkpoint
@@ -404,7 +427,12 @@ class WolfInterpreter(
             }
             230, 231 -> Unit // move-during-event flag: engine-level default
             240, 241, 242 -> host.onChipChange(command)
-            250, 251, 252, 255 -> host.onDatabase(command)
+            // Database + XY-array family. GamePro.exe dispatches all six:
+            // 250/251/252 to the database stores (sub_A23E80 / sub_A29180 /
+            // sub_A29EA0) and 255/256/257 to the XY-array routines
+            // (sub_A2ACA0 / sub_A2BD90 / sub_A2C500). WolfDatabase routes
+            // them accordingly; see docs/wolf-ida-vm-reference.md.
+            250, 251, 252, 255, 256, 257 -> host.onDatabase(command)
             270 -> host.onParty(command)
             280 -> host.onMapEffect(resolveCommandRefs(command))
             281 -> host.onScroll(resolveCommandRefs(command))
@@ -865,13 +893,31 @@ class WolfInterpreter(
     private fun varValue(ref: Int): Int = variables[decodeVariableRef(ref)] ?: 0
 
     private fun setVariablePlus(command: EventCommand) {
-        // SetVariableEx: [dest, 0x3000, keyCode] queries whether a specific
-        // WOLF key is down (title anti-repeat CEs). Other forms fall back to
-        // assigning the second operand until the full matrix is modeled.
+        // SetVariableEx shapes seen in real deployments (the 0x4000 low word picks
+        // the sub-query):
+        //   [dest, 0x3000, keyCode]                 - is this WOLF key down?
+        //   [dest, 0x4000, firstSlot, count]        - index of the picture under
+        //                                             the cursor, or -1
+        // Anything else keeps the previous behaviour of assigning the operand.
         val p = command.params
         if (p.size >= 3 && p[1] == 0x3000) {
             val keyCode = operandValue(p[2])
             variables[decodeVariableRef(p[0])] = if (host.onKeyPoll() == keyCode) 1 else 0
+            return
+        }
+        if (p.size >= 3 && p[1] == 0x4000) {
+            // WOLF's picture menus hit-test pictures against the mouse cursor to
+            // decide what is hovered/clicked; a host with no cursor can never
+            // satisfy them, which is why the title menu was inoperable.
+            val dest = decodeVariableRef(p[0])
+            val cursor = host.onPointerPosition()
+            val firstSlot = operandValue(p[2])
+            val count = if (p.size >= 4) operandValue(p[3]) else 1
+            variables[dest] = if (cursor == null) {
+                -1
+            } else {
+                host.onPictureAt(cursor.first, cursor.second, firstSlot, count)
+            }
             return
         }
         if (p.size >= 2) variables[decodeVariableRef(p[0])] = operandValue(p[1])

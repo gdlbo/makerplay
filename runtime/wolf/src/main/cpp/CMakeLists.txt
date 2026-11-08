@@ -11,6 +11,30 @@ set(SDL_STATIC OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL OFF CACHE BOOL "" FORCE)
+# The embedder patches (surface adoption, window size, null JNI guards) live in
+# patches/ rather than a fork, so a fresh clone builds the same .so. Applied
+# idempotently: `git apply --reverse --check` succeeding means it is already in.
+set(SDL_PATCH "${CMAKE_CURRENT_SOURCE_DIR}/patches/sdl-android-embed-surface.patch")
+if(EXISTS "${SDL_PATCH}")
+    execute_process(
+        COMMAND git apply --reverse --check "${SDL_PATCH}"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third-party/SDL"
+        RESULT_VARIABLE SDL_PATCH_ALREADY_APPLIED
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    if(NOT SDL_PATCH_ALREADY_APPLIED EQUAL 0)
+        execute_process(
+            COMMAND git apply "${SDL_PATCH}"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/third-party/SDL"
+            RESULT_VARIABLE SDL_PATCH_RESULT
+        )
+        if(NOT SDL_PATCH_RESULT EQUAL 0)
+            message(FATAL_ERROR "Failed to apply ${SDL_PATCH}")
+        endif()
+        message(STATUS "Applied SDL embedder patch")
+    endif()
+endif()
+
 add_subdirectory(third-party/SDL EXCLUDE_FROM_ALL)
 
 # --- Rust Wolf core (session + GLES renderer + JNI) -------------------------------

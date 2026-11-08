@@ -276,6 +276,18 @@ class MapFileTest {
         assertEquals(0, map.events.size)
     }
 
+    @Test
+    fun exposesColumnMajorFileCellsInRowMajorOrder() {
+        val data = minimalMap()
+        val start = data.size - 1 - 12 * 4
+        listOf(10, 11, 20, 21).forEachIndexed { index, value ->
+            WolfFixture.u4(value.toLong()).copyInto(data, start + index * 4)
+        }
+        val map = MapFile.parse(data)
+        assertEquals(listOf(10, 20, 11, 21), map.layers[0].toList())
+        assertEquals(listOf(1, 1, 1, 1), map.layers[1].toList())
+    }
+
     @Test(expected = WolfFormatException::class)
     fun rejectsTruncatedMapLayers() {
         val full = minimalMap()

@@ -1,0 +1,82 @@
+diff --git a/src/core/android/SDL_android.c b/src/core/android/SDL_android.c
+index c4f517da8..c7f281f86 100644
+--- a/src/core/android/SDL_android.c
++++ b/src/core/android/SDL_android.c
+@@ -1734,6 +1734,15 @@ void Android_JNI_SetWindowStyle(bool fullscreen)
+ 
+ void Android_JNI_SetOrientation(int w, int h, int resizable, const char *hint)
+ {
++    /* MakerPlay patch: an embedder that supplies its own ANativeWindow has no
++       SDLActivity, so mActivityClass and the cached method IDs are null. Calling
++       through them aborts the process with "CallStaticVoidMethod called with
++       pending exception ... on a null object reference". Orientation is the
++       embedder's business in that case, so skip it. */
++    if (!mActivityClass || !midSetOrientation) {
++        return;
++    }
++
+     JNIEnv *env = Android_JNI_GetEnv();
+ 
+     jstring jhint = (*env)->NewStringUTF(env, (hint ? hint : ""));
+@@ -2692,6 +2701,13 @@ bool SDL_SendAndroidMessage(Uint32 command, int param)
+ // sends message to be handled on the UI event dispatch thread
+ bool Android_JNI_SendMessage(int command, int param)
+ {
++    /* MakerPlay patch: no SDLActivity when the embedder supplies its own window,
++       so these cached IDs are null and calling through them aborts the process.
++       Screen-saver and keyboard messages are the host's business in that case. */
++    if (!mActivityClass || !midSendMessage) {
++        return false;
++    }
++
+     JNIEnv *env = Android_JNI_GetEnv();
+     return (*env)->CallStaticBooleanMethod(env, mActivityClass, midSendMessage, command, param);
+ }
+diff --git a/src/video/android/SDL_androidwindow.c b/src/video/android/SDL_androidwindow.c
+index 4652b5f6b..11f3279e7 100644
+--- a/src/video/android/SDL_androidwindow.c
++++ b/src/video/android/SDL_androidwindow.c
+@@ -69,7 +69,19 @@ bool Android_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_Proper
+         goto endfunction;
+     }
+ 
+-    data->native_window = Android_JNI_GetNativeWindow();
++    /* MakerPlay patch: an embedder may supply the ANativeWindow before creating
++       the window, so the app's own SurfaceView keeps ownership of the surface and
++       its input dispatch path. Without this SDL can only take a window from
++       Android_JNI_GetNativeWindow(), which requires an SDLActivity host.
++
++       The supplied window is already acquired by the caller (ANativeWindow_fromSurface
++       increments the reference count), and SDL releases it on destroy, so the
++       ownership transfer is the same as the JNI path. */
++    data->native_window = (ANativeWindow *)SDL_GetPointerProperty(
++        create_props, SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, NULL);
++    if (!data->native_window) {
++        data->native_window = Android_JNI_GetNativeWindow();
++    }
+     if (!data->native_window) {
+         SDL_free(data);
+         result = SDL_SetError("Could not fetch native window");
+@@ -77,6 +89,22 @@ bool Android_CreateWindow(SDL_VideoDevice *_this, SDL_Window *window, SDL_Proper
+     }
+     SDL_SetPointerProperty(SDL_GetWindowProperties(window), SDL_PROP_WINDOW_ANDROID_WINDOW_POINTER, data->native_window);
+ 
++    /* MakerPlay patch: Android_SurfaceWidth/Height are only ever assigned by
++       onNativeSurfaceChanged, a JNI callback that requires an SDLActivity host.
++       An embedder that supplies its own window never gets that callback, so both
++       stay 0 and the window ends up 0x0 -- every frame is drawn into a zero-sized
++       viewport and the screen stays black. Take the real dimensions from the
++       supplied ANativeWindow instead; they are authoritative for the surface we
++       are about to render into. */
++    if (window->w <= 0 || window->h <= 0) {
++        int nw = ANativeWindow_getWidth(data->native_window);
++        int nh = ANativeWindow_getHeight(data->native_window);
++        if (nw > 0 && nh > 0) {
++            window->w = nw;
++            window->h = nh;
++        }
++    }
++
+     /* Do not create EGLSurface for Vulkan window since it will then make the window
+        incompatible with vkCreateAndroidSurfaceKHR */
+ #ifdef SDL_VIDEO_OPENGL_EGL
